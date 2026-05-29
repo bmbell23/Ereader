@@ -1,6 +1,7 @@
 package com.ereader.simple;
 
 import android.app.Activity;
+import android.content.res.Configuration;
 import android.os.Bundle;
 import android.webkit.WebView;
 import android.webkit.WebSettings;
@@ -115,5 +116,22 @@ public class MainActivity extends Activity {
         } else {
             super.onBackPressed();
         }
+    }
+
+    // Foldable posture changes (fold <-> unfold) fire onConfigurationChanged
+    // instead of recreating the Activity because the manifest declares
+    // android:configChanges. We just need to re-apply the immersive UI flags
+    // so the system bars don't pop back in after the new layout pass.
+    @Override
+    public void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        getWindow().getDecorView().setSystemUiVisibility(
+            View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+            | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+            | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+            | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+            | View.SYSTEM_UI_FLAG_FULLSCREEN
+            | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+        );
     }
 }

@@ -8,6 +8,10 @@ from flask import Flask, jsonify, request, Response
 from flask_cors import CORS
 import requests
 import os
+import json
+import uuid
+import threading
+import time
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for mobile app access
@@ -15,6 +19,47 @@ CORS(app)  # Enable CORS for mobile app access
 # Calibre Content Server configuration
 CALIBRE_URL = os.environ.get('CALIBRE_URL', 'http://localhost:8083')
 CALIBRE_LIBRARY = os.environ.get('CALIBRE_LIBRARY', 'library')
+
+# Persisted user data (highlights + bookmarks). Single JSON file on disk —
+# trivial to back up, trivial to grep. Guarded by a lock because Flask is
+# multi-threaded in debug mode.
+DATA_DIR = os.environ.get('EREADER_DATA_DIR',
+                          os.path.join(os.path.dirname(__file__), 'data'))
+os.makedirs(DATA_DIR, exist_ok=True)
+HIGHLIGHTS_FILE = os.path.join(DATA_DIR, 'highlights.json')
+_highlights_lock = threading.Lock()
+
+# Single source of truth for the app version, bumped by `gvc` (see
+# ../dotfiles/bashrc/conf.d/20-functions.sh — gvc auto-increments the
+# patch number in version.txt, commits, tags, pushes). The frontend
+# fetches /api/version on load and the Android build.gradle reads the
+# same file at build time, so a single `gvc <msg>` keeps the web pill
+# and APK versionName in sync.
+VERSION_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                            'version.txt')
+
+def _read_version():
+    try:
+        with open(VERSION_FILE) as f:
+            return f.read().strip() or '0.0.0'
+    except OSError:
+        return '0.0.0'
+
+def _load_highlights():
+    if not os.path.exists(HIGHLIGHTS_FILE):
+        return []
+    try:
+        with open(HIGHLIGHTS_FILE, 'r') as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"⚠️  Could not load highlights: {e}")
+        return []
+
+def _save_highlights(items):
+    tmp = HIGHLIGHTS_FILE + '.tmp'
+    with open(tmp, 'w') as f:
+        json.dump(items, f, indent=2)
+    os.replace(tmp, HIGHLIGHTS_FILE)
 
 def get_calibre_books(limit=None, offset=0, query=None):
     """Fetch books from Calibre Content Server"""
@@ -229,6 +274,95 @@ def search_books():
         'limit': limit
     })
 
+# ---------- Highlights & Bookmarks ----------
+# Single endpoint family handles both. An item is:
+#   { id, type: 'highlight'|'bookmark', bookId, bookTitle, bookAuthor,
+#     anchor: int|null, page: int|null, total: int|null,
+#     text: str|null, note: str|null, color: str|null, created: epoch_ms }
+# Anchor is the data-anchor index from reader.html — it pins the position to
+# a specific source-DOM block, surviving font-size / unfold re-pagination.
+
+@app.route('/api/highlights', methods=['GET'])
+def list_highlights():
+    """List all highlights/bookmarks. Optional filters: bookId, type, q."""
+    book_id = request.args.get('bookId')
+    type_filter = request.args.get('type')
+    q = (request.args.get('q') or '').strip().lower()
+
+    with _highlights_lock:
+        items = _load_highlights()
+
+    out = []
+    for it in items:
+        if book_id and str(it.get('bookId')) != str(book_id):
+            continue
+        if type_filter and it.get('type') != type_filter:
+            continue
+        if q:
+            hay = ' '.join(str(it.get(f, '') or '') for f in
+                           ('text', 'note', 'bookTitle', 'bookAuthor')).lower()
+            if q not in hay:
+                continue
+        out.append(it)
+    out.sort(key=lambda x: x.get('created', 0), reverse=True)
+    return jsonify({'items': out, 'total': len(out)})
+
+@app.route('/api/highlights', methods=['POST'])
+def create_highlight():
+    """Create a highlight or bookmark. Body is the partial item; we fill
+    in id + created timestamp."""
+    body = request.get_json(silent=True) or {}
+    if body.get('type') not in ('highlight', 'bookmark'):
+        return jsonify({'error': 'type must be "highlight" or "bookmark"'}), 400
+    if not body.get('bookId'):
+        return jsonify({'error': 'bookId is required'}), 400
+
+    item = {
+        'id': str(uuid.uuid4()),
+        'type': body['type'],
+        'bookId': str(body['bookId']),
+        'bookTitle': body.get('bookTitle') or '',
+        'bookAuthor': body.get('bookAuthor') or '',
+        'anchor': body.get('anchor'),
+        'page': body.get('page'),
+        'total': body.get('total'),
+        'text': body.get('text') or '',
+        'note': body.get('note') or '',
+        'color': body.get('color') or 'yellow',
+        'created': int(time.time() * 1000),
+    }
+    with _highlights_lock:
+        items = _load_highlights()
+        items.append(item)
+        _save_highlights(items)
+    return jsonify(item), 201
+
+@app.route('/api/highlights/<item_id>', methods=['DELETE'])
+def delete_highlight(item_id):
+    with _highlights_lock:
+        items = _load_highlights()
+        new_items = [it for it in items if it.get('id') != item_id]
+        if len(new_items) == len(items):
+            return jsonify({'error': 'not found'}), 404
+        _save_highlights(new_items)
+    return jsonify({'deleted': item_id})
+
+@app.route('/api/highlights/<item_id>', methods=['PUT'])
+def update_highlight(item_id):
+    """Partial update — only allows mutating note/color/text."""
+    body = request.get_json(silent=True) or {}
+    allowed = ('note', 'color', 'text')
+    with _highlights_lock:
+        items = _load_highlights()
+        for it in items:
+            if it.get('id') == item_id:
+                for k in allowed:
+                    if k in body:
+                        it[k] = body[k]
+                _save_highlights(items)
+                return jsonify(it)
+    return jsonify({'error': 'not found'}), 404
+
 @app.route('/api/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
@@ -244,8 +378,15 @@ def health_check():
         'status': 'ok' if calibre_ok else 'degraded',
         'calibre_url': CALIBRE_URL,
         'calibre_library': CALIBRE_LIBRARY,
-        'calibre_connected': calibre_ok
+        'calibre_connected': calibre_ok,
+        'version': _read_version(),
     })
+
+@app.route('/api/version', methods=['GET'])
+def get_version():
+    """Return the current app version (read live from version.txt so a
+    `gvc` bump is reflected without a server restart)."""
+    return jsonify({'version': _read_version()})
 
 if __name__ == '__main__':
     print(f"Ereader Backend Server")

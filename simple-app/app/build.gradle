@@ -2,6 +2,17 @@ plugins {
     id 'com.android.application'
 }
 
+// Single source of truth for the app version: ../../version.txt at the
+// repo root, bumped by `gvc` (see ../../../dotfiles/bashrc/conf.d/20-functions.sh).
+// versionName mirrors the file directly; versionCode is derived so it
+// monotonically increases as long as semver is followed.
+//   1.2.1  ->  10201   (major*10000 + minor*100 + patch)
+def versionFile  = file('../../version.txt')
+def appSemver    = versionFile.exists() ? versionFile.text.trim() : '0.0.0'
+def semverParts  = appSemver.tokenize('.').collect { it.toInteger() }
+while (semverParts.size() < 3) { semverParts << 0 }
+def appVersionCode = semverParts[0] * 10000 + semverParts[1] * 100 + semverParts[2]
+
 android {
     compileSdk 34
     namespace 'com.ereader.simple'
@@ -10,8 +21,8 @@ android {
         applicationId "com.ereader.simple"
         minSdk 24
         targetSdk 34
-        versionCode 2
-        versionName "1.1"
+        versionCode appVersionCode
+        versionName appSemver
     }
 
     buildTypes {

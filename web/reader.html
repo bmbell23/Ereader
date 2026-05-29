@@ -139,11 +139,40 @@
             break-after: avoid;
             page-break-after: avoid;
         }
-        #epub-content img {
-            max-width: 100%;
-            height: auto;
+        /* Force every chapter (h1) and major section (h2) onto a fresh column.
+           In single-column mode this == new page. In dual-page mode it lands
+           at the top of either the left or right column; better than getting
+           jammed mid-page. */
+        #epub-content h1, #epub-content h2 {
+            break-before: column;
+            page-break-before: always;
+            -webkit-column-break-before: always;
+        }
+        /* Images must:
+           - Never exceed the column width (so wide images don't bleed into the
+             next column on square-aspect unfolded screens).
+           - Never exceed the available vertical space (full viewport minus our
+             40px top + 60px bottom padding) so portrait images don't get
+             clipped off the bottom.
+           - Stay together as a unit — never split across a column boundary. */
+        #epub-content img, #epub-content svg, #epub-content image {
+            max-width: 100% !important;
+            max-height: calc(100vh - 100px) !important;
+            width: auto !important;
+            height: auto !important;
+            object-fit: contain;
             display: block;
-            margin: 1em 0;
+            margin: 1em auto;
+            break-inside: avoid;
+            page-break-inside: avoid;
+        }
+        /* Figures (image + caption) also stay as a unit. */
+        #epub-content figure, #epub-content picture {
+            break-inside: avoid;
+            page-break-inside: avoid;
+            max-width: 100%;
+            margin: 1em auto;
+            text-align: center;
         }
         .epub-page-content img {
             max-width: 100%;
@@ -230,24 +259,72 @@
         .controls {
             display: none;
         }
-        /* Build/version stamp — bump BUILD constant on every meaningful edit.
-           Deliberately LOUD so you can verify the WebView picked up the new HTML. */
-        #build-stamp {
+        /* STATUS_BAR_HEIGHT: kept in sync with .status-bar height + epub-content
+           padding-top in JS. Don't change one without the others. */
+        .status-bar {
             position: fixed;
             top: 0;
             left: 0;
             right: 0;
-            font-size: 14px;
-            font-weight: bold;
+            height: 28px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 12px;
+            font-size: 12px;
             font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-            color: #fff;
-            background: #d32f2f;
-            padding: 4px 10px;
-            text-align: center;
+            color: rgba(0, 0, 0, 0.55);
+            background: transparent;
             z-index: 99999;
             pointer-events: none;
-            letter-spacing: 0.5px;
+            letter-spacing: 0.3px;
         }
+        .status-bar .clock { text-align: left; }
+        .status-bar .build { text-align: right; }
+        /* Notched font-size slider with visible tick marks */
+        .font-slider {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 100%;
+            height: 6px;
+            background: #444;
+            border-radius: 3px;
+            outline: none;
+            margin: 8px 0;
+        }
+        .font-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 24px;
+            height: 24px;
+            background: #2196F3;
+            border-radius: 50%;
+            cursor: pointer;
+            border: 2px solid #fff;
+        }
+        .font-slider::-moz-range-thumb {
+            width: 24px;
+            height: 24px;
+            background: #2196F3;
+            border-radius: 50%;
+            cursor: pointer;
+            border: 2px solid #fff;
+        }
+        .slider-row {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            width: 100%;
+            padding: 0 10px;
+        }
+        .slider-ticks {
+            display: flex;
+            justify-content: space-between;
+            font-size: 10px;
+            color: #888;
+            font-family: ui-monospace, monospace;
+        }
+        .slider-ticks span { width: 1px; }
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
@@ -269,24 +346,47 @@
         </div>
     </div>
 
-    <div id="build-stamp"></div>
+    <div class="status-bar">
+        <span class="clock" id="status-clock"></span>
+        <span class="build" id="build-stamp"></span>
+    </div>
 
     <div class="reader-controls" id="reader-controls">
         <button class="menu-close" onclick="toggleMenu()">✕</button>
         <h3 style="color: #fff; margin: 0 0 10px 0;">Reading Options</h3>
 
         <div class="control-row">
-            <span style="color: #aaa; width: 100%; text-align: center;">Font Size</span>
+            <span style="color: #aaa; width: 100%; text-align: center;">Font Size: <span id="font-size-label">18</span>px</span>
         </div>
         <div class="control-row">
-            <button class="control-btn" onclick="changeFontSize(-2)" style="padding: 8px 16px;">A-</button>
-            <input type="range" class="font-slider" id="font-slider" min="12" max="32" value="18" oninput="setFontSize(this.value)">
-            <button class="control-btn" onclick="changeFontSize(2)" style="padding: 8px 16px;">A+</button>
+            <div class="slider-row">
+                <input type="range" class="font-slider" id="font-slider"
+                       min="12" max="32" step="2" value="18"
+                       list="font-size-ticks"
+                       oninput="setFontSize(this.value)">
+                <datalist id="font-size-ticks">
+                    <option value="12"></option><option value="14"></option>
+                    <option value="16"></option><option value="18"></option>
+                    <option value="20"></option><option value="22"></option>
+                    <option value="24"></option><option value="26"></option>
+                    <option value="28"></option><option value="30"></option>
+                    <option value="32"></option>
+                </datalist>
+                <div class="slider-ticks">
+                    <span>12</span><span>14</span><span>16</span><span>18</span>
+                    <span>20</span><span>22</span><span>24</span><span>26</span>
+                    <span>28</span><span>30</span><span>32</span>
+                </div>
+            </div>
         </div>
 
         <div class="control-row">
             <button class="control-btn" onclick="toggleDualPage()">📖 Dual Page Mode</button>
             <button class="control-btn" onclick="toggleTOC()">📑 Table of Contents</button>
+        </div>
+
+        <div class="control-row">
+            <button class="control-btn" onclick="bookmarkCurrentPage()">🔖 Bookmark this page</button>
         </div>
 
         <div class="control-row">
@@ -300,8 +400,8 @@
         <button id="next-btn" onclick="nextPage()">Next ►</button>
     </div>
 
-    <!-- Page progress indicator at bottom -->
-    <div id="page-progress" style="position: fixed; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.8); color: white; padding: 8px 15px; font-size: 14px; text-align: center; z-index: 9000; display: none;">
+    <!-- Transparent page progress indicator at bottom -->
+    <div id="page-progress" style="position: fixed; bottom: 0; left: 0; right: 0; background: transparent; color: rgba(0,0,0,0.55); padding: 6px 12px; font-size: 11px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; text-align: center; z-index: 9000; display: none; pointer-events: none;">
         <span id="progress-display"></span>
     </div>
 
@@ -317,10 +417,28 @@
     </div>
 
     <script>
-        // ⬇ BUMP THIS on every reader/index change so you can confirm the WebView
-        // picked up the new HTML. Format: YYYY-MM-DD.N. Must match index.html BUILD.
-        const BUILD = '2026-05-29.3-MARGINS';
-        document.getElementById('build-stamp').textContent = 'BUILD ' + BUILD;
+        // BUILD is a short cache-bust / HTML-version tag I bump on every
+        // web edit so I can verify the WebView picked up the new HTML.
+        // The semantic app version comes from /api/version (read live from
+        // version.txt by the Flask backend); that's the one `gvc` bumps.
+        // The pill shows both: "v<semver> · b<BUILD>".
+        const BUILD = '2026-05-29.11-FONTDEBOUNCE';
+        const buildStamp = document.getElementById('build-stamp');
+        buildStamp.textContent = 'b' + BUILD;
+        fetch('http://100.69.184.113:8091/api/version').then(r => r.json()).then(d => {
+            if (d && d.version) buildStamp.textContent = 'v' + d.version + ' · b' + BUILD;
+        }).catch(() => {});
+
+        // Status-bar clock (HH:MM, 24h). Updates each minute.
+        function tickClock() {
+            const d = new Date();
+            const hh = String(d.getHours()).padStart(2, '0');
+            const mm = String(d.getMinutes()).padStart(2, '0');
+            const el = document.getElementById('status-clock');
+            if (el) el.textContent = hh + ':' + mm;
+        }
+        tickClock();
+        setInterval(tickClock, 30000);
 
         const urlParams = new URLSearchParams(window.location.search);
         const bookId = urlParams.get('id');
@@ -338,6 +456,8 @@
         // EPUB pagination state
         let epubPages = [];
         let currentEpubPage = 0;
+        // fontSize is initialised from localStorage further down (after
+        // loadFontSizePref is declared); 18 is the fallback default.
         let fontSize = 18;
         let isDualPage = false;
 
@@ -409,17 +529,27 @@
                 console.log('📚 Book ID:', bookId);
                 console.log('📖 Title:', title);
 
-                const url = `${API_URL}/books/${bookId}/download?format=epub`;
-                console.log('🌐 Download URL:', url);
-
-                // Download and extract EPUB
-                const response = await fetch(url);
-                console.log('📡 Response status:', response.status);
-                console.log('📦 Content-Type:', response.headers.get('content-type'));
-                console.log('📦 Content-Length:', response.headers.get('content-length'));
-
-                const arrayBuffer = await response.arrayBuffer();
-                console.log('📥 Downloaded', arrayBuffer.byteLength, 'bytes');
+                // Try IndexedDB first so we don't re-download books we've already got.
+                // Falls through to a network fetch on cache miss, then stores the
+                // blob for next time.
+                await openBookDB();
+                let arrayBuffer = null;
+                const cached = await getCachedBookBlob(bookId);
+                if (cached && cached.blob) {
+                    console.log('📦 Using cached blob, size:', cached.blob.size);
+                    arrayBuffer = await cached.blob.arrayBuffer();
+                } else {
+                    const url = `${API_URL}/books/${bookId}/download?format=epub`;
+                    console.log('🌐 Download URL:', url);
+                    const response = await fetch(url);
+                    console.log('📡 Response status:', response.status);
+                    console.log('📦 Content-Type:', response.headers.get('content-type'));
+                    console.log('📦 Content-Length:', response.headers.get('content-length'));
+                    const blob = await response.blob();
+                    arrayBuffer = await blob.arrayBuffer();
+                    console.log('📥 Downloaded', arrayBuffer.byteLength, 'bytes, caching\u2026');
+                    putCachedBookBlob(bookId, 'epub', blob); // fire-and-forget
+                }
 
                 const zip = await JSZip.loadAsync(arrayBuffer);
                 const fileList = Object.keys(zip.files);
@@ -545,33 +675,179 @@
             const contentDiv = doc.body.firstChild;
             contentDiv.querySelectorAll('script, style').forEach(el => el.remove());
 
-            // Extract TOC from headings
-            tocItems = [];
-            contentDiv.querySelectorAll('h1, h2, h3').forEach(heading => {
-                tocItems.push({
-                    title: heading.textContent.trim(),
-                    level: parseInt(heading.tagName.substring(1))
-                });
-            });
-
             // Insert cleaned content
             const epubContent = document.getElementById('epub-content');
             epubContent.innerHTML = contentDiv.innerHTML;
             epubContent.style.fontSize = fontSize + 'px';
 
+            // Tag every leaf block element with a stable data-anchor="N".
+            // Done on the live DOM (not the parsed tree) so the queries below
+            // can reuse the same nodes.
+            annotateAnchors(epubContent);
+
+            // Build TOC from the live, anchored DOM so each entry carries the
+            // anchor id of its heading. Tapping a TOC entry will look up the
+            // page that anchor currently lives on (works regardless of font
+            // size / dual-page / fold state).
+            tocItems = [];
+            epubContent.querySelectorAll('h1, h2, h3').forEach(heading => {
+                tocItems.push({
+                    title: heading.textContent.trim(),
+                    level: parseInt(heading.tagName.substring(1)),
+                    anchor: parseInt(heading.dataset.anchor, 10)
+                });
+            });
+
             // Calculate pages after content renders
             setTimeout(calculatePages, 100);
         }
 
-        function calculatePages(preserveProgress = false) {
+        // ---------- Word-anchored reading position ----------
+        // We tag every leaf block element (paragraph, heading, list item,
+        // image, etc.) with a monotonically increasing data-anchor="N". The
+        // anchor index survives every kind of re-pagination (font-size,
+        // unfold, dual-page, resize) because it's keyed to the SOURCE DOM,
+        // not the visual page number.
+        //
+        // Direct children of #epub-content is NOT enough: many EPUBs wrap an
+        // entire chapter in a single <div class="chapter">, which would give
+        // us exactly one anchor that's always "visible" at column 0 → font
+        // changes always snap to page 1. Walking leaf blocks gives us one
+        // anchor per paragraph, which is the granularity the user actually
+        // experiences as "the words at the top of the page".
+        const ANCHOR_SELECTOR = 'p, h1, h2, h3, h4, h5, h6, li, blockquote, pre, figure, img, table, hr, dd, dt';
+        function annotateAnchors(rootEl) {
+            let i = 0;
+            rootEl.querySelectorAll(ANCHOR_SELECTOR).forEach(el => {
+                el.dataset.anchor = String(i++);
+            });
+        }
+
+        // Find the anchor whose left edge sits inside the currently visible
+        // page band. Returns the anchor index (int) or null if none found.
+        //
+        // el.rect.left - content.rect.left gives the element's UNSHIFTED
+        // offset within content (the translateX cancels in the subtraction).
+        // The visible page covers unshifted-x in
+        //     [currentEpubPage * columnStride, currentEpubPage * columnStride + pageWidth)
+        // — NOT [0, pageWidth). Filtering on [0, pageWidth) only worked on
+        // page 0, which is why every font-size change was teleporting the
+        // user to the front cover.
+        function captureFirstVisibleAnchor() {
+            const content = document.getElementById('epub-content');
+            if (!content || !columnStride) return null;
+            const anchors = content.querySelectorAll('[data-anchor]');
+            if (!anchors.length) return null;
+            const contentLeft = content.getBoundingClientRect().left;
+            const pageStart = currentEpubPage * columnStride;
+            const pageEnd   = pageStart + pageWidth;
+            //
+            // Pass 1: prefer the anchor whose FIRST fragment (rects[0]) lies
+            // in the current page band — i.e. the first paragraph that
+            // BEGINS on this page. findPageForAnchor() snaps to where each
+            // anchor starts, so capturing a paragraph that begins here is
+            // self-consistent: at any font, "begins here" → page that
+            // contains its start.
+            //
+            // Why this matters: column-split paragraphs (one that started
+            // pages earlier and continues into the current page) have a
+            // continuation rect at exactly .left == pageStart, which is the
+            // numerically smallest "visible" left. A naive leftmost-rect
+            // capture would pick that continuation; restore would then snap
+            // to where THAT paragraph starts (way earlier), and the user
+            // would visibly shift backward every time they shrank the font.
+            // Filtering on rects[0] avoids that bias entirely.
+            //
+            let bestIdx = null;
+            let bestLeft = Infinity;
+            for (const el of anchors) {
+                const rects = el.getClientRects();
+                if (!rects.length) continue;
+                const firstLeft = rects[0].left - contentLeft;
+                if (firstLeft >= pageStart - 2 && firstLeft < pageEnd && firstLeft < bestLeft) {
+                    bestLeft = firstLeft;
+                    const n = parseInt(el.dataset.anchor, 10);
+                    if (!isNaN(n)) bestIdx = n;
+                }
+            }
+            if (bestIdx != null) return bestIdx;
+            //
+            // Pass 2 (fallback): no paragraph begins on this page — the
+            // entire page is occupied by the continuation of one (or a few)
+            // long paragraphs. Capture the element whose continuation is
+            // leftmost on this page. Restore will snap to where that
+            // paragraph starts (which IS on an earlier page), but that's
+            // still the right paragraph and better than capturing the next
+            // one (which would jump the user forward).
+            //
+            for (const el of anchors) {
+                const rects = el.getClientRects();
+                for (let i = 0; i < rects.length; i++) {
+                    const left = rects[i].left - contentLeft;
+                    if (left >= pageStart - 2 && left < pageEnd && left < bestLeft) {
+                        bestLeft = left;
+                        const n = parseInt(el.dataset.anchor, 10);
+                        if (!isNaN(n)) bestIdx = n;
+                    }
+                }
+            }
+            return bestIdx;
+        }
+
+        // Map an anchor index back to the page that now contains it after
+        // re-pagination. Uses the raw column position (element offset within
+        // content) divided by columnStride.
+        function findPageForAnchor(idx) {
+            const content = document.getElementById('epub-content');
+            if (!content || idx == null || !columnStride) return null;
+            const el = content.querySelector('[data-anchor="' + idx + '"]');
+            if (!el) return null;
+            const rawLeft = el.getBoundingClientRect().left - content.getBoundingClientRect().left;
+            return Math.max(0, Math.floor(rawLeft / columnStride));
+        }
+
+        // calculatePages(preserveProgress, presetAnchor)
+        //   preserveProgress  — true on resize/font-change/dual-toggle; false
+        //                       on first paint (where we restore from disk).
+        //   presetAnchor      — caller-supplied anchor captured BEFORE a
+        //                       reflow that would have invalidated our own
+        //                       captureFirstVisibleAnchor() (e.g. font-size
+        //                       change). When supplied, we trust it over a
+        //                       fresh capture.
+        function calculatePages(preserveProgress = false, presetAnchor) {
             const content = document.getElementById('epub-content');
             const viewport = document.getElementById('epub-viewport');
             if (!content) return;
 
-            // Remember roughly where the user was (0..1) so we can restore on resize.
-            const prevProgress = (preserveProgress && totalPages > 0)
-                ? (currentEpubPage / totalPages)
-                : 0;
+            // Capture the user's current position BEFORE we change any layout
+            // styles. Two strategies, in priority order:
+            //   1. anchorIdx  — the data-anchor of the first paragraph/heading
+            //      visible on the current page. Survives font-size and viewport
+            //      changes exactly because anchors are keyed to source DOM
+            //      nodes, not column positions. This is the "same first words"
+            //      guarantee the user asked for.
+            //   2. prevProgress — bare 0..1 fraction, fallback when no anchor
+            //      is available (e.g. first paint with only a legacy saved
+            //      state from an older build).
+            let anchorIdx = null;
+            let prevProgress = 0;
+            let directPage = null;  // used by "jump to bookmark" when no anchor
+            if (preserveProgress && totalPages > 0) {
+                // presetAnchor wins if provided (caller already captured before
+                // their own reflow-causing change).
+                anchorIdx = (presetAnchor !== undefined && presetAnchor !== null)
+                    ? presetAnchor
+                    : captureFirstVisibleAnchor();
+                prevProgress = currentEpubPage / totalPages;
+            } else {
+                const saved = loadReadingState();
+                if (saved) {
+                    if (typeof saved.anchor === 'number') anchorIdx = saved.anchor;
+                    if (typeof saved.page === 'number')   directPage = saved.page;
+                    if (typeof saved.progress === 'number') prevProgress = saved.progress;
+                    console.log('📌 Restoring reading position:', saved);
+                }
+            }
 
             // Use visualViewport when available (more accurate on foldables and when
             // the on-screen keyboard or browser chrome is in play). Fall back to
@@ -628,16 +904,29 @@
                 contentWidth = content.scrollWidth;
                 // Number of viewport-sized pages. Use ceil so trailing content isn't clipped.
                 totalPages = Math.max(1, Math.ceil(contentWidth / columnStride));
-                currentEpubPage = Math.min(
-                    totalPages - 1,
-                    Math.max(0, Math.round(prevProgress * totalPages))
-                );
+
+                // Prefer the anchor — it gives us "same first words on the page"
+                // even though totalPages may have changed. Fall back to the
+                // saved progress fraction if the anchor isn't available (e.g.
+                // legacy state from before this build).
+                let targetPage = null;
+                if (anchorIdx != null) {
+                    targetPage = findPageForAnchor(anchorIdx);
+                }
+                if (targetPage == null && directPage != null) {
+                    targetPage = directPage;
+                }
+                if (targetPage == null) {
+                    targetPage = Math.round(prevProgress * totalPages);
+                }
+                currentEpubPage = Math.min(totalPages - 1, Math.max(0, targetPage));
 
                 console.log('📊 Page calc:', {
                     pageWidth, vpHeight, dual, columnCount,
                     columnWidth, columnGap,
                     contentScrollWidth: contentWidth,
-                    totalPages, currentEpubPage
+                    totalPages, currentEpubPage,
+                    anchorIdx, viaAnchor: anchorIdx != null
                 });
 
                 renderEpubPage();
@@ -831,25 +1120,214 @@
             const progress = ((currentEpubPage + 1) / totalPages * 100).toFixed(1);
             const display = `Page ${currentEpubPage + 1} of ${totalPages} (${progress}%)`;
             document.getElementById('progress-display').textContent = display;
+            saveReadingState();
+        }
+
+        // ---------- Font-size changes (slider + +/- buttons) ----------
+        //
+        // The slider fires `oninput` on EVERY intermediate tick during a
+        // drag (20 → 22 → 24 → 26 fires four events). If we captured the
+        // anchor and reflowed on each event, the second-and-later captures
+        // would run against a DOM whose fontSize had already been mutated
+        // by the first event but whose currentEpubPage / columnStride were
+        // still from the OLD layout — the page-band math goes inconsistent
+        // and we capture the wrong anchor. The end result: 20→24 in one
+        // drag drifts; 20→22 then 22→24 in two separate touches doesn't.
+        //
+        // Fix: capture the anchor exactly ONCE at the start of any change
+        // burst, debounce the reflow, and feed that original anchor into
+        // calculatePages when the burst settles. Intermediate ticks only
+        // update the visible label.
+        let fontChangeAnchor = null;
+        let fontChangeTimer  = null;
+        const FONT_SETTLE_MS = 120;
+
+        function scheduleFontReflow() {
+            if (fontChangeTimer) clearTimeout(fontChangeTimer);
+            fontChangeTimer = setTimeout(() => {
+                fontChangeTimer = null;
+                const anchor = fontChangeAnchor;
+                fontChangeAnchor = null;
+                const content = document.getElementById('epub-content');
+                if (!content) return;
+                content.style.fontSize = fontSize + 'px';
+                // Two RAFs so the browser commits the style + reflow before
+                // calculatePages measures geometry. setTimeout-0 has been
+                // unreliable on WebView during pinch/scroll.
+                requestAnimationFrame(() => requestAnimationFrame(() => {
+                    calculatePages(true, anchor);
+                }));
+            }, FONT_SETTLE_MS);
         }
 
         function changeFontSize(delta) {
+            // Button-driven (single discrete step) — capture immediately,
+            // then route through the debouncer so rapid taps still coalesce.
+            if (fontChangeAnchor == null) {
+                fontChangeAnchor = captureFirstVisibleAnchor();
+            }
             fontSize = Math.max(12, Math.min(32, fontSize + delta));
             document.getElementById('font-slider').value = fontSize;
-            const content = document.getElementById('epub-content');
-            if (content) {
-                content.style.fontSize = fontSize + 'px';
-                setTimeout(() => calculatePages(true), 100);
-            }
+            const label = document.getElementById('font-size-label');
+            if (label) label.textContent = fontSize;
+            saveFontSizePref();
+            scheduleFontReflow();
         }
 
         function setFontSize(size) {
-            fontSize = parseInt(size);
-            const content = document.getElementById('epub-content');
-            if (content) {
-                content.style.fontSize = fontSize + 'px';
-                setTimeout(() => calculatePages(true), 100);
+            // Slider-driven (oninput fires every tick during a drag).
+            // Capture anchor ONCE on the first tick of the burst — every
+            // subsequent tick reuses that captured anchor so the user's
+            // visible position survives the whole drag.
+            if (fontChangeAnchor == null) {
+                fontChangeAnchor = captureFirstVisibleAnchor();
             }
+            fontSize = parseInt(size);
+            const label = document.getElementById('font-size-label');
+            if (label) label.textContent = fontSize;
+            saveFontSizePref();
+            scheduleFontReflow();
+        }
+
+        // ---------- Reading-state persistence ----------
+        // localStorage key shape: ereader.state.<bookId> -> { page, total, progress, ts }
+        // Saved on every page turn and on calculatePages() once we know total.
+        // Restored by calculatePages() on first paint (preserveProgress === false).
+        const STATE_KEY = 'ereader.state.' + bookId;
+        const FONT_KEY  = 'ereader.fontSize';
+
+        function saveReadingState() {
+            if (!bookId || !totalPages) return;
+            try {
+                // Persist BOTH the anchor (word-level position, stable across
+                // font/viewport changes) AND the bare progress fraction
+                // (fallback for legacy state or content with no anchors).
+                const anchor = captureFirstVisibleAnchor();
+                localStorage.setItem(STATE_KEY, JSON.stringify({
+                    page: currentEpubPage,
+                    total: totalPages,
+                    progress: currentEpubPage / totalPages,
+                    anchor: anchor,
+                    fontSize: fontSize,
+                    ts: Date.now()
+                }));
+            } catch (e) { /* quota / private mode */ }
+        }
+        function loadReadingState() {
+            // A "jump" entry overrides the normal saved state for one open —
+            // e.g. when the user taps a highlight from the library overlay we
+            // need to land on THAT anchor, not wherever they last were.
+            try {
+                const jraw = localStorage.getItem('ereader.jump.' + bookId);
+                if (jraw) {
+                    localStorage.removeItem('ereader.jump.' + bookId);
+                    const j = JSON.parse(jraw);
+                    return {
+                        anchor: (typeof j.anchor === 'number') ? j.anchor : null,
+                        page: (typeof j.page === 'number') ? j.page : null,
+                        progress: 0,
+                        ts: j.ts
+                    };
+                }
+            } catch (_) {}
+            try {
+                const raw = localStorage.getItem(STATE_KEY);
+                return raw ? JSON.parse(raw) : null;
+            } catch (e) { return null; }
+        }
+
+        // ---------- Bookmark the current page ----------
+        // Posts a {type:'bookmark', anchor, page, ...} entry to the backend so
+        // the library-wide highlights overlay can show it. The anchor pins the
+        // exact source-DOM block; the page is informational only.
+        async function bookmarkCurrentPage() {
+            const anchor = captureFirstVisibleAnchor();
+            const body = {
+                type: 'bookmark',
+                bookId: bookId,
+                bookTitle: title,
+                anchor: anchor,
+                page: currentEpubPage,
+                total: totalPages,
+                text: '',
+                note: ''
+            };
+            try {
+                const r = await fetch(`${API_URL}/highlights`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                flashToast('🔖 Bookmarked page ' + (currentEpubPage + 1));
+            } catch (e) {
+                flashToast('⚠️ Bookmark failed: ' + e.message);
+            }
+        }
+
+        function flashToast(msg) {
+            let t = document.getElementById('toast');
+            if (!t) {
+                t = document.createElement('div');
+                t.id = 'toast';
+                t.style.cssText = 'position:fixed;left:50%;bottom:80px;transform:translateX(-50%);background:rgba(0,0,0,0.85);color:#fff;padding:10px 16px;border-radius:8px;z-index:100002;font-size:14px;pointer-events:none;transition:opacity 0.3s;';
+                document.body.appendChild(t);
+            }
+            t.textContent = msg;
+            t.style.opacity = '1';
+            clearTimeout(flashToast._h);
+            flashToast._h = setTimeout(() => { t.style.opacity = '0'; }, 1800);
+        }
+        function saveFontSizePref() {
+            try { localStorage.setItem(FONT_KEY, String(fontSize)); } catch (e) {}
+        }
+        function loadFontSizePref() {
+            try {
+                const v = parseInt(localStorage.getItem(FONT_KEY) || '0', 10);
+                if (v >= 12 && v <= 32) return v;
+            } catch (e) {}
+            return null;
+        }
+
+        // ---------- IndexedDB book cache (shared with index.html) ----------
+        // Books are stored by id in object store "books" of database "EreaderDB".
+        // Once a book is downloaded it stays available offline forever (until
+        // the user clears app storage). Schema MUST match web/index.html.
+        let bookDB = null;
+        function openBookDB() {
+            return new Promise((resolve) => {
+                const req = indexedDB.open('EreaderDB', 1);
+                req.onupgradeneeded = (e) => {
+                    const db = e.target.result;
+                    if (!db.objectStoreNames.contains('books')) {
+                        db.createObjectStore('books', { keyPath: 'id' });
+                    }
+                };
+                req.onsuccess = (e) => { bookDB = e.target.result; resolve(bookDB); };
+                req.onerror = () => resolve(null);
+            });
+        }
+        function getCachedBookBlob(id) {
+            return new Promise((resolve) => {
+                if (!bookDB) { resolve(null); return; }
+                try {
+                    const tx = bookDB.transaction(['books'], 'readonly');
+                    const req = tx.objectStore('books').get(id);
+                    req.onsuccess = () => resolve(req.result || null);
+                    req.onerror = () => resolve(null);
+                } catch (e) { resolve(null); }
+            });
+        }
+        function putCachedBookBlob(id, fmt, blob) {
+            return new Promise((resolve) => {
+                if (!bookDB) { resolve(false); return; }
+                try {
+                    const tx = bookDB.transaction(['books'], 'readwrite');
+                    tx.objectStore('books').put({ id, format: fmt, blob, cached: new Date() });
+                    tx.oncomplete = () => resolve(true);
+                    tx.onerror = () => resolve(false);
+                } catch (e) { resolve(false); }
+            });
         }
 
         function toggleDualPage() {
@@ -954,8 +1432,22 @@
                         `;
                         tocItem.textContent = item.title;
                         tocItem.onclick = () => {
-                            currentEpubPage = item.page;
-                            renderEpubPage();
+                            // Resolve the heading's anchor to its CURRENT
+                            // page (re-paginated layouts have moved it). Fall
+                            // back to legacy item.page if present.
+                            let page = null;
+                            if (typeof item.anchor === 'number' && !isNaN(item.anchor)) {
+                                page = findPageForAnchor(item.anchor);
+                            }
+                            if (page == null && typeof item.page === 'number') {
+                                page = item.page;
+                            }
+                            if (page != null) {
+                                currentEpubPage = Math.min(totalPages - 1, Math.max(0, page));
+                                renderEpubPage();
+                            } else {
+                                console.warn('TOC: could not resolve page for', item);
+                            }
                             toggleTOC();
                             toggleMenu();
                         };
@@ -1082,6 +1574,17 @@
 
         setInterval(updateDebugInfo, 1000);
         setTimeout(updateDebugInfo, 500);
+
+        // Apply persisted font-size pref before loading content so first paint
+        // reflects the user's last choice (no flash from default 18).
+        {
+            const pref = loadFontSizePref();
+            if (pref) fontSize = pref;
+            const slider = document.getElementById('font-slider');
+            if (slider) slider.value = fontSize;
+            const lbl = document.getElementById('font-size-label');
+            if (lbl) lbl.textContent = fontSize;
+        }
 
         // Load the book
         if (format.toLowerCase() === 'pdf') {

@@ -21,23 +21,139 @@
             color: #fff;
             padding: 0;
             overflow-x: hidden;
+            /* Reserve room for the fixed .status-bar so the first row of book
+               covers isn't clipped under it. Must equal the bar's height. */
+            padding-top: 84px;
         }
-        .header {
-            display: none;
+        /* Top transparent status/toolbar.
+           Row 1: clock (left) + version (right) — 28px tall
+           Row 2: search input + sort dropdown — 56px tall */
+        .status-bar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 99999;
+            background: rgba(18, 18, 18, 0.85);
+            backdrop-filter: blur(6px);
+            -webkit-backdrop-filter: blur(6px);
+            display: flex;
+            flex-direction: column;
         }
-        .header h1 {
-            font-size: 24px;
-            margin-bottom: 10px;
+        .status-bar-row1 {
+            height: 28px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 12px;
+            font-size: 12px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            color: rgba(255, 255, 255, 0.55);
+            letter-spacing: 0.3px;
+            pointer-events: none;
+        }
+        .status-bar-row2 {
+            display: flex;
+            gap: 8px;
+            padding: 6px 10px 10px 10px;
+            align-items: center;
         }
         .search {
-            width: 100%;
-            padding: 12px;
+            flex: 1;
+            padding: 10px 12px;
             background: #2a2a2a;
             border: none;
             border-radius: 8px;
             color: #fff;
-            font-size: 16px;
+            font-size: 14px;
+            min-width: 0;
         }
+        .sort-select {
+            background: #2a2a2a;
+            border: none;
+            border-radius: 8px;
+            color: #fff;
+            font-size: 14px;
+            padding: 10px 8px;
+            -webkit-appearance: none;
+            appearance: none;
+        }
+        .icon-btn {
+            background: #2a2a2a;
+            border: none;
+            border-radius: 8px;
+            color: #fff;
+            font-size: 18px;
+            padding: 8px 12px;
+            cursor: pointer;
+            line-height: 1;
+        }
+        .menu-popup {
+            position: fixed;
+            top: 84px;
+            right: 8px;
+            background: #2a2a2a;
+            border-radius: 8px;
+            box-shadow: 0 6px 24px rgba(0,0,0,0.5);
+            z-index: 100000;
+            min-width: 180px;
+            display: none;
+        }
+        .menu-popup.open { display: block; }
+        .menu-popup button {
+            display: block;
+            width: 100%;
+            background: transparent;
+            border: none;
+            color: #fff;
+            text-align: left;
+            padding: 12px 16px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+        .menu-popup button:active { background: #3a3a3a; }
+        /* Full-screen overlay for the highlights/bookmarks browser. */
+        .overlay {
+            position: fixed;
+            inset: 0;
+            background: #121212;
+            z-index: 100001;
+            display: none;
+            flex-direction: column;
+            padding-top: 84px;
+        }
+        .overlay.open { display: flex; }
+        .overlay-header {
+            position: fixed; top: 0; left: 0; right: 0;
+            height: 84px;
+            background: rgba(18,18,18,0.95);
+            display: flex; align-items: center; gap: 8px;
+            padding: 6px 10px;
+        }
+        .overlay-header input {
+            flex: 1; padding: 10px 12px; background: #2a2a2a;
+            border: none; border-radius: 8px; color: #fff; font-size: 14px;
+        }
+        .overlay-header select {
+            background: #2a2a2a; border: none; border-radius: 8px; color: #fff;
+            font-size: 14px; padding: 10px 8px; -webkit-appearance: none; appearance: none;
+        }
+        .overlay-list {
+            flex: 1; overflow-y: auto; padding: 12px;
+        }
+        .hl-item {
+            background: #1e1e1e; border-radius: 8px; padding: 12px;
+            margin-bottom: 10px; border-left: 4px solid #4caf50;
+        }
+        .hl-item.bookmark { border-left-color: #2196f3; }
+        .hl-meta { color: #888; font-size: 11px; margin-bottom: 4px; }
+        .hl-text { color: #ddd; font-size: 14px; line-height: 1.4; white-space: pre-wrap; }
+        .hl-actions { margin-top: 8px; display: flex; gap: 8px; }
+        .hl-actions button {
+            background: #2a2a2a; border: none; border-radius: 6px;
+            color: #fff; padding: 6px 10px; font-size: 12px; cursor: pointer;
+        }
+        .hl-actions button.danger { background: #5a2222; }
         .books {
             padding: 10px;
             display: grid;
@@ -47,9 +163,14 @@
         .book {
             cursor: pointer;
             transition: transform 0.2s;
+            position: relative;
         }
         .book:active {
             transform: scale(0.95);
+        }
+        .book-cover-wrap {
+            position: relative;
+            margin-bottom: 8px;
         }
         .book-cover {
             width: 100%;
@@ -57,8 +178,33 @@
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             border-radius: 8px;
             object-fit: cover;
-            margin-bottom: 8px;
             box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+            display: block;
+        }
+        /* Reading-progress bar over the bottom of a book cover */
+        .book-progress {
+            position: absolute;
+            left: 4px;
+            right: 4px;
+            bottom: 4px;
+            height: 4px;
+            background: rgba(0, 0, 0, 0.5);
+            border-radius: 2px;
+            overflow: hidden;
+        }
+        .book-progress-fill {
+            height: 100%;
+            background: #4caf50;
+        }
+        .book-cached-dot {
+            position: absolute;
+            top: 4px;
+            right: 4px;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #4caf50;
+            box-shadow: 0 0 4px rgba(0,0,0,0.6);
         }
         .book-title {
             font-size: 12px;
@@ -95,44 +241,71 @@
             margin: 20px;
             border-radius: 8px;
         }
-        /* Build/version stamp — bump BUILD constant on every meaningful edit.
-           Deliberately LOUD so you can verify the WebView picked up the new HTML. */
-        #build-stamp {
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            font-size: 16px;
-            font-weight: bold;
-            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-            color: #fff;
-            background: #d32f2f;
-            padding: 6px 10px;
-            text-align: center;
-            z-index: 99999;
-            pointer-events: none;
-            letter-spacing: 0.5px;
-        }
     </style>
 </head>
 <body>
-    <div class="header">
-        <h1>📚 My Ereader</h1>
-        <input type="text" class="search" id="search" placeholder="Search books...">
+    <div class="status-bar">
+        <div class="status-bar-row1">
+            <span id="status-clock"></span>
+            <span id="build-stamp"></span>
+        </div>
+        <div class="status-bar-row2">
+            <input type="text" class="search" id="search" placeholder="Search books…">
+            <select class="sort-select" id="sort-select" title="Sort">
+                <option value="author">Author</option>
+                <option value="title">Title</option>
+                <option value="recent">Recently read</option>
+            </select>
+            <button class="icon-btn" id="menu-btn" title="Menu" aria-label="Menu">☰</button>
+        </div>
+    </div>
+
+    <div class="menu-popup" id="menu-popup">
+        <button id="menu-highlights">📑 Highlights &amp; Bookmarks</button>
+    </div>
+
+    <!-- Highlights/Bookmarks overlay -->
+    <div class="overlay" id="hl-overlay">
+        <div class="overlay-header">
+            <button class="icon-btn" onclick="closeHighlights()" title="Back">←</button>
+            <input type="text" id="hl-search" placeholder="Search highlights & bookmarks…">
+            <select id="hl-type">
+                <option value="">All</option>
+                <option value="highlight">Highlights</option>
+                <option value="bookmark">Bookmarks</option>
+            </select>
+        </div>
+        <div class="overlay-list" id="hl-list">
+            <div class="loading">Loading…</div>
+        </div>
     </div>
 
     <div id="content">
         <div class="loading">Loading your library...</div>
     </div>
 
-    <div id="build-stamp"></div>
-
     <script>
-        // ⬇ BUMP THIS on every reader/index change so you can confirm the WebView
-        // picked up the new HTML. Format: YYYY-MM-DD.N
-        const BUILD = '2026-05-29.3-MARGINS';
+        // BUILD is a short cache-bust / HTML-version tag I bump on every
+        // web edit so I can verify the WebView picked up the new HTML.
+        // The semantic app version comes from /api/version (read live from
+        // version.txt by the Flask backend); that's the one `gvc` bumps.
+        // The pill shows both: "v<semver> · b<BUILD>".
+        const BUILD = '2026-05-29.11-FONTDEBOUNCE';
+        const buildStamp = document.getElementById('build-stamp');
+        buildStamp.textContent = 'b' + BUILD;
+        fetch('http://100.69.184.113:8091/api/version').then(r => r.json()).then(d => {
+            if (d && d.version) buildStamp.textContent = 'v' + d.version + ' · b' + BUILD;
+        }).catch(() => {});
 
-        document.getElementById('build-stamp').textContent = 'BUILD ' + BUILD;
+        // Status-bar clock (HH:MM, 24h)
+        function tickClock() {
+            const d = new Date();
+            const hh = String(d.getHours()).padStart(2, '0');
+            const mm = String(d.getMinutes()).padStart(2, '0');
+            document.getElementById('status-clock').textContent = hh + ':' + mm;
+        }
+        tickClock();
+        setInterval(tickClock, 30000);
 
         const API_URL = 'http://100.69.184.113:8091/api';
         let allBooks = [];
@@ -141,42 +314,45 @@
         const BATCH_SIZE = 50;
         let isLoading = false;
         let searchQuery = '';
+        let sortMode = 'author';  // 'author' | 'title' | 'recent'
+        // Snapshot of the non-search ("home") library + scroll position so we
+        // can restore them when the user clears the search box. Without this,
+        // clearing search would lose everything we'd lazily paged in.
+        let homeBooks = [];
+        let homeOffset = 0;
+        let homeIsComplete = false;
+        let searchAbortCtl = null;
+        let searchSeq = 0;
 
-        // Sorting now handled by backend
+        // Reading-state lookup (mirrors reader.html STATE_KEY format)
+        function readingStateFor(id) {
+            try {
+                const raw = localStorage.getItem('ereader.state.' + id);
+                return raw ? JSON.parse(raw) : null;
+            } catch (e) { return null; }
+        }
 
         async function loadBooks() {
-            if (isLoading) return;
+            // Don't lazy-page while a search is active \u2014 search owns the result
+            // set and infinite scroll would corrupt it.
+            if (isLoading || searchQuery) return;
             isLoading = true;
 
             try {
-                console.log('Fetching books from:', `${API_URL}/books?limit=${BATCH_SIZE}&offset=${currentOffset}`);
-                const response = await fetch(`${API_URL}/books?limit=${BATCH_SIZE}&offset=${currentOffset}`);
-
-                console.log('Response status:', response.status);
-
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
-
-                const text = await response.text();
-                console.log('Response text length:', text.length);
-
-                const data = JSON.parse(text);
-                console.log('Parsed data:', data);
-
+                const url = `${API_URL}/books?limit=${BATCH_SIZE}&offset=${currentOffset}`;
+                console.log('Fetching books from:', url);
+                const response = await fetch(url);
+                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                const data = await response.json();
                 const newBooks = data.books || [];
-                console.log('New books count:', newBooks.length);
 
-                // Backend now returns sorted books, so just append
-                allBooks = allBooks.concat(newBooks);
-                currentOffset += newBooks.length;
+                homeBooks = homeBooks.concat(newBooks);
+                homeOffset += newBooks.length;
+                homeIsComplete = newBooks.length < BATCH_SIZE;
+                allBooks = homeBooks;
+                currentOffset = homeOffset;
 
-                displayedBooks = searchQuery ? allBooks.filter(book =>
-                    book.title.toLowerCase().includes(searchQuery) ||
-                    book.author.toLowerCase().includes(searchQuery)
-                ) : allBooks;
-
-                displayBooks(displayedBooks, newBooks.length < BATCH_SIZE);
+                displayBooks(allBooks, homeIsComplete);
             } catch (error) {
                 console.error('Error loading books:', error);
                 document.getElementById('content').innerHTML = `
@@ -190,6 +366,56 @@
             }
         }
 
+        // Server-side search across the WHOLE Calibre library, not just what's
+        // currently loaded. Builds a Calibre-style query that matches title OR
+        // author. Debounced + sequence-checked so a slow earlier response
+        // can't clobber a faster later one.
+        async function runServerSearch(q) {
+            const mySeq = ++searchSeq;
+            if (searchAbortCtl) searchAbortCtl.abort();
+            searchAbortCtl = new AbortController();
+
+            // Calibre query language: `title:"foo" or author:"foo"`. Quoting
+            // keeps multi-word phrases intact and escapes the user input.
+            const safe = q.replace(/"/g, '\\"');
+            const calibreQuery = `title:"${safe}" or authors:"${safe}"`;
+            const url = `${API_URL}/books?limit=200&offset=0&query=${encodeURIComponent(calibreQuery)}`;
+
+            try {
+                const response = await fetch(url, { signal: searchAbortCtl.signal });
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                const data = await response.json();
+                if (mySeq !== searchSeq) return; // a newer search supersedes us
+                const results = data.books || [];
+                allBooks = results;
+                displayBooks(results, true);
+            } catch (e) {
+                if (e.name === 'AbortError') return;
+                console.error('Search failed:', e);
+            }
+        }
+
+        function escapeHTML(s) {
+            return String(s).replace(/[&<>"']/g, c => ({
+                '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+            }[c]));
+        }
+
+        function applySort(list) {
+            const arr = list.slice();
+            if (sortMode === 'title') {
+                arr.sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+            } else if (sortMode === 'recent') {
+                arr.sort((a, b) => {
+                    const sa = readingStateFor(a.id);
+                    const sb = readingStateFor(b.id);
+                    return (sb ? sb.ts : 0) - (sa ? sa.ts : 0);
+                });
+            }
+            // 'author' is the backend's natural order; leave as-is.
+            return arr;
+        }
+
         function displayBooks(books, isComplete) {
             const content = document.getElementById('content');
 
@@ -200,14 +426,29 @@
                 return;
             }
 
-            const booksHTML = books.map(book => {
+            const sorted = applySort(books);
+
+            const booksHTML = sorted.map(book => {
                 const format = (book.formats[0] || 'epub').toLowerCase();
                 const coverUrl = book.cover || book.thumbnail;
+                const state = readingStateFor(book.id);
+                const progressPct = state && state.progress != null
+                    ? Math.round(((state.page + 1) / state.total) * 100) : 0;
+                const cachedDot = cachedBookIds.has(book.id)
+                    ? '<div class="book-cached-dot" title="Downloaded"></div>' : '';
+                const progressBar = progressPct > 0 ? `
+                    <div class="book-progress" title="${progressPct}% read">
+                        <div class="book-progress-fill" style="width: ${progressPct}%"></div>
+                    </div>` : '';
                 return `
                 <div class="book" onclick="openBook('${book.id}', '${format}', '${encodeURIComponent(book.title)}')">
-                    <img src="${coverUrl}" class="book-cover" onerror="this.style.background='linear-gradient(135deg, #667eea 0%, #764ba2 100%)'">
-                    <div class="book-title">${book.title}</div>
-                    <div class="book-author">${book.author}</div>
+                    <div class="book-cover-wrap">
+                        <img src="${coverUrl}" class="book-cover" onerror="this.style.background='linear-gradient(135deg, #667eea 0%, #764ba2 100%)'">
+                        ${cachedDot}
+                        ${progressBar}
+                    </div>
+                    <div class="book-title">${escapeHTML(book.title)}</div>
+                    <div class="book-author">${escapeHTML(book.author)}</div>
                 </div>
             `;}).join('');
 
@@ -216,20 +457,16 @@
         }
 
         async function openBook(id, format, title) {
-            // Append BUILD to bust the WebView's HTTP cache so reader.html is
-            // re-fetched whenever we ship a new version of the page.
-            const cached = await getCachedBook(id);
-            const base = `reader.html?v=${BUILD}&id=${id}&format=${format}&title=${title}`;
-            if (cached) {
-                window.location.href = base + '&cached=true';
-            } else {
-                downloadAndCache(id, format);
-                window.location.href = base;
-            }
+            // Cache-bust reader.html via BUILD so HTML edits show up immediately.
+            // The reader will pull the book blob from IndexedDB if we already
+            // have it, or fetch + cache it on first open. We don't pre-fetch
+            // here \u2014 the reader's own cache-then-network path handles it.
+            window.location.href = `reader.html?v=${BUILD}&id=${id}&format=${format}&title=${title}`;
         }
 
-        // IndexedDB for offline storage
+        // IndexedDB for offline storage (schema MUST match reader.html)
         let db;
+        const cachedBookIds = new Set();
         function initDB() {
             const request = indexedDB.open('EreaderDB', 1);
             request.onupgradeneeded = (e) => {
@@ -240,43 +477,65 @@
             };
             request.onsuccess = (e) => {
                 db = e.target.result;
+                refreshCachedIds();
             };
         }
 
-        async function getCachedBook(id) {
-            return new Promise((resolve) => {
-                if (!db) { resolve(null); return; }
-                const tx = db.transaction(['books'], 'readonly');
-                const store = tx.objectStore('books');
-                const req = store.get(id);
-                req.onsuccess = () => resolve(req.result);
-                req.onerror = () => resolve(null);
-            });
-        }
-
-        async function downloadAndCache(id, format) {
+        // Populate cachedBookIds so book covers can show a "downloaded" dot.
+        function refreshCachedIds() {
+            if (!db) return;
             try {
-                const url = `${API_URL}/books/${id}/download?format=${format}`;
-                const response = await fetch(url);
-                const blob = await response.blob();
-
-                if (db) {
-                    const tx = db.transaction(['books'], 'readwrite');
-                    const store = tx.objectStore('books');
-                    store.put({ id, format, blob, cached: new Date() });
-                }
-            } catch (error) {
-                console.error('Failed to cache book:', error);
-            }
+                const tx = db.transaction(['books'], 'readonly');
+                const req = tx.objectStore('books').getAllKeys();
+                req.onsuccess = () => {
+                    cachedBookIds.clear();
+                    (req.result || []).forEach(k => cachedBookIds.add(k));
+                    if (allBooks.length > 0) reRender();
+                };
+            } catch (e) { /* ignore */ }
         }
 
+        function reRender() {
+            // allBooks already holds either the homeBooks set or the server's
+            // search results, so we just re-paint it. Sorting + cached-dot
+            // overlay is applied in displayBooks().
+            displayBooks(allBooks, !searchQuery ? homeIsComplete : true);
+        }
+
+        // Debounce input so we don't fire a Calibre query on every keystroke.
+        let _searchDebounce = null;
         document.getElementById('search').addEventListener('input', (e) => {
-            searchQuery = e.target.value.toLowerCase();
-            const filtered = searchQuery ? allBooks.filter(book =>
-                book.title.toLowerCase().includes(searchQuery) ||
-                book.author.toLowerCase().includes(searchQuery)
-            ) : allBooks;
-            displayBooks(filtered, true);
+            const v = e.target.value.trim();
+            searchQuery = v.toLowerCase();
+            clearTimeout(_searchDebounce);
+            _searchDebounce = setTimeout(() => {
+                if (!v) {
+                    // Restore the home (lazy-paged) view exactly as it was.
+                    allBooks = homeBooks;
+                    currentOffset = homeOffset;
+                    displayBooks(allBooks, homeIsComplete);
+                } else {
+                    runServerSearch(v);
+                }
+            }, 250);
+        });
+        document.getElementById('sort-select').addEventListener('change', (e) => {
+            sortMode = e.target.value;
+            try { localStorage.setItem('ereader.sortMode', sortMode); } catch (_) {}
+            reRender();
+        });
+        // Restore previously chosen sort
+        try {
+            const savedSort = localStorage.getItem('ereader.sortMode');
+            if (savedSort) {
+                sortMode = savedSort;
+                document.getElementById('sort-select').value = sortMode;
+            }
+        } catch (_) {}
+        // When returning from the reader, the cached set and reading state may
+        // have changed \u2014 refresh on visibility-change.
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) { refreshCachedIds(); reRender(); }
         });
 
         // Infinite scroll
@@ -287,6 +546,97 @@
                 }
             }
         });
+
+        // ---------- Hamburger menu ----------
+        const menuBtn = document.getElementById('menu-btn');
+        const menuPopup = document.getElementById('menu-popup');
+        menuBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            menuPopup.classList.toggle('open');
+        });
+        document.addEventListener('click', (e) => {
+            if (!menuPopup.contains(e.target) && e.target !== menuBtn) {
+                menuPopup.classList.remove('open');
+            }
+        });
+
+        // ---------- Highlights & Bookmarks overlay ----------
+        document.getElementById('menu-highlights').addEventListener('click', () => {
+            menuPopup.classList.remove('open');
+            openHighlights();
+        });
+        function openHighlights() {
+            document.getElementById('hl-overlay').classList.add('open');
+            loadHighlights();
+        }
+        function closeHighlights() {
+            document.getElementById('hl-overlay').classList.remove('open');
+        }
+        let _hlDebounce = null;
+        document.getElementById('hl-search').addEventListener('input', () => {
+            clearTimeout(_hlDebounce);
+            _hlDebounce = setTimeout(loadHighlights, 250);
+        });
+        document.getElementById('hl-type').addEventListener('change', loadHighlights);
+
+        async function loadHighlights() {
+            const q = document.getElementById('hl-search').value.trim();
+            const type = document.getElementById('hl-type').value;
+            const list = document.getElementById('hl-list');
+            list.innerHTML = '<div class="loading">Loading…</div>';
+            const params = new URLSearchParams();
+            if (q) params.set('q', q);
+            if (type) params.set('type', type);
+            try {
+                const r = await fetch(`${API_URL}/highlights?` + params.toString());
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                const data = await r.json();
+                renderHighlights(data.items || []);
+            } catch (e) {
+                list.innerHTML = `<div class="error">Failed to load: ${e.message}</div>`;
+            }
+        }
+        function renderHighlights(items) {
+            const list = document.getElementById('hl-list');
+            if (!items.length) {
+                list.innerHTML = '<div class="loading">No items yet. Bookmark or highlight something in a book.</div>';
+                return;
+            }
+            list.innerHTML = items.map(it => {
+                const when = new Date(it.created).toLocaleString();
+                const meta = `${escapeHTML(it.bookTitle || '?')} · ${escapeHTML(it.bookAuthor || '')} · page ${it.page != null ? it.page + 1 : '?'}${it.total ? '/' + it.total : ''} · ${when}`;
+                const body = it.text || it.note || (it.type === 'bookmark' ? '🔖 Bookmark' : '');
+                return `<div class="hl-item ${it.type}">
+                    <div class="hl-meta">${meta}</div>
+                    <div class="hl-text">${escapeHTML(body)}</div>
+                    <div class="hl-actions">
+                        <button onclick="jumpToHighlight('${it.id}', '${it.bookId}', ${it.anchor != null ? it.anchor : 'null'}, ${it.page != null ? it.page : 'null'})">Open in book</button>
+                        <button class="danger" onclick="deleteHighlight('${it.id}')">Delete</button>
+                    </div>
+                </div>`;
+            }).join('');
+        }
+        window.jumpToHighlight = function(_id, bookId, anchor, page) {
+            // Hand off to reader.html. It already reads localStorage state on
+            // open; we stash a one-shot jump target so the reader knows to
+            // override the saved position with this specific anchor/page.
+            try {
+                localStorage.setItem('ereader.jump.' + bookId,
+                    JSON.stringify({ anchor, page, ts: Date.now() }));
+            } catch (_) {}
+            // Best-effort lookup of format from loaded books; fall back to epub.
+            const b = allBooks.find(x => String(x.id) === String(bookId));
+            const fmt = (b && (b.formats || [])[0]) || 'epub';
+            const title = (b && b.title) || '';
+            location.href = `reader.html?id=${encodeURIComponent(bookId)}&format=${encodeURIComponent(fmt)}&title=${encodeURIComponent(title)}`;
+        };
+        window.deleteHighlight = async function(id) {
+            if (!confirm('Delete this item?')) return;
+            try {
+                await fetch(`${API_URL}/highlights/${id}`, { method: 'DELETE' });
+                loadHighlights();
+            } catch (_) {}
+        };
 
         initDB();
         loadBooks();
