@@ -1,0 +1,89 @@
+---
+alwaysApply: true
+description: Ereader agent guidelines — extends shared server guidelines
+---
+
+# AI Agent Guidelines for Ereader
+
+**Shared server guidelines** (iptables fix, container inventory, Tailscale IP, forbidden ops):
+→ `/home/brandon/projects/.augment-guidelines`
+
+---
+
+## 🚨 Critical Rules (Always Apply)
+
+- **NEVER**: `sudo reboot`, `shutdown`, `docker-compose down`, `DROP DATABASE`, `pg_resetwal`
+- **NEVER** pipe `curl … | bash` from third-party sources without explicit user confirmation
+- **NEVER** commit, push, install dependencies, or build/flash the APK without explicit permission
+- **Tailscale IP**: `100.69.184.113`
+- Not a Docker project — runs as a bare Flask process + static web files
+
+## Project Details
+
+- **Directory**: `/home/brandon/projects/Ereader/`
+- **Backend**: Flask, `backend/server.py`, port **8091**, proxies a Calibre Content Server
+  - Calibre upstream: `$CALIBRE_URL` (default `http://localhost:8083`), library `$CALIBRE_LIBRARY`
+  - Run via `backend/run.sh` (creates venv, installs requirements, starts on 0.0.0.0:8091)
+  - PID file: `server.pid`, logs: `backend/server.log`
+- **Web reader**: static files in `web/` served on port **8090** (separate process)
+  - `web/index.html` — library browser
+  - `web/reader.html` — PDF + EPUB reader (consumed in-app via WebView)
+- **Android app**: `simple-app/` — minimal native WebView wrapper pointing at `http://100.69.184.113:8090`
+  - Build output: `web/ereader.apk` (signed)
+  - Built with Android Studio / Gradle; do not rebuild without permission
+- **React Native app**: `app/` — older RN attempt, not currently the primary client. EPUB reading is `coming soon` placeholder. Don't touch unless asked.
+
+## Primary Test Device
+
+- **Google Pixel 10 Pro Fold** — foldable, two postures:
+  - Folded (cover screen): ~1080 px CSS width, portrait
+  - Unfolded (inner display): ~2076 px CSS width, near-square
+- The web reader MUST recompute pagination on `resize` / `orientationchange` / `visualViewport` resize so unfolding doesn't break layout.
+- Use `window.visualViewport` when available — more accurate than `window.innerWidth` on foldables and when browser chrome/keyboard is present.
+
+## EPUB Reader (`web/reader.html`) — Layout Invariants
+
+- Pagination = CSS multi-column + `transform: translateX(-page * pageWidth)`.
+- **THE ONLY INVARIANT THAT MATTERS:**
+  `columnWidth + columnGap == pageWidth / columnCount`
+  If this holds, `translateX(-pageWidth)` advances by exactly `columnCount` whole columns and each visible band lands at the identical on-screen position. If it does NOT hold, every page turn drifts by `pageWidth - columnCount*(columnWidth + columnGap)` px, exposing more of the next column on the right.
+- Concrete values that satisfy the invariant:
+  - `columnGap = 2 * SIDE_PADDING` (gutter on each side of every column)
+  - `columnWidth = floor(pageWidth / columnCount) - columnGap`
+  - `paddingLeft = paddingRight = SIDE_PADDING` on `#epub-content` (gives the FIRST page its left/right gutters; subsequent pages get them from the column-gap straddling each side)
+- DO NOT make `columnGap` conditional on dual-page mode. Same value in both modes.
+- All column geometry is computed in `calculatePages()` — do not also set `column-width`, `column-gap`, or horizontal padding in CSS.
+- Always call `calculatePages(true)` (preserve progress) on font-size change, dual-page toggle, and viewport resize.
+
+## Calibre Integration
+
+- Source of truth: a Calibre Content Server (NOT the Calibre DB directly)
+- The backend is a thin proxy — never bypass it to hit Calibre directly from the web reader
+- Do not write to the Calibre library from this project — read-only access
+
+## Restarting Services
+
+Both the backend (Flask on 8091) and the web static server (8090) are bare processes, not Docker.
+
+```bash
+# Backend
+kill $(cat /home/brandon/projects/Ereader/server.pid) 2>/dev/null
+cd /home/brandon/projects/Ereader/backend && ./run.sh &
+```
+
+For the static web server (port 8090), check `ps aux | grep 8090` for the actual command — varies (often `python3 -m http.server 8090 --directory web`).
+
+## Hot-reloading the web reader
+
+`web/reader.html` is loaded by the Android WebView from `http://100.69.184.113:8090`. Edits to `web/*.html` are live — just refresh the WebView (back out and re-enter, or kill the app):
+
+```bash
+adb shell am force-stop com.ereader.simple
+adb shell am start -n com.ereader.simple/.MainActivity
+```
+
+## Safety
+
+- `web/ereader.apk` is a signed release artifact — don't overwrite without permission
+- `.idsig` files are signing metadata — never commit deletion
+- Calibre library at `/mnt/boston/...` (see shared guidelines) — read-only, never modify

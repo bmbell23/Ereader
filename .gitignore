@@ -1,0 +1,49 @@
+# Python
+backend/venv/
+backend/__pycache__/
+backend/*.pyc
+*.py[cod]
+*$py.class
+
+# Node
+app/node_modules/
+app/.expo/
+app/.expo-shared/
+
+# Android
+app/android/app/build/
+app/android/build/
+app/android/.gradle/
+app/android/local.properties
+*.apk
+*.ap_
+*.dex
+*.class
+*.log
+
+# iOS (for future)
+app/ios/Pods/
+app/ios/build/
+
+# Metro
+app/.metro-health-check*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Keystores
+*.jks
+*.keystore
+!app/android/app/debug.keystore
+
+# Misc
+*.orig
+.watchmanconfig

@@ -1,0 +1,1096 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <!-- Disable WebView HTTP cache so reader edits show up after navigation -->
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>Reader</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        html {
+            width: 100%;
+            height: 100vh; /* Use viewport height */
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #000;
+            color: #fff;
+            overflow: hidden;
+            width: 100%;
+            height: 100vh; /* Use viewport height to match screen */
+            margin: 0;
+            padding: 0;
+            position: fixed;
+            top: 0;
+            left: 0;
+        }
+        /* Support safe area insets on notched devices */
+        @supports (padding: max(0px)) {
+            body {
+                padding-top: env(safe-area-inset-top, 0px);
+                padding-bottom: env(safe-area-inset-bottom, 0px);
+            }
+        }
+        .header {
+            display: none !important;
+            height: 0 !important;
+            visibility: hidden !important;
+        }
+        .back-btn {
+            background: #2196F3;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            color: #fff;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        .book-title {
+            flex: 1;
+            margin: 0 20px;
+            font-size: 16px;
+            font-weight: 600;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .page-info {
+            font-size: 14px;
+            color: #888;
+        }
+        #reader-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: #fff;
+        }
+        #pdf-canvas {
+            display: block;
+            margin: 0 auto;
+            max-width: 100%;
+        }
+        #epub-reader {
+            width: 100%;
+            height: 100%;
+            background: #fefefe;
+            overflow: hidden;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+        }
+        #epub-viewport {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            position: relative;
+        }
+        #epub-viewport {
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+            position: relative;
+            background: #fefefe;
+            padding: 0;
+            margin: 0;
+        }
+        #epub-content {
+            /* Padding and column-gap are set in JS (calculatePages) so the
+               column stride matches transform shift exactly. Do not set
+               padding-left/right or column-gap/column-width here. */
+            padding-top: 40px;
+            padding-bottom: 60px;
+            margin: 0;
+            line-height: 1.6;
+            color: #000;
+            column-fill: auto;
+            height: 100vh;
+            box-sizing: border-box;
+            position: relative;
+            transition: transform 0.3s ease;
+            /* Avoid orphans/widows splitting awkwardly across columns */
+            orphans: 2;
+            widows: 2;
+        }
+        #epub-content p {
+            margin-bottom: 1em;
+            margin-left: 0;
+            margin-right: 0;
+        }
+        #epub-content h1, #epub-content h2, #epub-content h3 {
+            margin-top: 1.5em;
+            margin-bottom: 0.5em;
+            margin-left: 0;
+            margin-right: 0;
+            break-after: avoid;
+            page-break-after: avoid;
+        }
+        #epub-content img {
+            max-width: 100%;
+            height: auto;
+            display: block;
+            margin: 1em 0;
+        }
+        .epub-page-content img {
+            max-width: 100%;
+            height: auto;
+            max-height: 80vh; /* Prevent images from being too tall */
+        }
+        .epub-page-content p {
+            margin-bottom: 1em;
+        }
+        /* Dual page view for landscape/foldables */
+        @media (min-width: 900px) and (orientation: landscape) {
+            .epub-page {
+                flex: 0 0 50%;
+            }
+        }
+        body.dual-page .epub-page {
+            flex: 0 0 50% !important;
+        }
+        .reader-controls {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: rgba(0, 0, 0, 0.95);
+            padding: 20px;
+            display: none;
+            flex-direction: column;
+            gap: 20px;
+            z-index: 1000;
+            border-top-left-radius: 20px;
+            border-top-right-radius: 20px;
+            max-height: 50vh;
+            overflow-y: auto;
+        }
+        .reader-controls.visible {
+            display: flex;
+        }
+        .control-row {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        .control-btn {
+            background: #2196F3;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            color: #fff;
+            font-size: 16px;
+            cursor: pointer;
+            flex: 1;
+            min-width: 120px;
+        }
+        .font-slider {
+            flex: 1;
+            min-width: 150px;
+            height: 40px;
+        }
+        .progress-text {
+            color: #fff;
+            font-size: 16px;
+            text-align: center;
+            width: 100%;
+        }
+        .menu-close {
+            position: absolute;
+            top: 10px;
+            right: 15px;
+            background: none;
+            border: none;
+            color: #fff;
+            font-size: 24px;
+            cursor: pointer;
+        }
+        .loading {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #888;
+        }
+        .controls {
+            display: none;
+        }
+        /* Build/version stamp — bump BUILD constant on every meaningful edit.
+           Deliberately LOUD so you can verify the WebView picked up the new HTML. */
+        #build-stamp {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            font-size: 14px;
+            font-weight: bold;
+            font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            color: #fff;
+            background: #d32f2f;
+            padding: 4px 10px;
+            text-align: center;
+            z-index: 99999;
+            pointer-events: none;
+            letter-spacing: 0.5px;
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+</head>
+<body>
+    <div class="header">
+        <button class="back-btn" onclick="goBack()">← Back</button>
+        <div class="book-title" id="book-title">Loading...</div>
+        <div class="page-info" id="page-info"></div>
+    </div>
+
+    <div id="reader-container">
+        <div class="loading">Loading book...</div>
+        <canvas id="pdf-canvas" style="display:none;"></canvas>
+        <div id="epub-reader" style="display:none;">
+            <div id="epub-viewport">
+                <div id="epub-content" class="epub-content"></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="build-stamp"></div>
+
+    <div class="reader-controls" id="reader-controls">
+        <button class="menu-close" onclick="toggleMenu()">✕</button>
+        <h3 style="color: #fff; margin: 0 0 10px 0;">Reading Options</h3>
+
+        <div class="control-row">
+            <span style="color: #aaa; width: 100%; text-align: center;">Font Size</span>
+        </div>
+        <div class="control-row">
+            <button class="control-btn" onclick="changeFontSize(-2)" style="padding: 8px 16px;">A-</button>
+            <input type="range" class="font-slider" id="font-slider" min="12" max="32" value="18" oninput="setFontSize(this.value)">
+            <button class="control-btn" onclick="changeFontSize(2)" style="padding: 8px 16px;">A+</button>
+        </div>
+
+        <div class="control-row">
+            <button class="control-btn" onclick="toggleDualPage()">📖 Dual Page Mode</button>
+            <button class="control-btn" onclick="toggleTOC()">📑 Table of Contents</button>
+        </div>
+
+        <div class="control-row">
+            <span class="progress-text" id="progress-text">0%</span>
+        </div>
+
+    </div>
+
+    <div class="controls">
+        <button id="prev-btn" onclick="prevPage()">◄ Previous</button>
+        <button id="next-btn" onclick="nextPage()">Next ►</button>
+    </div>
+
+    <!-- Page progress indicator at bottom -->
+    <div id="page-progress" style="position: fixed; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.8); color: white; padding: 8px 15px; font-size: 14px; text-align: center; z-index: 9000; display: none;">
+        <span id="progress-display"></span>
+    </div>
+
+    <!-- Full-screen TOC overlay -->
+    <div id="toc-overlay" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.95); z-index: 10000; overflow-y: auto; padding: 20px;">
+        <div style="max-width: 800px; margin: 0 auto;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <h2 style="color: #fff; margin: 0;">Table of Contents</h2>
+                <button onclick="toggleTOC()" style="background: #333; color: #fff; border: none; padding: 10px 20px; border-radius: 8px; font-size: 18px; cursor: pointer;">✕ Close</button>
+            </div>
+            <div id="toc-list" style="background: #222; border-radius: 12px; padding: 20px;"></div>
+        </div>
+    </div>
+
+    <script>
+        // ⬇ BUMP THIS on every reader/index change so you can confirm the WebView
+        // picked up the new HTML. Format: YYYY-MM-DD.N. Must match index.html BUILD.
+        const BUILD = '2026-05-29.3-MARGINS';
+        document.getElementById('build-stamp').textContent = 'BUILD ' + BUILD;
+
+        const urlParams = new URLSearchParams(window.location.search);
+        const bookId = urlParams.get('id');
+        const format = urlParams.get('format') || 'epub';
+        const title = urlParams.get('title') || 'Book';
+        const API_URL = 'http://100.69.184.113:8091/api';
+
+        document.getElementById('book-title').textContent = title;
+
+        let currentPage = 1;
+        let totalPages = 1;
+        let pdfDoc = null;
+        let epubBook = null;
+
+        // EPUB pagination state
+        let epubPages = [];
+        let currentEpubPage = 0;
+        let fontSize = 18;
+        let isDualPage = false;
+
+        function goBack() {
+            window.location.href = 'index.html';
+        }
+
+        function updatePageInfo() {
+            document.getElementById('page-info').textContent = `${currentPage}/${totalPages}`;
+            document.getElementById('prev-btn').disabled = currentPage <= 1;
+            document.getElementById('next-btn').disabled = currentPage >= totalPages;
+        }
+
+        async function loadPDF() {
+            const url = `${API_URL}/books/${bookId}/download?format=pdf`;
+
+            pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+            pdfDoc = await pdfjsLib.getDocument(url).promise;
+            totalPages = pdfDoc.numPages;
+
+            document.querySelector('.loading').style.display = 'none';
+            document.getElementById('pdf-canvas').style.display = 'block';
+
+            renderPage(1);
+        }
+
+        async function renderPage(pageNum) {
+            const page = await pdfDoc.getPage(pageNum);
+            const canvas = document.getElementById('pdf-canvas');
+            const context = canvas.getContext('2d');
+
+            const viewport = page.getViewport({ scale: 1.5 });
+            canvas.height = viewport.height;
+            canvas.width = viewport.width;
+
+            await page.render({ canvasContext: context, viewport: viewport }).promise;
+            currentPage = pageNum;
+            updatePageInfo();
+        }
+
+        function prevPage() {
+            if (currentPage > 1) {
+                if (format.toLowerCase() === 'pdf') {
+                    renderPage(currentPage - 1);
+                }
+            }
+        }
+
+        function nextPage() {
+            if (currentPage < totalPages) {
+                if (format.toLowerCase() === 'pdf') {
+                    renderPage(currentPage + 1);
+                } else if (epubBook && epubBook.rendition) {
+                    epubBook.rendition.next();
+                }
+            }
+        }
+
+        function prevPageEpub() {
+            if (epubBook && epubBook.rendition) {
+                epubBook.rendition.prev();
+            }
+        }
+
+        async function loadEPUB() {
+            try {
+                console.log('🚀 ========== LOADING EPUB ==========');
+                console.log('📚 Book ID:', bookId);
+                console.log('📖 Title:', title);
+
+                const url = `${API_URL}/books/${bookId}/download?format=epub`;
+                console.log('🌐 Download URL:', url);
+
+                // Download and extract EPUB
+                const response = await fetch(url);
+                console.log('📡 Response status:', response.status);
+                console.log('📦 Content-Type:', response.headers.get('content-type'));
+                console.log('📦 Content-Length:', response.headers.get('content-length'));
+
+                const arrayBuffer = await response.arrayBuffer();
+                console.log('📥 Downloaded', arrayBuffer.byteLength, 'bytes');
+
+                const zip = await JSZip.loadAsync(arrayBuffer);
+                const fileList = Object.keys(zip.files);
+                console.log('📂 ZIP loaded,', fileList.length, 'files inside');
+                console.log('📂 First 10 files:', fileList.slice(0, 10));
+
+                // Find content.opf to get reading order
+                let contentOpf = null;
+                let opfPath = '';
+
+                // Check common locations
+                for (let filename of Object.keys(zip.files)) {
+                    if (filename.endsWith('.opf') || filename.endsWith('content.opf')) {
+                        contentOpf = await zip.files[filename].async('text');
+                        opfPath = filename.substring(0, filename.lastIndexOf('/') + 1);
+                        break;
+                    }
+                }
+
+                if (!contentOpf) {
+                    throw new Error('Could not find content.opf');
+                }
+
+                // Parse OPF to get spine (reading order)
+                const parser = new DOMParser();
+                const opfDoc = parser.parseFromString(contentOpf, 'text/xml');
+                const itemrefs = opfDoc.querySelectorAll('spine itemref');
+                const manifest = {};
+
+                opfDoc.querySelectorAll('manifest item').forEach(item => {
+                    manifest[item.getAttribute('id')] = item.getAttribute('href');
+                });
+
+                // Extract all images and convert to data URLs
+                const imageMap = {};
+                for (let filename of Object.keys(zip.files)) {
+                    if (!zip.files[filename].dir && /\.(jpg|jpeg|png|gif|svg|webp)$/i.test(filename)) {
+                        const blob = await zip.files[filename].async('blob');
+                        imageMap[filename] = URL.createObjectURL(blob);
+                        // Also store with just the basename for relative references
+                        const basename = filename.split('/').pop();
+                        imageMap[basename] = URL.createObjectURL(blob);
+                    }
+                }
+
+                // Extract HTML files in order
+                let htmlContent = '';
+                for (let itemref of itemrefs) {
+                    const idref = itemref.getAttribute('idref');
+                    const href = manifest[idref];
+                    if (href && (href.endsWith('.html') || href.endsWith('.xhtml'))) {
+                        const fullPath = opfPath + href;
+                        if (zip.files[fullPath]) {
+                            let html = await zip.files[fullPath].async('text');
+
+                            // Replace image paths with data URLs
+                            html = html.replace(/src=["']([^"']+)["']/g, (match, imgPath) => {
+                                const cleanPath = imgPath.split('?')[0];
+                                // Try full path, relative to OPF path, and basename
+                                const possiblePaths = [
+                                    cleanPath,
+                                    opfPath + cleanPath,
+                                    opfPath + cleanPath.replace('../', ''),
+                                    cleanPath.split('/').pop()
+                                ];
+
+                                for (let path of possiblePaths) {
+                                    if (imageMap[path]) {
+                                        return `src="${imageMap[path]}"`;
+                                    }
+                                }
+                                return match;
+                            });
+
+                            htmlContent += html;
+                        }
+                    }
+                }
+
+                // Display content using column-based pagination
+                document.querySelector('.loading').style.display = 'none';
+                document.getElementById('epub-reader').style.display = 'block';
+
+                // NEW: Column-based rendering
+                setTimeout(() => {
+                    renderEpubContent(htmlContent, imageMap);
+                    setupNavigation();
+                }, 100);
+
+            } catch (error) {
+                console.error('❌ ========== EPUB LOAD ERROR ==========');
+                console.error('❌ Error type:', error.name);
+                console.error('❌ Error message:', error.message);
+                console.error('❌ Error stack:', error.stack);
+                console.error('❌ Full error object:', error);
+                document.querySelector('.loading').textContent = 'Failed to load EPUB: ' + error.message + '. Check console for details.';
+            }
+        }
+
+        // NEW COLUMN-BASED PAGINATION
+        let tocItems = [];
+        let contentWidth = 0;
+        let pageWidth = 0;        // viewport width = column stride
+        let columnStride = 0;     // columnWidth + columnGap (must equal pageWidth)
+        const SIDE_PADDING = 40;  // visual gutter on each side of the visible column
+
+        function renderEpubContent(htmlContent, imageMap) {
+            // Get all content
+            const tempDiv = document.createElement('div');
+            tempDiv.innerHTML = htmlContent;
+
+            const bodies = tempDiv.querySelectorAll('body');
+            let allContent = '';
+            if (bodies.length > 0) {
+                bodies.forEach(body => allContent += body.innerHTML);
+            } else {
+                allContent = tempDiv.innerHTML;
+            }
+
+            // Clean content
+            const parser = new DOMParser();
+            const doc = parser.parseFromString('<div>' + allContent + '</div>', 'text/html');
+            const contentDiv = doc.body.firstChild;
+            contentDiv.querySelectorAll('script, style').forEach(el => el.remove());
+
+            // Extract TOC from headings
+            tocItems = [];
+            contentDiv.querySelectorAll('h1, h2, h3').forEach(heading => {
+                tocItems.push({
+                    title: heading.textContent.trim(),
+                    level: parseInt(heading.tagName.substring(1))
+                });
+            });
+
+            // Insert cleaned content
+            const epubContent = document.getElementById('epub-content');
+            epubContent.innerHTML = contentDiv.innerHTML;
+            epubContent.style.fontSize = fontSize + 'px';
+
+            // Calculate pages after content renders
+            setTimeout(calculatePages, 100);
+        }
+
+        function calculatePages(preserveProgress = false) {
+            const content = document.getElementById('epub-content');
+            const viewport = document.getElementById('epub-viewport');
+            if (!content) return;
+
+            // Remember roughly where the user was (0..1) so we can restore on resize.
+            const prevProgress = (preserveProgress && totalPages > 0)
+                ? (currentEpubPage / totalPages)
+                : 0;
+
+            // Use visualViewport when available (more accurate on foldables and when
+            // the on-screen keyboard or browser chrome is in play). Fall back to
+            // window.innerWidth / clientWidth.
+            const vv = window.visualViewport;
+            pageWidth = Math.round((vv && vv.width) || window.innerWidth || document.documentElement.clientWidth);
+            const vpHeight = Math.round((vv && vv.height) || window.innerHeight || document.documentElement.clientHeight);
+
+            // Make the viewport and content exactly one viewport wide so transforms
+            // align pixel-for-pixel with the column stride.
+            if (viewport) {
+                viewport.style.width = pageWidth + 'px';
+                viewport.style.height = vpHeight + 'px';
+            }
+            content.style.width = pageWidth + 'px';
+            content.style.height = vpHeight + 'px';
+
+            // Dual-page mode: when the foldable is open (wide + landscape) we
+            // show two columns per visible page. Stride is still one viewport.
+            const dual = isDualPage || (pageWidth >= 900 && pageWidth > vpHeight);
+            const columnCount = dual ? 2 : 1;
+
+            // PAGINATION INVARIANT (the only thing that matters):
+            //   columnWidth + columnGap == pageWidth / columnCount
+            // If this holds, then translateX(-pageWidth) advances by exactly
+            // columnCount whole columns and the visible band lands at the
+            // identical on-screen position every page. If it does NOT hold,
+            // each page turn drifts by the mismatch, exposing more of the
+            // next column on the right side — the "leaking next page" bug.
+            //
+            // We pick columnGap = 2 * SIDE_PADDING (so half a gap lives on
+            // each side of every column as its gutter) and derive columnWidth
+            // from the invariant. Container padding-left/right = SIDE_PADDING
+            // gives the FIRST page its left/right gutters; for every other
+            // page the gutters come from the column-gap on either side.
+            const columnGap = 2 * SIDE_PADDING;
+            const columnWidth = Math.floor(pageWidth / columnCount) - columnGap;
+
+            content.style.paddingLeft = SIDE_PADDING + 'px';
+            content.style.paddingRight = SIDE_PADDING + 'px';
+            content.style.columnGap = columnGap + 'px';
+            content.style.columnWidth = columnWidth + 'px';
+            content.style.columnCount = columnCount;
+            content.style.columnFill = 'auto';
+
+            // Stride between visible "pages" == one full viewport.
+            columnStride = pageWidth;
+
+            // Force reflow before measuring.
+            // eslint-disable-next-line no-unused-expressions
+            content.offsetHeight;
+
+            setTimeout(() => {
+                contentWidth = content.scrollWidth;
+                // Number of viewport-sized pages. Use ceil so trailing content isn't clipped.
+                totalPages = Math.max(1, Math.ceil(contentWidth / columnStride));
+                currentEpubPage = Math.min(
+                    totalPages - 1,
+                    Math.max(0, Math.round(prevProgress * totalPages))
+                );
+
+                console.log('📊 Page calc:', {
+                    pageWidth, vpHeight, dual, columnCount,
+                    columnWidth, columnGap,
+                    contentScrollWidth: contentWidth,
+                    totalPages, currentEpubPage
+                });
+
+                renderEpubPage();
+                document.getElementById('page-progress').style.display = 'block';
+            }, 50);
+        }
+
+        function OLD_paginateEpubContent_DEPRECATED(htmlContent, imageMap) {
+            console.log('🔵 paginateEpubContent called');
+            console.log('📖 HTML content length:', htmlContent.length);
+            console.log('🖼️ Image map keys:', Object.keys(imageMap).length);
+
+            // Reset pages array
+            epubPages = [];
+            tocItems = [];
+
+            const tempDiv = document.createElement('div');
+            tempDiv.innerHTML = htmlContent;
+
+            // Get all body content and clean it
+            const bodies = tempDiv.querySelectorAll('body');
+            console.log('📄 Found', bodies.length, 'body tags');
+
+            let allContent = '';
+            if (bodies.length > 0) {
+                bodies.forEach(body => {
+                    allContent += body.innerHTML;
+                });
+            } else {
+                allContent = tempDiv.innerHTML;
+            }
+
+            console.log('📝 All content length:', allContent.length);
+            console.log('📝 First 500 chars of content:', allContent.substring(0, 500));
+
+            // Clean up the content - remove XML/HTML artifacts
+            const parser = new DOMParser();
+            const doc = parser.parseFromString('<div>' + allContent + '</div>', 'text/html');
+            const contentDiv = doc.body.firstChild;
+
+            // Remove script tags, style tags, and comments
+            contentDiv.querySelectorAll('script, style, comment').forEach(el => el.remove());
+
+            // Get ONLY direct children to avoid duplicates
+            // Walk through the content tree properly
+            const elements = [];
+
+            function extractTopLevelElements(parent, depth = 0) {
+                const indent = '  '.repeat(depth);
+                console.log(`${indent}🔍 Extracting from ${parent.tagName}, ${parent.children.length} children`);
+
+                for (let child of parent.children) {
+                    const tagName = child.tagName.toLowerCase();
+                    // If it's a content block, add it
+                    if (['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'pre', 'ul', 'ol', 'img'].includes(tagName)) {
+                        elements.push(child);
+                        console.log(`${indent}  ✅ Added ${tagName}: "${child.textContent.substring(0, 50)}..."`);
+                    }
+                    // If it's a container (div, section, etc), recurse into it
+                    else if (['div', 'section', 'article', 'main', 'body'].includes(tagName)) {
+                        console.log(`${indent}  📦 Recursing into ${tagName}`);
+                        extractTopLevelElements(child, depth + 1);
+                    }
+                    // Otherwise just add it as-is
+                    else if (child.textContent.trim().length > 0) {
+                        elements.push(child);
+                        console.log(`${indent}  ⚠️ Added unknown ${tagName}: "${child.textContent.substring(0, 30)}..."`);
+                    }
+                }
+            }
+
+            console.log('🔍 Starting element extraction...');
+            extractTopLevelElements(contentDiv);
+
+            console.log('✅ Found', elements.length, 'block elements');
+            if (elements.length > 0) {
+                console.log('📋 First 5 elements:', elements.slice(0, 5).map(el => ({tag: el.tagName, text: el.textContent.substring(0, 50)})));
+            } else {
+                console.error('❌ NO ELEMENTS EXTRACTED! This is the problem!');
+            }
+
+            let currentPageHTML = '';
+            let currentPageHeight = 0;
+            const MAX_PAGE_HEIGHT = 25; // Approximate lines per page
+            let lineCount = 0;
+
+            elements.forEach((elem, idx) => {
+                const tagName = elem.tagName.toLowerCase();
+
+                // Extract TOC items from headings
+                if (tagName.match(/^h[123]$/)) {
+                    tocItems.push({
+                        title: elem.textContent.trim(),
+                        page: epubPages.length,
+                        level: parseInt(tagName.substring(1))
+                    });
+                }
+
+                // Estimate lines for this element
+                const text = elem.textContent || '';
+                const words = text.trim().split(/\s+/).filter(w => w.length > 0);
+                const approxLines = Math.max(1, Math.ceil(words.length / 10)); // ~10 words per line
+
+                // Check for explicit page breaks in CSS or class
+                const hasPageBreak = elem.style.pageBreakBefore === 'always' ||
+                                     elem.style.breakBefore === 'page' ||
+                                     elem.className.includes('pagebreak') ||
+                                     elem.className.includes('page-break');
+
+                // FORCE page break for:
+                // 1. H1/H2 headings (new chapters/sections) - unless it's the first element
+                // 2. Images (give them their own page or start of new page)
+                // 3. Explicit page break markers
+                const forcePageBreak = (tagName === 'h1' || tagName === 'h2') && currentPageHTML.trim().length > 0;
+
+                if (hasPageBreak || forcePageBreak) {
+                    // Force a new page if we have content
+                    if (currentPageHTML.trim()) {
+                        epubPages.push(currentPageHTML);
+                        currentPageHTML = '';
+                        lineCount = 0;
+                    }
+                    currentPageHTML += elem.outerHTML;
+                    lineCount += approxLines;
+                }
+                // Special handling for images - they get their own page
+                else if (tagName === 'img') {
+                    // If current page has content, finish it first
+                    if (currentPageHTML.trim()) {
+                        epubPages.push(currentPageHTML);
+                        currentPageHTML = '';
+                        lineCount = 0;
+                    }
+                    // Image gets its own page
+                    epubPages.push(elem.outerHTML);
+                    currentPageHTML = '';
+                    lineCount = 0;
+                }
+                else if (lineCount + approxLines > MAX_PAGE_HEIGHT && currentPageHTML) {
+                    // Page is full, start new page
+                    epubPages.push(currentPageHTML);
+                    currentPageHTML = elem.outerHTML;
+                    lineCount = approxLines;
+                } else {
+                    // Add to current page
+                    currentPageHTML += elem.outerHTML;
+                    lineCount += approxLines;
+                }
+            });
+
+            // Add remaining content
+            if (currentPageHTML.trim()) {
+                epubPages.push(currentPageHTML);
+            }
+
+            // Ensure at least one page
+            if (epubPages.length === 0) {
+                epubPages.push(allContent);
+            }
+
+            totalPages = epubPages.length;
+            console.log('Created', epubPages.length, 'pages and', tocItems.length, 'TOC items');
+            console.log('Page sizes:', epubPages.map((p, i) => `Page ${i+1}: ${p.length} chars`).join(', '));
+
+            if (epubPages.length <= 3) {
+                console.warn('⚠️ VERY FEW PAGES! Debugging info:');
+                console.log('Total elements:', elements.length);
+                console.log('Content div children:', contentDiv.children.length);
+                console.log('Raw content length:', allContent.length);
+                epubPages.forEach((page, idx) => {
+                    console.log(`Page ${idx + 1} HTML:`, page.substring(0, 200));
+                });
+            }
+        }
+
+        function renderEpubPage() {
+            const content = document.getElementById('epub-content');
+            if (!content || !columnStride) return;
+
+            // Shift by exactly one viewport-width per page so the column we land
+            // on sits in the same centered band as page 1.
+            const offset = -(currentEpubPage * columnStride);
+            content.style.transform = `translateX(${offset}px)`;
+
+            console.log('📄 Page', currentEpubPage + 1, '/', totalPages,
+                        '| offset:', offset, '| stride:', columnStride);
+            updateProgress();
+        }
+
+        function updateProgress() {
+            const progress = ((currentEpubPage + 1) / totalPages * 100).toFixed(1);
+            const display = `Page ${currentEpubPage + 1} of ${totalPages} (${progress}%)`;
+            document.getElementById('progress-display').textContent = display;
+        }
+
+        function changeFontSize(delta) {
+            fontSize = Math.max(12, Math.min(32, fontSize + delta));
+            document.getElementById('font-slider').value = fontSize;
+            const content = document.getElementById('epub-content');
+            if (content) {
+                content.style.fontSize = fontSize + 'px';
+                setTimeout(() => calculatePages(true), 100);
+            }
+        }
+
+        function setFontSize(size) {
+            fontSize = parseInt(size);
+            const content = document.getElementById('epub-content');
+            if (content) {
+                content.style.fontSize = fontSize + 'px';
+                setTimeout(() => calculatePages(true), 100);
+            }
+        }
+
+        function toggleDualPage() {
+            isDualPage = !isDualPage;
+            document.body.classList.toggle('dual-page', isDualPage);
+            // Re-paginate: column geometry actually changed.
+            calculatePages(true);
+        }
+
+        // Auto dual page detection for foldables (Pixel Fold opens to ~2076px wide).
+        function checkDualPageMode() {
+            const w = (window.visualViewport && window.visualViewport.width) || window.innerWidth;
+            const h = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
+            const shouldBeDual = w >= 900 && w > h;
+            if (shouldBeDual !== isDualPage) {
+                isDualPage = shouldBeDual;
+                document.body.classList.toggle('dual-page', isDualPage);
+                return true;
+            }
+            return false;
+        }
+
+        // Debounced re-pagination on viewport change. Foldables fire resize twice
+        // (posture change + final size) so we wait for things to settle.
+        let _resizeTimer = null;
+        function scheduleRepaginate() {
+            clearTimeout(_resizeTimer);
+            _resizeTimer = setTimeout(() => {
+                if (format.toLowerCase() !== 'epub') return;
+                checkDualPageMode();
+                // Always recalc: width may have changed even if dual-page state didn't.
+                if (document.getElementById('epub-content')) {
+                    calculatePages(true);
+                }
+            }, 200);
+        }
+        window.addEventListener('resize', scheduleRepaginate);
+        window.addEventListener('orientationchange', scheduleRepaginate);
+        if (window.visualViewport) {
+            window.visualViewport.addEventListener('resize', scheduleRepaginate);
+        }
+
+        // Override prevPage for EPUB
+        function prevPage() {
+            console.log('⏪ prevPage called, current:', currentEpubPage, 'total:', totalPages);
+
+            if (format.toLowerCase() === 'epub' && totalPages > 0) {
+                if (currentEpubPage > 0) {
+                    currentEpubPage--;
+                    console.log('📄 Going to page:', currentEpubPage + 1);
+                    renderEpubPage();
+                } else {
+                    console.log('📗 Already at first page');
+                }
+            } else if (currentPage > 1 && format.toLowerCase() === 'pdf') {
+                renderPage(currentPage - 1);
+            }
+        }
+
+        function nextPage() {
+            console.log('⏩ nextPage called, current:', currentEpubPage, 'total:', totalPages);
+
+            if (format.toLowerCase() === 'epub' && totalPages > 0) {
+                if (currentEpubPage < totalPages - 1) {
+                    currentEpubPage++;
+                    console.log('📄 Going to page:', currentEpubPage + 1);
+                    renderEpubPage();
+                } else {
+                    console.log('📕 Already at last page');
+                }
+            } else if (currentPage < totalPages && format.toLowerCase() === 'pdf') {
+                renderPage(currentPage + 1);
+            }
+        }
+
+        function toggleMenu() {
+            const controls = document.getElementById('reader-controls');
+            controls.classList.toggle('visible');
+        }
+
+        function toggleTOC() {
+            const tocOverlay = document.getElementById('toc-overlay');
+            const tocList = document.getElementById('toc-list');
+
+            if (tocOverlay.style.display === 'none') {
+                // Show TOC
+                tocList.innerHTML = '';
+                if (tocItems.length === 0) {
+                    tocList.innerHTML = '<div style="color: #aaa; padding: 20px; text-align: center; font-size: 16px;">No table of contents available</div>';
+                } else {
+                    tocItems.forEach(item => {
+                        const tocItem = document.createElement('div');
+                        tocItem.style.cssText = `
+                            padding: 15px 20px;
+                            padding-left: ${20 + (item.level - 1) * 30}px;
+                            color: #fff;
+                            cursor: pointer;
+                            border-radius: 8px;
+                            margin-bottom: 8px;
+                            font-size: 16px;
+                            transition: background 0.2s;
+                        `;
+                        tocItem.textContent = item.title;
+                        tocItem.onclick = () => {
+                            currentEpubPage = item.page;
+                            renderEpubPage();
+                            toggleTOC();
+                            toggleMenu();
+                        };
+                        tocItem.onmouseover = () => tocItem.style.background = '#444';
+                        tocItem.onmouseout = () => tocItem.style.background = 'transparent';
+                        tocList.appendChild(tocItem);
+                    });
+                }
+                tocOverlay.style.display = 'block';
+            } else {
+                tocOverlay.style.display = 'none';
+            }
+        }
+
+        // Setup navigation - called after EPUB loads
+        function setupNavigation() {
+            console.log('Setting up navigation, pages:', epubPages.length);
+
+            // Touch/swipe navigation
+            let touchStartX = 0;
+            let touchStartY = 0;
+            let touchEndX = 0;
+            let touchEndY = 0;
+
+            const viewport = document.getElementById('epub-viewport') || document.getElementById('reader-container');
+
+            viewport.addEventListener('touchstart', (e) => {
+                touchStartX = e.changedTouches[0].screenX;
+                touchStartY = e.changedTouches[0].screenY;
+            }, { passive: true });
+
+            viewport.addEventListener('touchend', (e) => {
+                touchEndX = e.changedTouches[0].screenX;
+                touchEndY = e.changedTouches[0].screenY;
+                handleSwipe();
+            }, { passive: true });
+
+            function handleSwipe() {
+                const diffX = touchStartX - touchEndX;
+                const diffY = touchStartY - touchEndY;
+
+                console.log('Touch detected:', diffX, diffY);
+
+                // Swipe for page navigation
+                if (Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > 50) {
+                    if (diffX > 0) {
+                        // Swipe left - next page
+                        console.log('Next page (swipe)');
+                        nextPage();
+                    } else {
+                        // Swipe right - previous page
+                        console.log('Prev page (swipe)');
+                        prevPage();
+                    }
+                }
+                // Tap navigation like Kindle
+                else if (Math.abs(diffX) < 30 && Math.abs(diffY) < 30) {
+                    const tapX = touchEndX;
+                    const screenWidth = window.innerWidth;
+                    const leftZone = screenWidth * 0.25;  // Left 25% = previous
+                    const rightZone = screenWidth * 0.75; // Right 25% = next
+
+                    if (tapX < leftZone) {
+                        // Tap left side - previous page
+                        console.log('Prev page (tap left)');
+                        prevPage();
+                    } else if (tapX > rightZone) {
+                        // Tap right side - next page
+                        console.log('Next page (tap right)');
+                        nextPage();
+                    } else {
+                        // Tap center - toggle menu
+                        console.log('Toggle menu');
+                        toggleMenu();
+                    }
+                }
+            }
+
+            // Volume key navigation
+            document.addEventListener('keydown', (e) => {
+                console.log('Key pressed:', e.key);
+                if (e.key === 'ArrowUp' || e.key === 'VolumeUp') {
+                    e.preventDefault();
+                    prevPage();
+                } else if (e.key === 'ArrowDown' || e.key === 'VolumeDown') {
+                    e.preventDefault();
+                    nextPage();
+                } else if (e.key === 'ArrowLeft') {
+                    e.preventDefault();
+                    prevPage();
+                } else if (e.key === 'ArrowRight') {
+                    e.preventDefault();
+                    nextPage();
+                }
+            });
+
+            checkDualPageMode();
+        }
+
+        // DEBUG: Show dimensions
+        function updateDebugInfo() {
+            const debugOverlay = document.getElementById('debug-overlay');
+            if (!debugOverlay) return;
+
+            document.getElementById('debug-screen').textContent = `${screen.width}x${screen.height}`;
+            document.getElementById('debug-window').textContent = `${window.innerWidth}x${window.innerHeight}`;
+            document.getElementById('debug-body').textContent = `${document.body.offsetWidth}x${document.body.offsetHeight}`;
+
+            const readerContainer = document.getElementById('reader-container');
+            if (readerContainer) {
+                const rect = readerContainer.getBoundingClientRect();
+                document.getElementById('debug-reader').textContent = `top=${rect.top}, h=${rect.height}`;
+            }
+
+            // Check for safe area insets
+            const style = getComputedStyle(document.documentElement);
+            const insetTop = style.getPropertyValue('padding-top') || '0';
+            document.getElementById('debug-insets').textContent = `pad=${insetTop}`;
+
+            // Show page info
+            document.getElementById('debug-pages').textContent = `${epubPages.length} total`;
+            document.getElementById('debug-current').textContent = `page ${currentEpubPage + 1}`;
+        }
+
+        setInterval(updateDebugInfo, 1000);
+        setTimeout(updateDebugInfo, 500);
+
+        // Load the book
+        if (format.toLowerCase() === 'pdf') {
+            loadPDF();
+        } else if (format.toLowerCase() === 'epub') {
+            loadEPUB();
+        } else {
+            document.querySelector('.loading').textContent = `${format.toUpperCase()} format not supported yet. Download to read in another app.`;
+        }
+    </script>
+</body>
+</html>

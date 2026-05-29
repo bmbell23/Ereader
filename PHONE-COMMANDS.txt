@@ -1,0 +1,83 @@
+================================================
+EXACT COMMANDS TO RUN ON YOUR PHONE
+================================================
+
+The backend server is running but there's a networking issue.
+Here's what you need to do:
+
+================================================
+OPTION 1: Install via Browser (Simplest)
+================================================
+
+1. On your phone, install Termux from F-Droid or Play Store
+
+2. In Termux, run:
+   pkg install termux-tools
+   termux-setup-storage
+   
+3. Connect to the server:
+   ssh brandon@100.69.184.113
+   
+4. Navigate to the project:
+   cd /home/brandon/projects/Ereader/app/android/app/build/outputs/apk/release
+   
+5. Start HTTP server:
+   python3 -m http.server 8080
+   
+6. On your phone browser, go to:
+   http://100.69.184.113:8080
+   
+7. Download app-release.apk and install it
+
+================================================
+OPTION 2: Direct Build on Phone (If you have Android Studio on PC)
+================================================
+
+1. On your PC, clone the repo:
+   scp -r brandon@100.69.184.113:/home/brandon/projects/Ereader ~/ereader
+   
+2. Open ~/ereader/app/android in Android Studio
+
+3. Let it sync
+
+4. Build → Generate Signed Bundle / APK → APK → Debug
+
+5. Install on connected phone
+
+================================================
+CURRENT STATUS
+================================================
+
+✅ Backend server: RUNNING
+✅ Port: 5000
+✅ Calibre connection: WORKING  
+✅ Books available: 949
+❌ External access: BLOCKED (firewall issue)
+
+The server works locally but Tailscale/firewall is blocking external access.
+
+================================================
+WORKAROUND: Use SSH Tunnel
+================================================
+
+If you have SSH access from your phone:
+
+1. Install Termux on phone
+2. In Termux:
+   ssh -L 5000:localhost:5000 brandon@100.69.184.113
+   
+3. Keep that terminal open
+
+4. In the app settings, use:
+   http://localhost:5000
+
+This tunnels the connection through SSH.
+
+================================================
+FASTEST SOLUTION
+================================================
+
+Tell me to create a simple web version that you can access directly via browser.
+No APK needed, works immediately.
+
+Want me to do that instead?
