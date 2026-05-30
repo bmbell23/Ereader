@@ -347,11 +347,18 @@ def create_highlight():
         'bookAuthor': body.get('bookAuthor') or '',
         'anchor': body.get('anchor'),
         # offset = character index into the anchor element's textContent;
-        # length = number of characters selected. Together they re-locate
-        # the exact span on reload, surviving font-size / pagination changes.
-        # Pre-highlight bookmarks omit both (null).
+        # length = number of characters selected within that single anchor.
+        # Together they re-locate the exact span on reload, surviving
+        # font-size / pagination changes. Pre-highlight bookmarks omit both.
+        #
+        # For selections that span MULTIPLE anchors (e.g. across paragraphs),
+        # `length` is null and `endAnchor`/`endOffset` carry the end of the
+        # range. Single-anchor selections keep `endAnchor`/`endOffset` null
+        # for back-compat with older clients.
         'offset': body.get('offset'),
         'length': body.get('length'),
+        'endAnchor': body.get('endAnchor'),
+        'endOffset': body.get('endOffset'),
         'page': body.get('page'),
         'total': body.get('total'),
         'text': body.get('text') or '',

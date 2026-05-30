@@ -43,19 +43,33 @@
             flex-direction: column;
         }
         .status-bar-row1 {
+            position: relative;
             height: 28px;
             display: flex;
             align-items: center;
-            justify-content: space-between;
-            padding: 0 12px;
+            justify-content: center;   /* brand is centred in the row */
+            padding: 0 28px;           /* inset from curved-screen edges */
             font-size: 12px;
             font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
             color: rgba(255, 255, 255, 0.55);
             letter-spacing: 0.3px;
+        }
+        /* Clock — pinned to the left with the same inset as the padding. */
+        #status-clock {
+            position: absolute;
+            left: 28px;
             pointer-events: none;
         }
+        /* Build stamp — pinned to the right; tappable to download update. */
+        #build-stamp {
+            position: absolute;
+            right: 28px;
+            cursor: pointer;
+            -webkit-tap-highlight-color: transparent;
+            text-decoration: none;
+        }
         /* Brand wordmark — purple→pink→blue gradient sampled from the
-           GreatReads launcher icon. Sits between clock and build stamp. */
+           GreatReads launcher icon. Perfectly centred between the two pins. */
         .brand {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             font-weight: 700;
@@ -66,6 +80,7 @@
             background-clip: text;
             color: transparent;
             -webkit-text-fill-color: transparent;
+            pointer-events: none;
         }
         .status-bar-row2 {
             display: flex;
@@ -135,26 +150,52 @@
             z-index: 100001;
             display: none;
             flex-direction: column;
-            padding-top: 84px;
+            /* Matches the fixed .overlay-header (title row + search row). */
+            padding-top: 112px;
         }
         .overlay.open { display: flex; }
         .overlay-header {
             position: fixed; top: 0; left: 0; right: 0;
-            height: 84px;
             background: rgba(18,18,18,0.95);
+            display: flex; flex-direction: column; align-items: stretch;
+            gap: 8px;
+            padding: 8px 10px 10px 10px;
+        }
+        .overlay-header-row {
             display: flex; align-items: center; gap: 8px;
-            padding: 6px 10px;
+        }
+        .overlay-title {
+            flex: 1; font-size: 18px; font-weight: 600; color: #fff;
+            padding: 0 4px;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
         }
         .overlay-header input {
             flex: 1; padding: 10px 12px; background: #2a2a2a;
             border: none; border-radius: 8px; color: #fff; font-size: 14px;
         }
-        .overlay-header select {
-            background: #2a2a2a; border: none; border-radius: 8px; color: #fff;
-            font-size: 14px; padding: 10px 8px; -webkit-appearance: none; appearance: none;
-        }
         .overlay-list {
             flex: 1; overflow-y: auto; padding: 12px;
+        }
+        /* Per-book group: bold heading, items stacked under it. */
+        .hl-group { margin-bottom: 18px; }
+        .hl-group-head {
+            position: sticky; top: 0;
+            background: rgba(18,18,18,0.95);
+            padding: 8px 4px 6px 4px;
+            margin-bottom: 6px;
+            display: flex; align-items: baseline; gap: 8px;
+            border-bottom: 1px solid #333;
+            z-index: 1;
+        }
+        .hl-group-title {
+            font-size: 15px; font-weight: 700; color: #fff;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+            flex: 1;
+        }
+        .hl-group-author { color: #999; font-size: 12px; font-weight: 400; }
+        .hl-group-count {
+            color: #888; font-size: 11px;
+            background: #2a2a2a; padding: 2px 8px; border-radius: 10px;
         }
         .hl-item {
             background: #1e1e1e; border-radius: 8px; padding: 12px;
@@ -277,19 +318,19 @@
     </div>
 
     <div class="menu-popup" id="menu-popup">
-        <button id="menu-highlights">📑 Highlights &amp; Bookmarks</button>
+        <button id="menu-highlights">✏️ Highlights</button>
+        <button id="menu-bookmarks">🔖 Bookmarks</button>
     </div>
 
-    <!-- Highlights/Bookmarks overlay -->
-    <div class="overlay" id="hl-overlay">
+    <!-- Highlights/Bookmarks overlay. The header title and search
+         placeholder are updated by openOverlay() based on the type. -->
+    <div class="overlay" id="hl-overlay" data-type="">
         <div class="overlay-header">
-            <button class="icon-btn" onclick="closeHighlights()" title="Back">←</button>
-            <input type="text" id="hl-search" placeholder="Search highlights & bookmarks…">
-            <select id="hl-type">
-                <option value="">All</option>
-                <option value="highlight">Highlights</option>
-                <option value="bookmark">Bookmarks</option>
-            </select>
+            <div class="overlay-header-row">
+                <button class="icon-btn" onclick="closeHighlights()" title="Back">←</button>
+                <div class="overlay-title" id="hl-title">Highlights</div>
+            </div>
+            <input type="text" id="hl-search" placeholder="Search…">
         </div>
         <div class="overlay-list" id="hl-list">
             <div class="loading">Loading…</div>
@@ -301,17 +342,24 @@
     </div>
 
     <script>
-        // BUILD is a short cache-bust / HTML-version tag I bump on every
-        // web edit so I can verify the WebView picked up the new HTML.
-        // The semantic app version comes from /api/version (read live from
-        // version.txt by the Flask backend); that's the one `gvc` bumps.
-        // The pill shows both: "v<semver> · b<BUILD>".
-        const BUILD = '2026-05-29.13-BRAND';
+        // Build stamp: YYMMDD-HH:MM, generated fresh each page load so it
+        // always reflects when the user last refreshed (also serves as a
+        // lightweight cache-bust token). Tapping it navigates to the APK.
+        const APK_URL = 'http://100.69.184.113:8090/ereader.apk';
         const buildStamp = document.getElementById('build-stamp');
-        buildStamp.textContent = 'b' + BUILD;
-        fetch('http://100.69.184.113:8091/api/version').then(r => r.json()).then(d => {
-            if (d && d.version) buildStamp.textContent = 'v' + d.version + ' · b' + BUILD;
-        }).catch(() => {});
+        function fmtStamp() {
+            const n = new Date();
+            const yy = String(n.getFullYear()).slice(2);
+            const mm = String(n.getMonth() + 1).padStart(2, '0');
+            const dd = String(n.getDate()).padStart(2, '0');
+            const hh = String(n.getHours()).padStart(2, '0');
+            const mi = String(n.getMinutes()).padStart(2, '0');
+            return `${yy}${mm}${dd}-${hh}:${mi}`;
+        }
+        const BUILD = fmtStamp();   // reused as cache-bust token in openBook()
+        buildStamp.textContent = BUILD;
+        buildStamp.title = 'Tap to download latest APK';
+        buildStamp.addEventListener('click', () => { window.location.href = APK_URL; });
 
         // Status-bar clock (HH:MM, 24h)
         function tickClock() {
@@ -577,12 +625,28 @@
         });
 
         // ---------- Highlights & Bookmarks overlay ----------
+        // Two entry points (Highlights / Bookmarks) drive the same overlay,
+        // which renders items grouped by book in the SAME order the main
+        // library uses (sortMode). Search box filters across all visible
+        // fields client-side (text, bookTitle, bookAuthor, note).
         document.getElementById('menu-highlights').addEventListener('click', () => {
             menuPopup.classList.remove('open');
-            openHighlights();
+            openOverlay('highlight');
         });
-        function openHighlights() {
-            document.getElementById('hl-overlay').classList.add('open');
+        document.getElementById('menu-bookmarks').addEventListener('click', () => {
+            menuPopup.classList.remove('open');
+            openOverlay('bookmark');
+        });
+        function openOverlay(type) {
+            const ov = document.getElementById('hl-overlay');
+            ov.dataset.type = type;
+            const isBM = (type === 'bookmark');
+            document.getElementById('hl-title').textContent = isBM ? 'Bookmarks' : 'Highlights';
+            document.getElementById('hl-search').placeholder =
+                isBM ? 'Search bookmarks, books, authors…'
+                     : 'Search highlights, books, authors…';
+            document.getElementById('hl-search').value = '';
+            ov.classList.add('open');
             loadHighlights();
         }
         function closeHighlights() {
@@ -591,44 +655,81 @@
         let _hlDebounce = null;
         document.getElementById('hl-search').addEventListener('input', () => {
             clearTimeout(_hlDebounce);
-            _hlDebounce = setTimeout(loadHighlights, 250);
+            _hlDebounce = setTimeout(loadHighlights, 200);
         });
-        document.getElementById('hl-type').addEventListener('change', loadHighlights);
 
         async function loadHighlights() {
+            const type = document.getElementById('hl-overlay').dataset.type || 'highlight';
             const q = document.getElementById('hl-search').value.trim();
-            const type = document.getElementById('hl-type').value;
             const list = document.getElementById('hl-list');
             list.innerHTML = '<div class="loading">Loading…</div>';
             const params = new URLSearchParams();
+            params.set('type', type);
             if (q) params.set('q', q);
-            if (type) params.set('type', type);
             try {
                 const r = await fetch(`${API_URL}/highlights?` + params.toString());
                 if (!r.ok) throw new Error('HTTP ' + r.status);
                 const data = await r.json();
-                renderHighlights(data.items || []);
+                renderHighlights(data.items || [], type);
             } catch (e) {
                 list.innerHTML = `<div class="error">Failed to load: ${e.message}</div>`;
             }
         }
-        function renderHighlights(items) {
+        function renderHighlights(items, type) {
             const list = document.getElementById('hl-list');
             if (!items.length) {
-                list.innerHTML = '<div class="loading">No items yet. Bookmark or highlight something in a book.</div>';
+                const noun = type === 'bookmark' ? 'bookmarks' : 'highlights';
+                const verb = type === 'bookmark' ? 'Bookmark a page' : 'Highlight some text';
+                list.innerHTML = `<div class="loading">No ${noun} yet. ${verb} in a book to get started.</div>`;
                 return;
             }
-            list.innerHTML = items.map(it => {
-                const when = new Date(it.created).toLocaleString();
-                const meta = `${escapeHTML(it.bookTitle || '?')} · ${escapeHTML(it.bookAuthor || '')} · page ${it.page != null ? it.page + 1 : '?'}${it.total ? '/' + it.total : ''} · ${when}`;
-                const body = it.text || it.note || (it.type === 'bookmark' ? '🔖 Bookmark' : '');
-                return `<div class="hl-item ${it.type}">
-                    <div class="hl-meta">${meta}</div>
-                    <div class="hl-text">${escapeHTML(body)}</div>
-                    <div class="hl-actions">
-                        <button onclick="jumpToHighlight('${it.id}', '${it.bookId}', ${it.anchor != null ? it.anchor : 'null'}, ${it.page != null ? it.page : 'null'})">Open in book</button>
-                        <button class="danger" onclick="deleteHighlight('${it.id}')">Delete</button>
+            // Group by bookId; newest item inside each group bubbles up first.
+            const groups = new Map();  // bookId -> { title, author, items: [] }
+            for (const it of items) {
+                const bid = String(it.bookId);
+                if (!groups.has(bid)) {
+                    groups.set(bid, {
+                        bookId: bid,
+                        title:  it.bookTitle || '?',
+                        author: it.bookAuthor || '',
+                        items: [],
+                    });
+                }
+                groups.get(bid).items.push(it);
+            }
+            // Order the book groups using the same sort as the main library.
+            // applySort needs objects shaped like books — synthesize the
+            // minimum it touches and fall through with .bookId so id-based
+            // helpers (readingStateFor, etc.) keep working.
+            const synthBooks = Array.from(groups.values()).map(g => ({
+                id: g.bookId, title: g.title, author: g.author,
+            }));
+            // Books that aren't in allBooks (deleted from library, etc.)
+            // are still synthesized above, so they always render — they
+            // just sort by title/recent the same way.
+            const ordered = applySort(synthBooks);
+            list.innerHTML = ordered.map(b => {
+                const g = groups.get(String(b.id));
+                if (!g) return '';
+                const itemsHTML = g.items.map(it => {
+                    const when = new Date(it.created).toLocaleString();
+                    const meta = `page ${it.page != null ? it.page + 1 : '?'}${it.total ? '/' + it.total : ''} · ${when}`;
+                    const body = it.text || it.note || (it.type === 'bookmark' ? '🔖 Bookmark' : '');
+                    return `<div class="hl-item ${it.type}">
+                        <div class="hl-meta">${meta}</div>
+                        <div class="hl-text">${escapeHTML(body)}</div>
+                        <div class="hl-actions">
+                            <button onclick="jumpToHighlight('${it.id}', '${it.bookId}', ${it.anchor != null ? it.anchor : 'null'}, ${it.page != null ? it.page : 'null'})">Open in book</button>
+                            <button class="danger" onclick="deleteHighlight('${it.id}')">Delete</button>
+                        </div>
+                    </div>`;
+                }).join('');
+                return `<div class="hl-group">
+                    <div class="hl-group-head">
+                        <div class="hl-group-title">${escapeHTML(g.title)}<span class="hl-group-author">${g.author ? ' — ' + escapeHTML(g.author) : ''}</span></div>
+                        <div class="hl-group-count">${g.items.length}</div>
                     </div>
+                    ${itemsHTML}
                 </div>`;
             }).join('');
         }

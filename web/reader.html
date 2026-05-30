@@ -267,26 +267,49 @@
         }
         /* STATUS_BAR_HEIGHT: kept in sync with .status-bar height + epub-content
            padding-top in JS. Don't change one without the others. */
+        /* Top transparent status/toolbar.
+           Pins clock left, build stamp right, brand centered.
+           Matches index.html exactly for consistent branding. */
         .status-bar {
             position: fixed;
             top: 0;
             left: 0;
             right: 0;
             height: 28px;
+            z-index: 99999;
             display: flex;
             align-items: center;
-            justify-content: space-between;
-            padding: 0 12px;
+            justify-content: center;   /* brand is centred */
+            padding: 0 28px;           /* inset from curved-screen edges */
             font-size: 12px;
             font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-            color: rgba(0, 0, 0, 0.55);
+            color: rgba(0, 0, 0, 0.45); /* Darker for light reader background */
             background: transparent;
-            z-index: 99999;
             pointer-events: none;
             letter-spacing: 0.3px;
         }
-        .status-bar .clock { text-align: left; }
-        .status-bar .build { text-align: right; }
+        #status-clock {
+            position: absolute;
+            left: 28px;
+        }
+        #build-stamp {
+            position: absolute;
+            right: 28px;
+            cursor: pointer;
+            pointer-events: auto; /* allow tapping to download APK */
+            -webkit-tap-highlight-color: transparent;
+        }
+        .brand {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-weight: 700;
+            font-size: 13px;
+            letter-spacing: 0.4px;
+            background: linear-gradient(90deg, #4067EF 0%, #8640C0 50%, #C940B0 100%);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+            -webkit-text-fill-color: transparent;
+        }
         /* Notched font-size slider with visible tick marks */
         .font-slider {
             -webkit-appearance: none;
@@ -344,6 +367,20 @@
             transition: background 0.15s;
         }
         .ereader-hl:hover { background: rgba(255, 213, 79, 0.7); }
+
+        /* App-native selection color. Matches the saved-highlight yellow so
+           the moment the user starts dragging they see the same band that
+           will persist after release. Overrides Android's default blue. */
+        #epub-content ::selection,
+        #epub-content::selection {
+            background: rgba(255, 213, 79, 0.55);
+            color: inherit;
+        }
+        #epub-content ::-moz-selection,
+        #epub-content::-moz-selection {
+            background: rgba(255, 213, 79, 0.55);
+            color: inherit;
+        }
 
         /* Floating popup that appears when an existing highlight is
            tapped. Position is set inline by JS (top/left in viewport
@@ -419,6 +456,34 @@
         }
         .hl-settings-modal .save { background: #2196F3; color: #fff; }
         .hl-settings-modal .cancel { background: #333; color: #ccc; }
+
+        /* ---- TOC tree: hierarchical expand/collapse ---- */
+        .toc-row {
+            display: flex;
+            align-items: center;
+            padding: 12px 16px 12px 0;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background 0.15s;
+            color: #fff;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .toc-row:active { background: #3a3a3a; }
+        .toc-caret {
+            flex-shrink: 0;
+            width: 30px;
+            text-align: center;
+            font-size: 13px;
+            color: #888;
+            transition: transform 0.2s;
+        }
+        .toc-caret.collapsed { transform: rotate(-90deg); }
+        .toc-spacer { flex-shrink: 0; width: 30px; }
+        .toc-label { flex: 1; line-height: 1.35; }
+        .toc-label.depth-0 { font-size: 16px; font-weight: 600; }
+        .toc-label.depth-1 { font-size: 15px; font-weight: 400; color: #e0e0e0; }
+        .toc-label.depth-2 { font-size: 14px; font-weight: 400; color: #b0b0b0; }
+        .toc-children.collapsed { display: none; }
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
@@ -441,8 +506,9 @@
     </div>
 
     <div class="status-bar">
-        <span class="clock" id="status-clock"></span>
-        <span class="build" id="build-stamp"></span>
+        <span id="status-clock"></span>
+        <span class="brand">GreatReads</span>
+        <span id="build-stamp"></span>
     </div>
 
     <div class="reader-controls" id="reader-controls">
@@ -516,8 +582,9 @@
 
     <!-- Highlight-action popup. JS positions it next to the tapped highlight. -->
     <div id="hl-popup" class="hl-popup" style="display:none;">
-        <button title="Look up in dictionary" onclick="lookupHL('dict')">📖</button>
-        <button title="Look up in wiki"       onclick="lookupHL('wiki')">🌐</button>
+        <button title="Adjust highlight bounds" onclick="editHL()">✏️</button>
+        <button title="Look up in dictionary"   onclick="lookupHL('dict')">📖</button>
+        <button title="Look up in wiki"         onclick="lookupHL('wiki')">🌐</button>
         <button class="danger" title="Delete highlight" onclick="deleteHL()">🗑️</button>
     </div>
 
@@ -541,17 +608,24 @@
     </div>
 
     <script>
-        // BUILD is a short cache-bust / HTML-version tag I bump on every
-        // web edit so I can verify the WebView picked up the new HTML.
-        // The semantic app version comes from /api/version (read live from
-        // version.txt by the Flask backend); that's the one `gvc` bumps.
-        // The pill shows both: "v<semver> · b<BUILD>".
-        const BUILD = '2026-05-29.14-PROGRESSSYNC';
+        // Build stamp: YYMMDD-HH:MM, generated fresh each page load.
+        // Tapping it navigates to the APK download link.
         const buildStamp = document.getElementById('build-stamp');
-        buildStamp.textContent = 'b' + BUILD;
-        fetch('http://100.69.184.113:8091/api/version').then(r => r.json()).then(d => {
-            if (d && d.version) buildStamp.textContent = 'v' + d.version + ' · b' + BUILD;
-        }).catch(() => {});
+        function fmtStamp() {
+            const n = new Date();
+            const yy = String(n.getFullYear()).slice(2);
+            const mm = String(n.getMonth() + 1).padStart(2, '0');
+            const dd = String(n.getDate()).padStart(2, '0');
+            const hh = String(n.getHours()).padStart(2, '0');
+            const mi = String(n.getMinutes()).padStart(2, '0');
+            return `${yy}${mm}${dd}-${hh}:${mi}`;
+        }
+        const BUILD = fmtStamp();
+        buildStamp.textContent = BUILD;
+        buildStamp.title = 'Tap to download latest APK';
+        buildStamp.addEventListener('click', () => {
+            window.location.href = 'http://100.69.184.113:8090/ereader.apk';
+        });
 
         // Status-bar clock (HH:MM, 24h). Updates each minute.
         function tickClock() {
@@ -707,6 +781,13 @@
                     manifest[item.getAttribute('id')] = item.getAttribute('href');
                 });
 
+                // Try to parse the EPUB's native TOC hierarchy (nav.xhtml /
+                // toc.ncx). Result stored in the global tocTree; anchors are
+                // resolved later (in renderEpubContent) once the DOM exists.
+                tocTree = null;
+                try { tocTree = await parseEpubToc(zip, opfPath, opfDoc); }
+                catch (e) { console.warn('TOC nav parse skipped:', e.message); }
+
                 // Extract all images and convert to data URLs
                 const imageMap = {};
                 for (let filename of Object.keys(zip.files)) {
@@ -775,6 +856,11 @@
 
         // NEW COLUMN-BASED PAGINATION
         let tocItems = [];
+        // tocTree is the canonical tree used by the TOC overlay. It is either
+        // parsed from the EPUB's nav.xhtml / toc.ncx (preferred — gives the
+        // proper author-defined section→chapter hierarchy) or synthesised from
+        // the heading scan in renderEpubContent as a fallback.
+        let tocTree = null;
         let contentWidth = 0;
         let pageWidth = 0;        // viewport width = column stride
         let columnStride = 0;     // columnWidth + columnGap (must equal pageWidth)
@@ -821,6 +907,15 @@
                     anchor: parseInt(heading.dataset.anchor, 10)
                 });
             });
+            // Resolve the nav TOC (parsed from nav.xhtml / toc.ncx) against
+            // the freshly-annotated DOM, or build a tree from the heading
+            // scan as a fallback. Either way tocTree is always ready for the
+            // TOC overlay.
+            if (tocTree && tocTree.length) {
+                resolveNavTocAnchors(tocTree, epubContent);
+            } else {
+                tocTree = buildTreeFromFlatItems(tocItems);
+            }
 
             // Load + visually apply server-side highlights AND pull the
             // latest reading position from the backend BEFORE pagination.
@@ -1607,6 +1702,15 @@
             parent.removeChild(span);
             parent.normalize();
         }
+        // Same as unwrapHL but skips normalize(), so callers that still
+        // hold references to the unwrapped text nodes (e.g. editHL's
+        // captured range endpoints) don't end up with detached nodes.
+        function unwrapHLKeepNodes(span) {
+            const parent = span.parentNode;
+            if (!parent) return;
+            while (span.firstChild) parent.insertBefore(span.firstChild, span);
+            parent.removeChild(span);
+        }
         function saveFontSizePref() {
             try { localStorage.setItem(FONT_KEY, String(fontSize)); } catch (e) {}
         }
@@ -1637,18 +1741,36 @@
             if (!range) return false;
             const text = range.toString().trim();
             if (!text) return false;
-            const startAnchor = findAnchorAncestor(range.startContainer);
-            const endAnchor   = findAnchorAncestor(range.endContainer);
-            if (!startAnchor || startAnchor !== endAnchor) {
-                flashToast('⚠️ Highlight within a single paragraph only');
-                window.getSelection().removeAllRanges();
-                return true;
-            }
-            const offset    = charOffsetWithin(startAnchor, range.startContainer, range.startOffset);
-            const endOffset = charOffsetWithin(startAnchor, range.endContainer,   range.endOffset);
-            if (offset < 0 || endOffset < 0 || endOffset <= offset) return true;
-            const length    = endOffset - offset;
-            const anchorIdx = parseInt(startAnchor.dataset.anchor, 10);
+            const startA = findAnchorAncestor(range.startContainer);
+            const endA   = findAnchorAncestor(range.endContainer);
+            if (!startA || !endA) return false;
+            const startOffset = charOffsetWithin(startA, range.startContainer, range.startOffset);
+            const endOffset   = charOffsetWithin(endA,   range.endContainer,   range.endOffset);
+            if (startOffset < 0 || endOffset < 0) return true;
+            const startAnchorIdx = parseInt(startA.dataset.anchor, 10);
+            const endAnchorIdx   = parseInt(endA.dataset.anchor, 10);
+            // Reject zero-length / reversed selections within a single anchor.
+            if (startAnchorIdx === endAnchorIdx && endOffset <= startOffset) return true;
+            // Reject reversed cross-anchor (shouldn't happen — DOM Range is
+            // always start-before-end — but defensive).
+            if (endAnchorIdx < startAnchorIdx) return true;
+
+            // Storage shape:
+            //   single anchor: { anchor, offset, length, endAnchor:null, endOffset:null }
+            //   multi  anchor: { anchor, offset, length:null, endAnchor, endOffset }
+            // Reader load handles both, and the single-anchor form is
+            // identical to what older clients wrote, so back-compat is free.
+            const singleAnchor = (startAnchorIdx === endAnchorIdx);
+            const payload = {
+                type: 'highlight', bookId, bookTitle: title,
+                anchor: startAnchorIdx,
+                offset: startOffset,
+                length: singleAnchor ? (endOffset - startOffset) : null,
+                endAnchor: singleAnchor ? null : endAnchorIdx,
+                endOffset: singleAnchor ? null : endOffset,
+                page: currentEpubPage, total: totalPages,
+                text, color: 'yellow',
+            };
 
             const tmpId = 'tmp-' + Date.now();
             try { wrapRangeAsHighlight(range, tmpId); } catch (e) { console.warn('wrap failed', e); }
@@ -1658,24 +1780,44 @@
                 const r = await fetch(`${API_URL}/highlights`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        type: 'highlight', bookId, bookTitle: title,
-                        anchor: anchorIdx, offset, length,
-                        page: currentEpubPage, total: totalPages,
-                        text, color: 'yellow'
-                    })
+                    body: JSON.stringify(payload),
                 });
                 if (!r.ok) throw new Error('HTTP ' + r.status);
                 const saved = await r.json();
-                document.querySelectorAll(`[data-hl-id="${tmpId}"]`).forEach(s => {
-                    s.dataset.hlId = saved.id;
-                });
-                flashToast('✏️ Highlight saved');
+                const spans = document.querySelectorAll(`[data-hl-id="${tmpId}"]`);
+                spans.forEach(s => { s.dataset.hlId = saved.id; });
+                // Pop our in-app action popup directly on the new highlight
+                // so the user gets a native (delete / dict / wiki) action
+                // bar instead of relying on Android's text-selection menu.
+                if (spans.length) showHLPopup(spans[0]);
             } catch (e) {
                 document.querySelectorAll(`[data-hl-id="${tmpId}"]`).forEach(unwrapHL);
                 flashToast('⚠️ Save failed: ' + e.message);
             }
             return true;
+        }
+
+        // Debounced "selection settled" watcher. This is the ONLY thing that
+        // commits a highlight — touchend deliberately does NOT save, so the
+        // user has the full debounce window to keep nudging the handles
+        // after their finger lifts. The timer is reset on every
+        // selectionchange (initial drag AND post-release handle moves), so
+        // it only fires once the user has stopped moving for SETTLE_MS.
+        const SETTLE_MS = 1800;
+        let _selSettleTimer = null;
+        let _selSaveInFlight = false;
+        function scheduleSelectionSettleSave() {
+            if (_selSaveInFlight) return;
+            if (_selSettleTimer) clearTimeout(_selSettleTimer);
+            _selSettleTimer = setTimeout(async () => {
+                _selSettleTimer = null;
+                const sel = window.getSelection();
+                if (!sel || sel.isCollapsed || !sel.rangeCount) return;
+                if (!sel.toString().trim()) return;
+                _selSaveInFlight = true;
+                try { await handleSelectionMaybe(); }
+                finally { _selSaveInFlight = false; }
+            }, SETTLE_MS);
         }
 
         // ---------- Highlight action popup ----------
@@ -1722,6 +1864,65 @@
             window.open(target, '_blank');
         }
 
+        // Hand the existing highlight back to the user as a live selection
+        // so they can drag Android's native handles to extend/shrink the
+        // bounds. Flow:
+        //   1. Reconstruct a DOM Range that spans all of the highlight's
+        //      ereader-hl spans (first .firstChild → last .lastChild).
+        //   2. Delete the highlight server-side and unwrap the spans —
+        //      this clears the yellow band so the user sees only the
+        //      blue selection while adjusting.
+        //   3. Programmatically set window.getSelection() to that range.
+        //      Android's WebView shows its selection handles + magnifier.
+        //   4. selectionchange arms scheduleSelectionSettleSave(), which
+        //      saves the adjusted range as a brand-new highlight once the
+        //      user stops moving the handles for SETTLE_MS.
+        async function editHL() {
+            if (!_activeHLId) return;
+            const id = _activeHLId;
+            const spans = Array.from(document.querySelectorAll(`[data-hl-id="${id}"]`));
+            if (!spans.length) { hideHLPopup(); return; }
+            // Build the range BEFORE unwrapping (offsets shift after unwrap).
+            const range = document.createRange();
+            const firstText = firstTextDescendant(spans[0]);
+            const lastText  = lastTextDescendant(spans[spans.length - 1]);
+            if (!firstText || !lastText) { hideHLPopup(); return; }
+            range.setStart(firstText, 0);
+            range.setEnd(lastText, lastText.nodeValue.length);
+            hideHLPopup();
+            // Best-effort server delete; if it fails we still let the user
+            // adjust — they'll get a duplicate at worst.
+            try {
+                await fetch(`${API_URL}/highlights/${id}`, { method: 'DELETE' });
+            } catch (_) {}
+            // Use the non-normalizing unwrap — Node.normalize() would
+            // merge our captured text nodes into their siblings and
+            // detach them, breaking the range we just built.
+            spans.forEach(unwrapHLKeepNodes);
+            const sel = window.getSelection();
+            sel.removeAllRanges();
+            sel.addRange(range);
+            // Hint to the user that handles are live. The settle timer
+            // saves on its own after SETTLE_MS of no movement.
+            flashToast('✏️ Drag handles to adjust');
+        }
+        function firstTextDescendant(node) {
+            if (node.nodeType === Node.TEXT_NODE) return node;
+            for (const ch of node.childNodes) {
+                const t = firstTextDescendant(ch);
+                if (t) return t;
+            }
+            return null;
+        }
+        function lastTextDescendant(node) {
+            if (node.nodeType === Node.TEXT_NODE) return node;
+            for (let i = node.childNodes.length - 1; i >= 0; i--) {
+                const t = lastTextDescendant(node.childNodes[i]);
+                if (t) return t;
+            }
+            return null;
+        }
+
         // ---------- Apply server-side highlights on load ----------
         async function loadHighlightsForBook() {
             if (!bookId) return;
@@ -1732,11 +1933,27 @@
                 const content = document.getElementById('epub-content');
                 if (!content) return;
                 for (const it of (data.items || [])) {
-                    if (typeof it.anchor !== 'number' || typeof it.offset !== 'number' || typeof it.length !== 'number') continue;
-                    const el = content.querySelector(`[data-anchor="${it.anchor}"]`);
-                    if (!el) continue;
-                    const start = findTextPosition(el, it.offset);
-                    const end   = findTextPosition(el, it.offset + it.length);
+                    if (typeof it.anchor !== 'number' || typeof it.offset !== 'number') continue;
+                    const startEl = content.querySelector(`[data-anchor="${it.anchor}"]`);
+                    if (!startEl) continue;
+                    // Two shapes:
+                    //   single anchor (legacy + back-compat): `length` is set,
+                    //     both ends live in the same anchor element.
+                    //   multi anchor: `endAnchor`/`endOffset` are set,
+                    //     range crosses paragraph boundaries.
+                    let endEl, endChar;
+                    if (typeof it.endAnchor === 'number' && typeof it.endOffset === 'number') {
+                        endEl   = content.querySelector(`[data-anchor="${it.endAnchor}"]`);
+                        endChar = it.endOffset;
+                    } else if (typeof it.length === 'number') {
+                        endEl   = startEl;
+                        endChar = it.offset + it.length;
+                    } else {
+                        continue;
+                    }
+                    if (!endEl) continue;
+                    const start = findTextPosition(startEl, it.offset);
+                    const end   = findTextPosition(endEl,   endChar);
                     if (!start || !end) continue;
                     try {
                         const range = document.createRange();
@@ -1768,11 +1985,31 @@
             flashToast('✅ Lookup URLs saved');
         }
 
+        // ---------- Selection tracking ----------
+        // Android's WebView provides its own selection magnifier and drag
+        // handles, so we don't render one ourselves. We only need to
+        // observe `selectionchange` to keep the settle-save timer armed —
+        // that's what commits the highlight once the user has stopped
+        // adjusting the handles. Handle-drag adjustments fire
+        // selectionchange but NOT touch events, so this is the only path
+        // that catches post-release tweaks.
+        function onSelectionChangeForSave() {
+            const sel = window.getSelection();
+            if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
+                if (_selSettleTimer) { clearTimeout(_selSettleTimer); _selSettleTimer = null; }
+                return;
+            }
+            const content = document.getElementById('epub-content');
+            if (!content || !content.contains(sel.getRangeAt(0).endContainer)) return;
+            scheduleSelectionSettleSave();
+        }
+
         // Wire selection + popup once per page load. The popup closes on
         // any click that isn't inside the popup itself or on a highlight.
         function initHighlights() {
             if (_hlInited) return;
             _hlInited = true;
+            document.addEventListener('selectionchange', onSelectionChangeForSave);
             document.addEventListener('click', (e) => {
                 const hl = e.target.closest && e.target.closest('.ereader-hl');
                 const inPopup = e.target.closest && e.target.closest('#hl-popup');
@@ -1898,6 +2135,196 @@
         function toggleMenu() {
             const controls = document.getElementById('reader-controls');
             controls.classList.toggle('visible');
+            // While the menu is open, also drop out of Android immersive
+            // mode so the system gesture insets are reported again and the
+            // user can swipe up to go home / switch apps. Restored when the
+            // menu is dismissed. `window.Android` is only defined inside the
+            // native WebView, so this is a no-op in a regular browser.
+            const open = controls.classList.contains('visible');
+            try {
+                if (window.Android && typeof window.Android.showSystemBars === 'function') {
+                    if (open) window.Android.showSystemBars();
+                    else      window.Android.hideSystemBars();
+                }
+            } catch (_) {}
+        }
+
+        // ---- EPUB TOC parsing helpers ----------------------------------------
+
+        // Parse the EPUB's native TOC file and return a tree of
+        // {title, href, anchor, children} nodes, or null on failure.
+        async function parseEpubToc(zip, opfPath, opfDoc) {
+            // EPUB3: item with properties="nav"
+            let navHref = null;
+            opfDoc.querySelectorAll('manifest item').forEach(item => {
+                const props = (item.getAttribute('properties') || '').split(/\s+/);
+                if (props.includes('nav') && !navHref) navHref = item.getAttribute('href');
+            });
+            if (navHref) {
+                const navFile = zip.files[opfPath + navHref];
+                if (navFile) {
+                    const navText = await navFile.async('text');
+                    const navDoc = new DOMParser().parseFromString(navText, 'text/html');
+                    const tocNav = navDoc.querySelector('nav[epub\\:type="toc"], nav');
+                    if (tocNav) {
+                        const ol = tocNav.querySelector(':scope > ol');
+                        if (ol) return parseNavOl(ol);
+                    }
+                }
+            }
+            // EPUB2: toc.ncx
+            let ncxHref = null;
+            opfDoc.querySelectorAll('manifest item').forEach(item => {
+                const mt = item.getAttribute('media-type') || '';
+                if (mt === 'application/x-dtbncx+xml' && !ncxHref) ncxHref = item.getAttribute('href');
+            });
+            if (ncxHref) {
+                const ncxFile = zip.files[opfPath + ncxHref];
+                if (ncxFile) {
+                    const ncxText = await ncxFile.async('text');
+                    const ncxDoc = new DOMParser().parseFromString(ncxText, 'text/xml');
+                    const navMap = ncxDoc.querySelector('navMap');
+                    if (navMap) return parseNcxNavPoints(navMap);
+                }
+            }
+            return null;
+        }
+
+        function parseNavOl(ol) {
+            const items = [];
+            for (const li of ol.children) {
+                if (li.tagName.toLowerCase() !== 'li') continue;
+                const a = li.querySelector(':scope > a, :scope > span > a');
+                if (!a) continue;
+                const childOl = li.querySelector(':scope > ol');
+                const children = childOl ? parseNavOl(childOl) : [];
+                items.push({ title: a.textContent.trim(), href: a.getAttribute('href') || '', anchor: null, children });
+            }
+            return items;
+        }
+
+        function parseNcxNavPoints(parent) {
+            const items = [];
+            for (const np of parent.children) {
+                // Strip any namespace prefix (e.g. "ncx:navPoint" → "navPoint")
+                if (np.tagName.replace(/.*:/, '') !== 'navPoint') continue;
+                const labelEl = np.querySelector('navLabel text');
+                const contentEl = np.querySelector('content');
+                const title = labelEl ? labelEl.textContent.trim() : '?';
+                const href  = contentEl ? (contentEl.getAttribute('src') || '') : '';
+                const children = parseNcxNavPoints(np);
+                items.push({ title, href, anchor: null, children });
+            }
+            return items;
+        }
+
+        // Walk the nav tree and fill in `anchor` (data-anchor number) for
+        // each item by matching the href fragment to an id in the live DOM.
+        function resolveNavTocAnchors(tree, epubContent) {
+            const idMap = {};
+            epubContent.querySelectorAll('[id][data-anchor]').forEach(el => {
+                idMap[el.id] = parseInt(el.dataset.anchor, 10);
+            });
+            function resolve(items) {
+                for (const item of items) {
+                    const frag = item.href.includes('#') ? item.href.split('#').pop() : null;
+                    if (frag && idMap[frag] != null) {
+                        item.anchor = idMap[frag];
+                    } else {
+                        item.anchor = findAnchorByText(item.title, epubContent);
+                    }
+                    if (item.children.length) resolve(item.children);
+                }
+            }
+            resolve(tree);
+        }
+
+        function findAnchorByText(text, epubContent) {
+            const norm = t => t.replace(/\s+/g, ' ').trim().toLowerCase();
+            const target = norm(text);
+            for (const h of epubContent.querySelectorAll('h1,h2,h3,h4,h5')) {
+                if (norm(h.textContent) === target && h.dataset.anchor != null)
+                    return parseInt(h.dataset.anchor, 10);
+            }
+            return null;
+        }
+
+        // Convert flat [{title, level, anchor}] heading list into a nested
+        // tree where lower-level headings are children of higher-level ones.
+        function buildTreeFromFlatItems(items) {
+            const root = [];
+            const stack = []; // {level, node}
+            for (const raw of items) {
+                const node = { title: raw.title, anchor: raw.anchor, href: '', children: [] };
+                while (stack.length && stack[stack.length - 1].level >= raw.level) stack.pop();
+                (stack.length ? stack[stack.length - 1].node.children : root).push(node);
+                stack.push({ level: raw.level, node });
+            }
+            return root;
+        }
+
+        // ---- TOC tree UI -------------------------------------------------------
+
+        function navigateToTocItem(item) {
+            let page = null;
+            if (typeof item.anchor === 'number' && !isNaN(item.anchor)) {
+                page = findPageForAnchor(item.anchor);
+            }
+            if (page != null) {
+                currentEpubPage = Math.min(totalPages - 1, Math.max(0, page));
+                renderEpubPage();
+            } else {
+                console.warn('TOC: could not resolve page for', item);
+            }
+            toggleTOC();
+            toggleMenu();
+        }
+
+        // Recursively render a tree of {title, anchor, children} nodes into
+        // `container`. `depth` drives the left indent and label font size.
+        function renderTocTree(tree, container, depth) {
+            for (const item of tree) {
+                const hasKids = item.children && item.children.length > 0;
+
+                const row = document.createElement('div');
+                row.className = 'toc-row';
+                row.style.paddingLeft = (8 + depth * 22) + 'px';
+
+                // Caret (for items with children) or spacer (leaf items).
+                let childBox = null;
+                if (hasKids) {
+                    const caret = document.createElement('span');
+                    caret.className = 'toc-caret'; // ▾ by default
+                    caret.textContent = '▾';
+                    row.appendChild(caret);
+
+                    childBox = document.createElement('div');
+                    childBox.className = 'toc-children'; // expanded by default
+
+                    caret.addEventListener('click', e => {
+                        e.stopPropagation();
+                        const isCollapsed = childBox.classList.toggle('collapsed');
+                        caret.classList.toggle('collapsed', isCollapsed);
+                    });
+                } else {
+                    const spacer = document.createElement('span');
+                    spacer.className = 'toc-spacer';
+                    row.appendChild(spacer);
+                }
+
+                const label = document.createElement('span');
+                label.className = `toc-label depth-${Math.min(depth, 2)}`;
+                label.textContent = item.title;
+                row.appendChild(label);
+
+                row.addEventListener('click', () => navigateToTocItem(item));
+                container.appendChild(row);
+
+                if (childBox) {
+                    container.appendChild(childBox);
+                    renderTocTree(item.children, childBox, depth + 1);
+                }
+            }
         }
 
         function toggleTOC() {
@@ -1905,48 +2332,11 @@
             const tocList = document.getElementById('toc-list');
 
             if (tocOverlay.style.display === 'none') {
-                // Show TOC
                 tocList.innerHTML = '';
-                if (tocItems.length === 0) {
-                    tocList.innerHTML = '<div style="color: #aaa; padding: 20px; text-align: center; font-size: 16px;">No table of contents available</div>';
+                if (!tocTree || tocTree.length === 0) {
+                    tocList.innerHTML = '<div style="color:#aaa;padding:20px;text-align:center;font-size:16px;">No table of contents available</div>';
                 } else {
-                    tocItems.forEach(item => {
-                        const tocItem = document.createElement('div');
-                        tocItem.style.cssText = `
-                            padding: 15px 20px;
-                            padding-left: ${20 + (item.level - 1) * 30}px;
-                            color: #fff;
-                            cursor: pointer;
-                            border-radius: 8px;
-                            margin-bottom: 8px;
-                            font-size: 16px;
-                            transition: background 0.2s;
-                        `;
-                        tocItem.textContent = item.title;
-                        tocItem.onclick = () => {
-                            // Resolve the heading's anchor to its CURRENT
-                            // page (re-paginated layouts have moved it). Fall
-                            // back to legacy item.page if present.
-                            let page = null;
-                            if (typeof item.anchor === 'number' && !isNaN(item.anchor)) {
-                                page = findPageForAnchor(item.anchor);
-                            }
-                            if (page == null && typeof item.page === 'number') {
-                                page = item.page;
-                            }
-                            if (page != null) {
-                                currentEpubPage = Math.min(totalPages - 1, Math.max(0, page));
-                                renderEpubPage();
-                            } else {
-                                console.warn('TOC: could not resolve page for', item);
-                            }
-                            toggleTOC();
-                            toggleMenu();
-                        };
-                        tocItem.onmouseover = () => tocItem.style.background = '#444';
-                        tocItem.onmouseout = () => tocItem.style.background = 'transparent';
-                        tocList.appendChild(tocItem);
-                    });
+                    renderTocTree(tocTree, tocList, 0);
                 }
                 tocOverlay.style.display = 'block';
             } else {
@@ -1971,22 +2361,26 @@
                 touchStartY = e.changedTouches[0].screenY;
             }, { passive: true });
 
-            viewport.addEventListener('touchend', async (e) => {
+            viewport.addEventListener('touchend', (e) => {
                 touchEndX = e.changedTouches[0].screenX;
                 touchEndY = e.changedTouches[0].screenY;
-                // If the user finished a text selection, save it as a
-                // highlight and skip page-turn handling. Same for taps
-                // that landed on an existing highlight (the click
-                // listener installed by initHighlights opens the popup).
-                if (await handleSelectionMaybe()) return;
+                // If there's a live text selection, suppress page-turn and
+                // tap-to-menu — but do NOT commit the highlight yet. The
+                // settle timer (scheduleSelectionSettleSave, ~SETTLE_MS
+                // after the last selectionchange) handles the save so the
+                // user has time to nudge the handles after lifting their
+                // finger. Same suppression for taps that landed on an
+                // existing highlight (the click listener opens the popup).
+                const sel = window.getSelection();
+                if (sel && !sel.isCollapsed && sel.toString().trim()) return;
                 const tgt = e.target;
                 if (tgt && tgt.closest && (tgt.closest('.ereader-hl') || tgt.closest('#hl-popup'))) return;
                 const popup = document.getElementById('hl-popup');
                 if (popup && popup.style.display !== 'none') { hideHLPopup(); return; }
                 handleSwipe();
             }, { passive: true });
-            // Mouse selection for desktop debugging — same code path.
-            document.addEventListener('mouseup', () => { handleSelectionMaybe(); });
+            // Desktop debugging: also arm the settle timer on mouseup.
+            document.addEventListener('mouseup', () => { scheduleSelectionSettleSave(); });
 
             function handleSwipe() {
                 const diffX = touchStartX - touchEndX;

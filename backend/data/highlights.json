@@ -14,22 +14,6 @@
     "created": 1780091472344
   },
   {
-    "id": "c1b76ae6-5604-4499-9e27-37aa3780878a",
-    "type": "highlight",
-    "bookId": "397",
-    "bookTitle": "Mostly Harmless",
-    "bookAuthor": "",
-    "anchor": 3,
-    "offset": 0,
-    "length": 3,
-    "page": 3,
-    "total": 207,
-    "text": "for",
-    "note": "",
-    "color": "yellow",
-    "created": 1780105628349
-  },
-  {
     "id": "fb10885b-da13-4fd4-8a59-edef59220fd9",
     "type": "highlight",
     "bookId": "397",
@@ -44,5 +28,21 @@
     "note": "",
     "color": "yellow",
     "created": 1780105658268
+  },
+  {
+    "id": "bcbc0205-49cc-41e4-904f-7240ab75cbb8",
+    "type": "highlight",
+    "bookId": "432",
+    "bookTitle": "The Blade Itself",
+    "bookAuthor": "",
+    "anchor": 155,
+    "offset": 0,
+    "length": 472,
+    "page": 22,
+    "total": 551,
+    "text": "\u201cBut after three years, production was up. It was doubled in fact. So you were brought back to Adua, to work under Superior Kalyne. I thought perhaps you would learn discipline with him, but it seems I was wrong. You insist on going your own way.\u201d The Arch Lector frowned up at him. \u201cTo be frank, I think that Kalyne is afraid of you. I think they all are. They don\u2019t like your arrogance, they don\u2019t like your methods, they don\u2019t like your\u2026 special insight into our work.\u201d",
+    "note": "",
+    "color": "yellow",
+    "created": 1780105920668
   }
 ]
