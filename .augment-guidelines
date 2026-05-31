@@ -15,23 +15,81 @@ description: Ereader agent guidelines — extends shared server guidelines
 - **NEVER**: `sudo reboot`, `shutdown`, `docker-compose down`, `DROP DATABASE`, `pg_resetwal`
 - **NEVER** pipe `curl … | bash` from third-party sources without explicit user confirmation
 - **NEVER** commit, push, install dependencies, or build/flash the APK without explicit permission
+- **THIS FILE is the source of truth** for project layout/ports/APIs/invariants. The stale root-level `*.md`/`*.txt` docs have been deleted — do not recreate them.
 - **Tailscale IP**: `100.69.184.113`
 - Not a Docker project — runs as a bare Flask process + static web files
 
 ## Project Details
 
 - **Directory**: `/home/brandon/projects/Ereader/`
+- **User-facing product name**: **GreatReads** (HTML titles, share-sheet strings, force-stop target). The repo / package name is `ereader` / `com.ereader.simple` — they refer to the same app.
 - **Backend**: Flask, `backend/server.py`, port **8091**, proxies a Calibre Content Server
   - Calibre upstream: `$CALIBRE_URL` (default `http://localhost:8083`), library `$CALIBRE_LIBRARY`
   - Run via `backend/run.sh` (creates venv, installs requirements, starts on 0.0.0.0:8091)
   - PID file: `server.pid`, logs: `backend/server.log`
 - **Web reader**: static files in `web/` served on port **8090** (separate process)
-  - `web/index.html` — library browser
-  - `web/reader.html` — PDF + EPUB reader (consumed in-app via WebView)
+  - `web/index.html` — library browser (~1240 lines)
+  - `web/reader.html` — PDF + EPUB reader (~4450 lines, consumed in-app via WebView)
+  - `web/serve.py` — preferred static server (no-cache headers, correct `.apk` MIME, permissive CORS). Use this over `python3 -m http.server` so the WebView never serves stale HTML.
 - **Android app**: `simple-app/` — minimal native WebView wrapper pointing at `http://100.69.184.113:8090`
-  - Build output: `web/ereader.apk` (signed)
-  - Built with Android Studio / Gradle; do not rebuild without permission
+  - Single Activity: `simple-app/app/src/main/java/com/ereader/simple/MainActivity.java`
+  - `minSdk 24`, `targetSdk 34`, `compileSdk 34`, JDK 17
+  - Manifest declares `android:configChanges=...|screenSize|...|orientation|...` so foldable posture changes don't recreate the Activity — they fire `onConfigurationChanged` instead.
+  - Suppresses the Chromium text-selection floating toolbar via `wrapEmptyMenu()` while keeping selection itself working (see in-file comment for full history of why).
+  - Build output: `web/ereader.apk` (debug-signed via `~/.android/debug.keystore`, served from the static server as an in-place upgrade — no uninstall needed).
+  - **Do not rebuild or flash the APK without permission.**
 - **React Native app**: `app/` — older RN attempt, not currently the primary client. EPUB reading is `coming soon` placeholder. Don't touch unless asked.
+
+## Versioning Workflow
+
+- `version.txt` at repo root is the **single source of truth** for the app version (semver).
+- Bumped by the user's `gvc` shell function (`~/dotfiles/bashrc/conf.d/20-functions.sh`) which auto-increments the patch, commits, tags, and pushes.
+- Read live by:
+  - `backend/server.py` → `/api/version` (no restart needed after a bump)
+  - `simple-app/app/build.gradle` → `versionName` = file contents, `versionCode` = `major*10000 + minor*100 + patch`
+- **Never edit `version.txt` directly** unless the user explicitly asks. Let `gvc` handle it.
+
+## Backend API Surface (`backend/server.py`, port 8091)
+
+All endpoints are JSON unless noted. CORS is permissive.
+
+- **Books (Calibre proxy)**
+  - `GET  /api/books?limit&offset&query` — list books (sorted by author last name, then series, then pubdate)
+  - `GET  /api/books/<id>` — single book metadata
+  - `GET  /api/books/<id>/cover?type=cover|thumb` — proxied image (30-day cache, SVG placeholder fallback)
+  - `GET  /api/books/<id>/download?format=epub|pdf|...` — streams the file from Calibre
+  - `GET  /api/search?q&limit&offset` — same as `/api/books` with a query
+- **Highlights & bookmarks** (see "Highlight Model" below)
+  - `GET    /api/highlights?bookId&type&q` — filtered list, newest first
+  - `POST   /api/highlights` — create (server fills `id` + `created`)
+  - `PUT    /api/highlights/<id>` — partial update; only `note`, `color`, `text` are mutable
+  - `DELETE /api/highlights/<id>`
+- **Per-book reading progress** (cross-device "where am I")
+  - `GET    /api/progress` — all books, newest-updated first (powers "Continue reading")
+  - `GET    /api/progress/<bookId>`
+  - `PUT    /api/progress/<bookId>` — upsert; last-writer-wins on `updated` timestamp
+  - `DELETE /api/progress/<bookId>`
+- **Meta**
+  - `GET /api/health` — checks Calibre reachability, returns `version`
+  - `GET /api/version` — reads `version.txt` live
+  - `GET /api/build-stamp` — `YYMMDD-HH:MM` from the newest of `web/{index,reader}.html`. Drives the status-bar build pill so the user can tell at a glance whether the web code is fresh. Distinct from `/api/version` (which tracks the APK semver).
+
+## Persisted Backend State
+
+- Stored as plain JSON in `backend/data/` (override with `$EREADER_DATA_DIR`):
+  - `highlights.json` — list of highlight/bookmark items (lock: `_highlights_lock`)
+  - `progress.json` — `{ "<bookId>": {progress record}, ... }` (lock: `_progress_lock`)
+- Atomic writes via `tmp + os.replace`. Trivial to back up; trivial to grep.
+- **Read-only access to the Calibre library is the rule** — never write back to Calibre from this project.
+
+## JS ↔ Java Bridge (`window.Android` in the WebView)
+
+Implemented by `MainActivity.JsBridge`. Available **only** inside the APK WebView, never in a desktop browser — feature-detect with `typeof Android !== 'undefined'`.
+
+- `Android.showSystemBars()` — un-hides status + nav bars (reader menu / settings open). Sets `systemBarsRequested = true` so `onWindowFocusChanged` won't snap them back.
+- `Android.hideSystemBars()` — re-enters sticky-immersive fullscreen.
+- `Android.keepScreenOn(boolean)` — toggles `FLAG_KEEP_SCREEN_ON` on the window (the Web Wake Lock API silently no-ops in this WebView, so this is the reliable path).
+- `Android.shareImage(base64Png, chooserTitle)` — writes a PNG to `cacheDir/share/`, wraps it in a FileProvider `content://` URI, and fires `ACTION_SEND` (used for the "share quote" canvas export, because the Web Share API requires a secure context and we serve plain HTTP over Tailscale).
 
 ## Primary Test Device
 
@@ -54,6 +112,23 @@ description: Ereader agent guidelines — extends shared server guidelines
 - DO NOT make `columnGap` conditional on dual-page mode. Same value in both modes.
 - All column geometry is computed in `calculatePages()` — do not also set `column-width`, `column-gap`, or horizontal padding in CSS.
 - Always call `calculatePages(true)` (preserve progress) on font-size change, dual-page toggle, and viewport resize.
+
+## Highlight & Bookmark Model (`web/reader.html` ↔ backend)
+
+Items are anchored to the *source DOM*, not the paginated layout, so they survive font-size changes, dual-page toggles, and foldable unfolds. Common fields:
+
+- `id` — server-assigned UUID (do not set client-side)
+- `type` — `"highlight"`, `"bookmark"`, or `"auto-bookmark"`
+- `bookId`, `bookTitle`, `bookAuthor`
+- `anchor` — integer index of the source block (`data-anchor="N"` in reader DOM)
+- `offset`, `length` — character span inside that single anchor's `textContent`
+- `endAnchor`, `endOffset` — populated **only** when the selection crosses anchors (then `length` is null). Single-anchor highlights leave both null for back-compat.
+- `page`, `total` — paginated position **at time of creation** (purely informational; never used to re-locate)
+- `text`, `note`, `color`, `created` (epoch ms)
+
+The reader re-renders highlights every time it paginates; never trust `page` to find a highlight, always walk the DOM via `anchor` + `offset`.
+
+Progress records (`/api/progress/<bookId>`) use the same `anchor` field plus a `progress` float (0..1) and a `fontSize` so the next device opens at the same place at the same size.
 
 ## Calibre Integration
 
@@ -87,3 +162,33 @@ adb shell am start -n com.ereader.simple/.MainActivity
 - `web/ereader.apk` is a signed release artifact — don't overwrite without permission
 - `.idsig` files are signing metadata — never commit deletion
 - Calibre library at `/mnt/boston/...` (see shared guidelines) — read-only, never modify
+
+## APK Delivery Flow
+
+Debug builds are pulled over HTTP and installed in-place — never via `adb install`.
+
+1. `./build-app.sh` (repo root) runs `./gradlew assembleDebug` in `simple-app/`, then copies `app/build/outputs/apk/debug/app-debug.apk` to `web/ereader.apk`.
+2. The phone browses to `http://100.69.184.113:8090/ereader.apk` (the static server sends `Content-Disposition: attachment` + the correct `.apk` MIME) and taps the download.
+3. Android treats it as an upgrade (same debug keystore as the previous build) — no uninstall, no data loss.
+
+**Never run `./build-app.sh` or push a new APK without explicit user permission.** The user runs builds themselves so they control device install timing.
+
+## Documentation Maintenance Protocol
+
+**This file is the project's living onboarding doc.** When you make a change that affects any of the following, update the relevant section in *this* file in the same edit batch — do not wait to be asked, and do not create a separate doc to track it:
+
+- Port numbers, hostnames, or process layout (Backend / Static server / APK)
+- Any addition, removal, or signature change to a `/api/...` endpoint in `backend/server.py` → update "Backend API Surface"
+- New shape or field for items in `backend/data/*.json` → update "Persisted Backend State" or "Highlight & Bookmark Model"
+- New, removed, or renamed `@JavascriptInterface` method on `MainActivity.JsBridge` → update "JS ↔ Java Bridge"
+- Changes to the EPUB column / pagination math in `web/reader.html` → update "EPUB Reader — Layout Invariants" (especially if you touch `calculatePages`, `columnGap`, `columnWidth`, or `SIDE_PADDING`)
+- New manifest permissions, `configChanges` entries, or Activity flags in `simple-app/` → update "Project Details" → Android app bullet
+- Changes to the version pipeline (`version.txt`, `gvc`, `build.gradle` version derivation, `/api/version`, `/api/build-stamp`) → update "Versioning Workflow"
+- Changes to the APK build/staging flow (`build-app.sh`, `web/ereader.apk` location, signing key) → update "APK Delivery Flow"
+
+Style rules for edits to this file:
+- Keep additions terse and bullet-shaped — match the surrounding density. No marketing prose, no "we should consider…" hedging.
+- Never duplicate something already documented elsewhere in the file; cross-reference instead.
+- If a section becomes wrong, *fix it in place*. Do not append "UPDATE 2026-XX-XX: …" notes.
+- Do **not** create new root-level `*.md` documentation files. This file is the doc.
+- If you discover the file is wrong but the user's request is unrelated, mention it once and offer to fix it; don't silently rewrite half the doc.
