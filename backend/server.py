@@ -34,6 +34,24 @@ _highlights_lock = threading.Lock()
 PROGRESS_FILE = os.path.join(DATA_DIR, 'progress.json')
 _progress_lock = threading.Lock()
 
+# Feature-request / TODO list surfaced by the in-app "Requests" page. Same
+# file-on-disk pattern. Shape on disk: list of request items (see
+# /api/requests below for the item shape). Seeded from REQUESTS_SEED on
+# first run so a fresh checkout has the initial backlog.
+REQUESTS_FILE = os.path.join(DATA_DIR, 'requests.json')
+_requests_lock = threading.Lock()
+REQUEST_STATUSES = ('Backlog', 'Requested', 'In Progress', 'Done')
+REQUESTS_SEED = [
+    {'title': 'Adding physical book pages',
+     'body':  'Adding physical book pages'},
+    {'title': 'Adding reading speed tracking',
+     'body':  'Adding reading speed tracking'},
+    {'title': 'Making bookmarks be line-specific',
+     'body':  'Making bookmarks be line-specific'},
+    {'title': "Considering a book's \"end\" to be 100% and not include appendix (100%+)",
+     'body':  "Considering a book's \"end\" to be 100% and not include appendix (100%+)"},
+]
+
 # Single source of truth for the app version, bumped by `gvc` (see
 # ../dotfiles/bashrc/conf.d/20-functions.sh — gvc auto-increments the
 # patch number in version.txt, commits, tags, pushes). The frontend
@@ -82,6 +100,42 @@ def _save_progress(data):
     with open(tmp, 'w') as f:
         json.dump(data, f, indent=2)
     os.replace(tmp, PROGRESS_FILE)
+
+def _seed_requests():
+    """Materialise REQUESTS_SEED into the requests list. Called only when
+    requests.json doesn't exist on disk yet."""
+    now = int(time.time() * 1000)
+    return [{
+        'id':       str(uuid.uuid4()),
+        'title':    s['title'],
+        'body':     s.get('body', ''),
+        'status':   'Backlog',
+        'comments': [],
+        'created':  now,
+        'updated':  now,
+    } for s in REQUESTS_SEED]
+
+def _load_requests():
+    if not os.path.exists(REQUESTS_FILE):
+        seeded = _seed_requests()
+        try:
+            _save_requests(seeded)
+        except Exception as e:
+            print(f"⚠️  Could not seed requests: {e}")
+        return seeded
+    try:
+        with open(REQUESTS_FILE, 'r') as f:
+            data = json.load(f)
+            return data if isinstance(data, list) else []
+    except Exception as e:
+        print(f"⚠️  Could not load requests: {e}")
+        return []
+
+def _save_requests(items):
+    tmp = REQUESTS_FILE + '.tmp'
+    with open(tmp, 'w') as f:
+        json.dump(items, f, indent=2)
+    os.replace(tmp, REQUESTS_FILE)
 
 def get_calibre_books(limit=None, offset=0, query=None):
     """Fetch books from Calibre Content Server"""
@@ -464,6 +518,103 @@ def delete_progress(book_id):
         del data[str(book_id)]
         _save_progress(data)
     return jsonify({'deleted': str(book_id)})
+
+# ---------- Feature requests / TODO list ----------
+# Backing store for the in-app "Requests" page (web/requests.html). One JSON
+# file on disk, same atomic-write pattern as highlights/progress. Item shape:
+#   { id, title, body, status, comments: [{ts, author, text}],
+#     created: epoch_ms, updated: epoch_ms }
+# status is one of REQUEST_STATUSES. "Requested" is the bucket that the next
+# Augment/agent session should pick up (see .augment-guidelines).
+
+@app.route('/api/requests', methods=['GET'])
+def list_requests():
+    """List all requests, newest-updated first. Optional ?status= filter."""
+    status_filter = request.args.get('status')
+    with _requests_lock:
+        items = _load_requests()
+    if status_filter:
+        items = [it for it in items if it.get('status') == status_filter]
+    items.sort(key=lambda x: x.get('updated', 0), reverse=True)
+    return jsonify({'items': items, 'total': len(items)})
+
+@app.route('/api/requests', methods=['POST'])
+def create_request():
+    """Create a new request. Defaults to Backlog if status is omitted."""
+    body = request.get_json(silent=True) or {}
+    title = (body.get('title') or '').strip()
+    if not title:
+        return jsonify({'error': 'title is required'}), 400
+    status = body.get('status') or 'Backlog'
+    if status not in REQUEST_STATUSES:
+        return jsonify({'error': f'status must be one of {REQUEST_STATUSES}'}), 400
+    now = int(time.time() * 1000)
+    item = {
+        'id':       str(uuid.uuid4()),
+        'title':    title,
+        'body':     body.get('body') or '',
+        'status':   status,
+        'comments': [],
+        'created':  now,
+        'updated':  now,
+    }
+    with _requests_lock:
+        items = _load_requests()
+        items.append(item)
+        _save_requests(items)
+    return jsonify(item), 201
+
+@app.route('/api/requests/<item_id>', methods=['PUT'])
+def update_request(item_id):
+    """Partial update — allows mutating title, body, status."""
+    body = request.get_json(silent=True) or {}
+    allowed = ('title', 'body', 'status')
+    if 'status' in body and body['status'] not in REQUEST_STATUSES:
+        return jsonify({'error': f'status must be one of {REQUEST_STATUSES}'}), 400
+    with _requests_lock:
+        items = _load_requests()
+        for it in items:
+            if it.get('id') == item_id:
+                for k in allowed:
+                    if k in body:
+                        it[k] = body[k]
+                it['updated'] = int(time.time() * 1000)
+                _save_requests(items)
+                return jsonify(it)
+    return jsonify({'error': 'not found'}), 404
+
+@app.route('/api/requests/<item_id>', methods=['DELETE'])
+def delete_request(item_id):
+    with _requests_lock:
+        items = _load_requests()
+        new_items = [it for it in items if it.get('id') != item_id]
+        if len(new_items) == len(items):
+            return jsonify({'error': 'not found'}), 404
+        _save_requests(new_items)
+    return jsonify({'deleted': item_id})
+
+@app.route('/api/requests/<item_id>/comments', methods=['POST'])
+def add_request_comment(item_id):
+    """Append a comment to a request (used for iteration / replies).
+    Body: { text: str, author?: str }. Author defaults to 'user'."""
+    body = request.get_json(silent=True) or {}
+    text = (body.get('text') or '').strip()
+    if not text:
+        return jsonify({'error': 'text is required'}), 400
+    comment = {
+        'ts':     int(time.time() * 1000),
+        'author': body.get('author') or 'user',
+        'text':   text,
+    }
+    with _requests_lock:
+        items = _load_requests()
+        for it in items:
+            if it.get('id') == item_id:
+                it.setdefault('comments', []).append(comment)
+                it['updated'] = comment['ts']
+                _save_requests(items)
+                return jsonify(it), 201
+    return jsonify({'error': 'not found'}), 404
 
 @app.route('/api/health', methods=['GET'])
 def health_check():

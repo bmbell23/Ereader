@@ -413,6 +413,7 @@
     <div class="menu-popup" id="menu-popup">
         <button id="menu-highlights">✏️ Highlights</button>
         <button id="menu-bookmarks">🔖 Bookmarks</button>
+        <button id="menu-requests">📋 Requests</button>
         <button id="menu-settings">⚙️ Settings</button>
     </div>
 
@@ -1065,6 +1066,10 @@
         document.getElementById('menu-bookmarks').addEventListener('click', () => {
             menuPopup.classList.remove('open');
             openOverlay('bookmark');
+        });
+        document.getElementById('menu-requests').addEventListener('click', () => {
+            menuPopup.classList.remove('open');
+            window.location.href = '/requests.html';
         });
         document.getElementById('menu-settings').addEventListener('click', () => {
             menuPopup.classList.remove('open');

@@ -30,6 +30,7 @@ description: Ereader agent guidelines — extends shared server guidelines
 - **Web reader**: static files in `web/` served on port **8090** (separate process)
   - `web/index.html` — library browser (~1240 lines)
   - `web/reader.html` — PDF + EPUB reader (~4450 lines, consumed in-app via WebView)
+  - `web/requests.html` + `web/requests.js` — in-app feature-request / TODO list ("📋 Requests" hamburger entry). See "Requests Workflow" below.
   - `web/serve.py` — preferred static server (no-cache headers, correct `.apk` MIME, permissive CORS). Use this over `python3 -m http.server` so the WebView never serves stale HTML.
 - **Android app**: `simple-app/` — minimal native WebView wrapper pointing at `http://100.69.184.113:8090`
   - Single Activity: `simple-app/app/src/main/java/com/ereader/simple/MainActivity.java`
@@ -69,6 +70,12 @@ All endpoints are JSON unless noted. CORS is permissive.
   - `GET    /api/progress/<bookId>`
   - `PUT    /api/progress/<bookId>` — upsert; last-writer-wins on `updated` timestamp
   - `DELETE /api/progress/<bookId>`
+- **Feature requests / TODO list** (see "Requests Workflow" below)
+  - `GET    /api/requests?status=` — list, newest-updated first; optional status filter
+  - `POST   /api/requests` — create (`title` required; defaults to `Backlog`)
+  - `PUT    /api/requests/<id>` — partial update; mutable: `title`, `body`, `status`
+  - `DELETE /api/requests/<id>`
+  - `POST   /api/requests/<id>/comments` — append a comment `{text, author?}` (iteration thread)
 - **Meta**
   - `GET /api/health` — checks Calibre reachability, returns `version`
   - `GET /api/version` — reads `version.txt` live
@@ -79,8 +86,28 @@ All endpoints are JSON unless noted. CORS is permissive.
 - Stored as plain JSON in `backend/data/` (override with `$EREADER_DATA_DIR`):
   - `highlights.json` — list of highlight/bookmark items (lock: `_highlights_lock`)
   - `progress.json` — `{ "<bookId>": {progress record}, ... }` (lock: `_progress_lock`)
+  - `requests.json` — list of feature-request items (lock: `_requests_lock`). Seeded from `REQUESTS_SEED` in `server.py` on first run if the file doesn't exist.
+- `backend/data/` is `.gitignore`d — these are runtime state, not source. Don't re-add them to the repo.
 - Atomic writes via `tmp + os.replace`. Trivial to back up; trivial to grep.
 - **Read-only access to the Calibre library is the rule** — never write back to Calibre from this project.
+
+## Requests Workflow
+
+The in-app **Requests** page (📋 in the hamburger menu → `web/requests.html`) is the user's lightweight kanban for things they want built. Item shape:
+
+```
+{ id, title, body, status, comments: [{ts, author, text}],
+  created: epoch_ms, updated: epoch_ms }
+```
+
+`status ∈ {"Backlog", "Requested", "In Progress", "Done"}`:
+
+- **Backlog** — user's scratchpad. **Do not auto-act on these.** The user refines them here before promoting.
+- **Requested** — work queued for an agent session. **On session start, query `GET /api/requests?status=Requested` and treat each item as work to consider picking up.** Use the `comments` thread for back-and-forth with the user (POST to `/api/requests/<id>/comments` with `author: "agent"`).
+- **In Progress** — there are active code changes; the user is reviewing in-app.
+- **Done** — historical record. Don't delete items here without being asked.
+
+When you start work on a `Requested` item, move it to `In Progress` via `PUT /api/requests/<id>` with `{"status": "In Progress"}` so the user sees you've picked it up. Don't move items to `Done` yourself — the user does that via an explicit Approve action (Phase 2, not yet wired to `gvc`).
 
 ## JS ↔ Java Bridge (`window.Android` in the WebView)
 
