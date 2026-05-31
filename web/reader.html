@@ -3177,6 +3177,23 @@
             _hlMagSrcRect = null;
         }
 
+        // Screen-space position of the *dragged* edge of a range — the point
+        // the lens should centre on so its crosshair lands exactly on the
+        // selection boundary (where the handle sits), matching the native
+        // magnifier. 'start' → left of the first rect; 'end' → right of the
+        // last rect; both use the rect's vertical centre.
+        function _rangeEdgePoint(range, which) {
+            if (!range) return null;
+            const rects = range.getClientRects();
+            if (!rects || !rects.length) return null;
+            if (which === 'start') {
+                const r = rects[0];
+                return { x: r.left, y: r.top + r.height / 2 };
+            }
+            const r = rects[rects.length - 1];
+            return { x: r.right, y: r.top + r.height / 2 };
+        }
+
         function _onHandlePointerMove(e) {
             if (!_draggingHandle || !_draggingHLId) return;
             e.preventDefault();
@@ -3198,8 +3215,11 @@
                 }
             }
             if (!caret) {
-                // Even with no caret hit, keep the lens tracking the finger.
-                _moveMagnifier(e.clientX, e.clientY);
+                // No caret hit — keep the lens centred on the dragged edge's
+                // current position rather than snapping it to the finger.
+                const edge = _rangeEdgePoint(stored, _draggingHandle);
+                _moveMagnifier(edge ? edge.x : e.clientX,
+                               edge ? edge.y : e.clientY - 12);
                 return;
             }
             try {
@@ -3217,7 +3237,12 @@
             } catch (_) {}
             _rebuildCSSHL();
             _positionHLHandles(_draggingHLId);
-            _moveMagnifier(e.clientX, e.clientY);
+            // Centre the lens on the selection edge we just moved (not the
+            // raw finger), so the crosshair sits exactly on the character the
+            // handle will snap to — same behaviour as the native magnifier.
+            const edge = _rangeEdgePoint(stored, _draggingHandle);
+            _moveMagnifier(edge ? edge.x : e.clientX,
+                           edge ? edge.y : e.clientY - 12);
         }
 
         async function _onHandlePointerUp(e) {
@@ -3246,7 +3271,12 @@
             // Keep the popup visible while dragging.
             if (_hlPopupTimer) { clearTimeout(_hlPopupTimer); _hlPopupTimer = null; }
             _showMagnifier();
-            _moveMagnifier(e.clientX, e.clientY);
+            // Open the lens centred on the handle's current edge, not the
+            // finger, so it shows the correct text from the first frame.
+            const stored = _hlRanges.get(_draggingHLId);
+            const edge = stored && _rangeEdgePoint(stored, which);
+            _moveMagnifier(edge ? edge.x : e.clientX,
+                           edge ? edge.y : e.clientY - 12);
             document.addEventListener('pointermove', _onHandlePointerMove, { passive: false });
             document.addEventListener('pointerup',   _onHandlePointerUp,   { once: true });
         }

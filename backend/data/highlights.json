@@ -422,5 +422,23 @@
     "note": "",
     "color": "yellow",
     "created": 1780189179169
+  },
+  {
+    "id": "3c0500e4-e1d2-4485-9b29-c8a643cf7fd1",
+    "type": "highlight",
+    "bookId": "573",
+    "bookTitle": "Iron Gold",
+    "bookAuthor": "",
+    "anchor": 2510,
+    "offset": 0,
+    "length": 813,
+    "endAnchor": null,
+    "endOffset": null,
+    "page": 114,
+    "total": 273,
+    "text": "It takes us an hour to reach the abyssal plain at the bottom of the sea. A halo of lights around the front of the submersible illuminates the sand of the ocean floor. Out there in the darkness, three Poseidon-class Republic submarines patrol the Porcupine Abyssal Plain that stretches from the west coast of the British Isles to the slopes of the Mid-Atlantic Ridge. Up on the deck of the crab trawler, under protection by Rhonna and the others, Winkle is embedded deep in the cyberscape, linked in to the Republic\u2019s Starhall mainframe through a back door Theodora had her men prepare for him. The location of the sentinel submarines blinks on a holographic display to the right of Min-Min\u2019s navigation controls. The nearest one is two hundred kilometers southeast, patrolling in a circular arc around her charge.",
+    "note": "",
+    "color": "yellow",
+    "created": 1780203445605
   }
 ]
