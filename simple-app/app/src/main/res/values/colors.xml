@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Sampled from web/assets/greatreads.png corner pixels (#FEFEFE). Acts as the
-         backdrop the launcher composites the adaptive foreground over,
-         visible in the cropped margin on round / squircle masks. -->
+    <!-- White backdrop behind the adaptive foreground; visible in the bleed area on
+         round / squircle launcher masks. The icon itself has a transparent background
+         so this shows through in the outer 18 dp margin. -->
     <color name="ic_launcher_background">#FFFFFF</color>
 </resources>
