@@ -173,6 +173,17 @@
            the join between two concatenated files always starts on a new page. */
         #epub-content .epub-chapter-sep {
             break-before: column;
+        }
+        /* Spacer injected in dual-page mode before a chapter that would
+           naturally land on a right-hand page (odd page index). Pushes the
+           chapter to the next left page so chapter starts always appear on a
+           fresh dual-page spread. Hidden in single-page mode. */
+        #epub-content .dual-page-chapter-spacer {
+            display: none;
+            height: 0;
+            break-before: column;
+        }
+        body.dual-page #epub-content .dual-page-chapter-spacer {
             display: block;
             height: 0;
         }
@@ -246,11 +257,17 @@
             left: 0;
             right: 0;
             background: rgba(0, 0, 0, 0.95);
-            padding: 20px;
+            /* Extra top padding so the absolutely-positioned .menu-close (top:10px)
+               doesn't end up under the Android status bar when the menu grows tall
+               enough to push its top edge to the screen top.  Same pattern on the
+               full-screen TOC and bookmark overlays below. */
+            padding: calc(env(safe-area-inset-top, 0px) + 32px) 20px 20px 20px;
             display: none;
             flex-direction: column;
             gap: 20px;
-            z-index: 1000;
+            /* Must be above #page-progress (9000) so the stats bar doesn't bleed
+               through on top of the open menu. */
+            z-index: 10000;
             border-top-left-radius: 20px;
             border-top-right-radius: 20px;
             max-height: 50vh;
@@ -525,6 +542,38 @@
             filter: drop-shadow(0 1px 2px rgba(0,0,0,0.25));
         }
         #bookmark-corner:active { opacity: 0.75; }
+        /* Line-specific bookmark flag overlay --------------------------------
+           A fixed-position transparent layer covers the whole viewport.
+           Each flag is placed absolutely inside it at the Y of the target
+           anchor element. pointer-events:none on the container lets touches
+           fall through to the text; pointer-events:all on each flag lets it
+           be tapped to delete. */
+        #line-bookmark-flags {
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            pointer-events: none;
+            z-index: 50;            /* above content, below menus */
+        }
+        .line-bm-flag {
+            position: absolute;
+            pointer-events: all;
+            cursor: pointer;
+            display: flex;
+            align-items: flex-start;
+            justify-content: flex-end;   /* flag sits at the right edge of the margin zone */
+            width: 40px;                 /* matches SIDE_PADDING */
+            min-height: 20px;
+        }
+        .line-bm-flag svg {
+            fill: #d04040;
+            stroke: #8a2424;
+            stroke-width: 0.5;
+            opacity: 0.85;
+            filter: drop-shadow(0 1px 2px rgba(0,0,0,0.3));
+            flex: 0 0 auto;
+        }
+        .line-bm-flag:active { opacity: 0.6; }
         .brand {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             font-weight: 700;
@@ -832,6 +881,9 @@
         </svg>
     </div>
 
+    <!-- Line-bookmark flag overlay — flags are positioned here by renderLineBookmarkFlags() -->
+    <div id="line-bookmark-flags" aria-hidden="true"></div>
+
     <div class="reader-controls" id="reader-controls">
         <button class="menu-close" onclick="toggleMenu()">✕</button>
         <h3 style="color: #fff; margin: 0 0 10px 0;">Reading Options</h3>
@@ -952,7 +1004,7 @@
     </div>
 
     <!-- Full-screen TOC overlay -->
-    <div id="toc-overlay" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.95); z-index: 10000; overflow-y: auto; padding: 20px;">
+    <div id="toc-overlay" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.95); z-index: 10000; overflow-y: auto; padding: calc(env(safe-area-inset-top, 0px) + 20px) 20px 20px 20px;">
         <div style="max-width: 800px; margin: 0 auto;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
                 <h2 style="color: #fff; margin: 0;">Table of Contents</h2>
@@ -964,7 +1016,7 @@
 
     <!-- Bookmarks / highlights navigation overlay. Same shell for both;
          the title and list contents are swapped in by JS. -->
-    <div id="navlist-overlay" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.95);z-index:10000;overflow-y:auto;padding:20px;">
+    <div id="navlist-overlay" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.95);z-index:10000;overflow-y:auto;padding:calc(env(safe-area-inset-top, 0px) + 20px) 20px 20px 20px;">
         <div style="max-width:800px;margin:0 auto;">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
                 <h2 id="navlist-title" style="color:#fff;margin:0;">Bookmarks</h2>
@@ -1419,6 +1471,8 @@
         let contentWidth = 0;
         let pageWidth = 0;        // viewport width = column stride
         let columnStride = 0;     // columnWidth + columnGap (must equal pageWidth)
+        let currentColumnCount = 1; // live: 1 (single page) or 2 (dual page).
+                                  // Set by calculatePages(); read by margin/long-press logic.
         const SIDE_PADDING = 40;  // visual gutter on each side of the visible column
 
         function renderEpubContent(htmlContent, imageMap) {
@@ -1464,9 +1518,28 @@
             // INSIDE the wrapper must NOT also force one (that would create
             // a blank page). Use querySelector so we catch headings that are
             // nested inside publisher wrapper divs, not just direct children.
+            // Also mark these so we don't insert dual-page spacers before them.
+            const spineFirstHeadings = new Set();
             epubContent.querySelectorAll('.epub-spine-item').forEach(wrapper => {
                 const firstHeading = wrapper.querySelector('h1, h2, h3, h4, h5, h6');
-                if (firstHeading) firstHeading.classList.add('epub-spine-first-heading');
+                if (firstHeading) {
+                    firstHeading.classList.add('epub-spine-first-heading');
+                    spineFirstHeadings.add(firstHeading);
+                }
+            });
+
+            // Insert dual-page chapter spacers before all h1 elements (except
+            // spine-first headings). In single-page mode these are display:none.
+            // In dual-page mode, they ensure each chapter starts on a fresh
+            // left page of a spread by forcing a column break. This may create
+            // a blank right page at the end of the previous chapter, which is
+            // acceptable to prevent mixing chapter boundaries on one spread.
+            epubContent.querySelectorAll('h1').forEach(h1 => {
+                if (!spineFirstHeadings.has(h1)) {
+                    const spacer = document.createElement('div');
+                    spacer.className = 'dual-page-chapter-spacer';
+                    h1.parentNode.insertBefore(spacer, h1);
+                }
             });
 
             // EPUB inline page-break style handling.
@@ -1745,6 +1818,7 @@
             // show two columns per visible page. Stride is still one viewport.
             const dual = isDualPage || (pageWidth >= 900 && pageWidth > vpHeight);
             const columnCount = dual ? 2 : 1;
+            currentColumnCount = columnCount;
 
             // PAGINATION INVARIANT (the only thing that matters):
             //   columnWidth + columnGap == pageWidth / columnCount
@@ -2021,6 +2095,7 @@
             updateProgress();
             updateBookmarkIndicator();
             resetAutoBookmarkTimer();
+            renderLineBookmarkFlags();
         }
 
         // Flatten tocTree (hierarchical TOC parsed from nav.xhtml / toc.ncx)
@@ -2249,6 +2324,12 @@
             _pageElapsedAccrued = 0;
             _pageHiddenAt = null;
         }
+
+        // Snapshot of time-remaining computed at the start of the current page.
+        // These serve as the baseline for the real-time countdown. Recomputed
+        // on every page turn when a new reading sample is recorded.
+        let _pageStartChRemainSec  = null;
+        let _pageStartBookRemainSec = null;
         function _onPageTurn() {
             // EPUB only — PDFs don't have the chapter/pagination model the
             // metrics row depends on.
@@ -2272,6 +2353,30 @@
             _pageStartMs = Date.now();
             _pageElapsedAccrued = 0;
             _pageHiddenAt = null;
+
+            // Recompute the time-remaining baselines so the real-time
+            // countdown in updateReadingSpeedUI starts from the freshly
+            // updated estimate (incorporating the sample we just recorded).
+            const avgMs  = _avgMs();
+            const avgSec = avgMs != null ? avgMs / 1000 : null;
+            if (avgSec != null) {
+                _pageStartBookRemainSec = Math.max(0, totalPages - (currentEpubPage + 1)) * avgSec;
+                if (chapterStarts && chapterStarts.length > 0) {
+                    let idx = 0;
+                    for (let i = 0; i < chapterStarts.length; i++) {
+                        if (chapterStarts[i].page <= currentEpubPage) idx = i;
+                        else break;
+                    }
+                    const next  = chapterStarts[idx + 1];
+                    const chEnd = next ? next.page : totalPages;
+                    _pageStartChRemainSec = Math.max(0, chEnd - (currentEpubPage + 1)) * avgSec;
+                } else {
+                    _pageStartChRemainSec = null;
+                }
+            } else {
+                _pageStartBookRemainSec = null;
+                _pageStartChRemainSec   = null;
+            }
         }
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'hidden') {
@@ -2327,6 +2432,7 @@
             if (mpw == null || mpw === 0) return null;
             return Math.round(60000 / mpw);
         }
+
         function updateReadingSpeedUI() {
             const row = document.getElementById('progress-metrics');
             if (!row) return;
@@ -2340,13 +2446,24 @@
             const wpm        = _avgWPM();
             const wpp        = _currentWPP();
             const pageSecNow = Math.floor(_pageTimeMs() / 1000);
-            const bookRemain = avgSec != null
-                ? Math.max(0, totalPages - (currentEpubPage + 1)) * avgSec
-                : null;
-            // Chapter remaining — mirrors the chapter-derivation logic in
-            // updateProgress(). Skipped when no chapter map is available.
-            let chRemain = null;
-            if (avgSec != null && chapterStarts && chapterStarts.length > 0) {
+
+            // Real-time countdown: if we have a baseline from the start of
+            // this page, subtract elapsed time from it. Otherwise fall back
+            // to the static computation (no samples yet, or brand new page).
+            let bookRemain = null;
+            let chRemain   = null;
+
+            if (_pageStartBookRemainSec != null && pageSecNow < _pageStartBookRemainSec) {
+                bookRemain = _pageStartBookRemainSec - pageSecNow;
+            } else if (avgSec != null) {
+                bookRemain = Math.max(0, totalPages - (currentEpubPage + 1)) * avgSec;
+            }
+
+            if (_pageStartChRemainSec != null && pageSecNow < _pageStartChRemainSec) {
+                chRemain = _pageStartChRemainSec - pageSecNow;
+            } else if (avgSec != null && chapterStarts && chapterStarts.length > 0) {
+                // Chapter remaining — mirrors the chapter-derivation logic in
+                // updateProgress(). Skipped when no chapter map is available.
                 let idx = 0;
                 for (let i = 0; i < chapterStarts.length; i++) {
                     if (chapterStarts[i].page <= currentEpubPage) idx = i;
@@ -2367,8 +2484,8 @@
             document.getElementById('metric-book-remain').textContent =
                 bookRemain != null ? _fmtHMS(bookRemain) : '—';
         }
-        // Tick the "current page time" cell once a second. Cheap — only one
-        // DOM read + 5 textContent writes, gated on the row being visible.
+        // Tick the "current page time" cell once a second. The countdown
+        // cells tick down live during the page; recomputed on page turn.
         setInterval(updateReadingSpeedUI, 1000);
 
         // ---------- Server-side progress sync ----------
@@ -2509,15 +2626,54 @@
         // right = manual (red). Both can be visible simultaneously.
         let bookmarks     = [];              // [{id, anchor, type:'bookmark', ...}]
         let autoBookmarks = [];              // [{id, anchor, type:'auto-bookmark', ...}]
+        let lineBookmarks = [];              // [{id, anchor, type:'line-bookmark', ...}]
         let bookmarkPageIds     = new Map(); // pageNum -> [manual bookmark id, ...]
         let autoBookmarkPageIds = new Map(); // pageNum -> [auto-bookmark id, ...]
+        let lineBookmarkByAnchor = new Map(); // anchorIdx -> bookmark id
+
+        // Keep auto-bookmarks bounded — they're an auto-save, not a history.
+        // Mirrors AUTO_BOOKMARK_LIMIT_PER_BOOK in the backend; the server is
+        // the source of truth (it prunes on every POST), this client-side cap
+        // just keeps the in-memory array and page-id map in sync without an
+        // extra round-trip after each create.
+        const AUTO_BOOKMARK_LIMIT = 5;
+
+        // First ~maxChars of the anchor element's text content, whitespace
+        // collapsed, broken at a word boundary, with an ellipsis if truncated.
+        // Used as the bookmark "preview" snippet (saved server-side as `text`).
+        function snippetForAnchor(anchor, maxChars = 100) {
+            const el = document.querySelector(
+                `#epub-content [data-anchor="${anchor}"]`);
+            if (!el) return '';
+            const t = (el.textContent || '').replace(/\s+/g, ' ').trim();
+            if (t.length <= maxChars) return t;
+            // Trim at the last whole word inside the budget, then ellipsis.
+            const cut = t.slice(0, maxChars);
+            const lastSpace = cut.lastIndexOf(' ');
+            return (lastSpace > 40 ? cut.slice(0, lastSpace) : cut) + '\u2026';
+        }
+
+        // Human-friendly timestamp for the bookmarks list. Today -> "3:42 PM",
+        // this year -> "May 31", older -> "May 31 2024". Locale-aware.
+        function fmtBmDate(ms) {
+            if (!ms) return '';
+            const d = new Date(ms);
+            const now = new Date();
+            if (d.toDateString() === now.toDateString()) {
+                return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+            }
+            return d.getFullYear() === now.getFullYear()
+                ? d.toLocaleDateString([], { month: 'short', day: 'numeric' })
+                : d.toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' });
+        }
 
         async function loadBookmarksForBook() {
             if (!bookId) return;
             try {
-                const [rM, rA] = await Promise.all([
+                const [rM, rA, rL] = await Promise.all([
                     fetch(`${API_URL}/highlights?bookId=${encodeURIComponent(bookId)}&type=bookmark`),
                     fetch(`${API_URL}/highlights?bookId=${encodeURIComponent(bookId)}&type=auto-bookmark`),
+                    fetch(`${API_URL}/highlights?bookId=${encodeURIComponent(bookId)}&type=line-bookmark`),
                 ]);
                 if (rM.ok) {
                     const data = await rM.json();
@@ -2526,6 +2682,11 @@
                 if (rA.ok) {
                     const data = await rA.json();
                     autoBookmarks = (data.items || []).filter(b => typeof b.anchor === 'number');
+                }
+                if (rL.ok) {
+                    const data = await rL.json();
+                    lineBookmarks = (data.items || []).filter(b => typeof b.anchor === 'number');
+                    lineBookmarkByAnchor = new Map(lineBookmarks.map(b => [b.anchor, b.id]));
                 }
             } catch (e) { console.warn('loadBookmarksForBook', e); }
         }
@@ -2590,7 +2751,11 @@
                 anchor: anchor,
                 page: currentEpubPage,
                 total: totalPages,
-                text: '',
+                // Snippet = first line of the page (the captured anchor's text).
+                // Chapter title at capture time, so older auto-bookmarks still
+                // identify where they live even if the user re-paginates.
+                text: snippetForAnchor(anchor),
+                chapter: _activeChapterTitle(),
                 note: ''
             };
             try {
@@ -2604,6 +2769,13 @@
                 autoBookmarks.push(item);
                 if (!autoBookmarkPageIds.has(currentEpubPage)) autoBookmarkPageIds.set(currentEpubPage, []);
                 autoBookmarkPageIds.get(currentEpubPage).push(item.id);
+                // Mirror the server-side prune so the list/indicator stay in
+                // sync without an extra round trip.
+                if (autoBookmarks.length > AUTO_BOOKMARK_LIMIT) {
+                    autoBookmarks.sort((a, b) => (b.created || 0) - (a.created || 0));
+                    autoBookmarks = autoBookmarks.slice(0, AUTO_BOOKMARK_LIMIT);
+                    refreshBookmarkPageMap();
+                }
                 updateBookmarkIndicator();
             } catch (e) { console.warn('createAutoBookmark', e); }
         }
@@ -2639,7 +2811,9 @@
                 anchor: anchor,
                 page: currentEpubPage,
                 total: totalPages,
-                text: '',
+                // Full-page manual bookmark: snippet = first line of the page.
+                text: snippetForAnchor(anchor),
+                chapter: _activeChapterTitle(),
                 note: ''
             };
             try {
@@ -2657,6 +2831,157 @@
                 flashToast('🔖 Bookmarked');
             } catch (e) {
                 flashToast('⚠️ Bookmark failed: ' + e.message);
+            }
+        }
+
+        // ---------- Line-specific bookmarks (margin long-press) ----------
+        // Find the data-anchor index of the element whose rendered rect on the
+        // CURRENT page contains (or is closest to) the given viewport (clientX, clientY).
+        // clientX is required in dual-column layout: at any given Y there are
+        // two anchors visible (one per column) and we have to pick the one in
+        // the column the user actually touched, otherwise long-pressing the
+        // right page's gutter would always pick the left-column anchor (first
+        // in DOM order) and the flag would render on the wrong page.
+        function findAnchorAtY(clientY, clientX) {
+            const content = document.getElementById('epub-content');
+            if (!content || !columnStride) return null;
+            const contentRect = content.getBoundingClientRect();
+            const pageStart = currentEpubPage * columnStride;
+            const pageEnd   = pageStart + pageWidth;
+            // Which column did the touch land in?  Only meaningful in 2-col mode.
+            // Right column when clientX is past pageWidth/2; left otherwise.
+            const wantRightCol = currentColumnCount === 2 &&
+                                 clientX != null &&
+                                 clientX >= pageWidth / 2;
+            const anchors   = content.querySelectorAll('[data-anchor]');
+            let bestAnchor = null;
+            let bestDist   = Infinity;
+            for (const el of anchors) {
+                const rects = el.getClientRects();
+                for (let i = 0; i < rects.length; i++) {
+                    const r = rects[i];
+                    const rawLeft = r.left - contentRect.left;
+                    if (rawLeft < pageStart - 2 || rawLeft >= pageEnd) continue;
+                    // In dual-column: skip rects in the OTHER column.  Compare
+                    // viewport X (already transformed) against pageWidth/2.
+                    if (currentColumnCount === 2 && clientX != null) {
+                        const rectIsRight = r.left >= pageWidth / 2;
+                        if (rectIsRight !== wantRightCol) continue;
+                    }
+                    // Direct hit — clientY is inside this rect
+                    if (clientY >= r.top && clientY <= r.bottom) {
+                        return parseInt(el.dataset.anchor, 10);
+                    }
+                    // Track nearest by distance to centre of the rect
+                    const dist = Math.abs(clientY - (r.top + r.bottom) / 2);
+                    if (dist < bestDist) {
+                        bestDist  = dist;
+                        bestAnchor = parseInt(el.dataset.anchor, 10);
+                    }
+                }
+            }
+            return bestAnchor;
+        }
+
+        // Toggle a line-bookmark for the given anchor index.
+        // Creates one if absent; deletes it if already present.
+        async function toggleLineBookmark(anchor) {
+            const existingId = lineBookmarkByAnchor.get(anchor);
+            if (existingId) {
+                try {
+                    const r = await fetch(`${API_URL}/highlights/${existingId}`, { method: 'DELETE' });
+                    if (!r.ok && r.status !== 404) { flashToast('⚠️ Could not remove bookmark'); return; }
+                    lineBookmarks = lineBookmarks.filter(b => b.id !== existingId);
+                    lineBookmarkByAnchor.delete(anchor);
+                    renderLineBookmarkFlags();
+                    flashToast('🔖 Line bookmark removed');
+                } catch (e) { flashToast('⚠️ Error: ' + e.message); }
+                return;
+            }
+            const body = {
+                type: 'line-bookmark',
+                bookId, bookTitle: title, bookAuthor,
+                anchor,
+                page: currentEpubPage, total: totalPages,
+                // Snippet = the bookmarked line's text (start of the anchor
+                // block).  Chapter at creation time, like the other types.
+                text: snippetForAnchor(anchor),
+                chapter: _activeChapterTitle(),
+                note: ''
+            };
+            try {
+                const r = await fetch(`${API_URL}/highlights`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                const item = await r.json();
+                lineBookmarks.push(item);
+                lineBookmarkByAnchor.set(anchor, item.id);
+                renderLineBookmarkFlags();
+                flashToast('🔖 Line bookmarked');
+            } catch (e) { flashToast('⚠️ Bookmark failed: ' + e.message); }
+        }
+
+        // Render (or refresh) the small flag icons in the left margin for every
+        // line-bookmark whose anchor element is visible on the current page.
+        // Called from renderEpubPage() so flags stay in sync after every page turn,
+        // re-pagination, font-size change, or fold/unfold.
+        function renderLineBookmarkFlags() {
+            const container = document.getElementById('line-bookmark-flags');
+            if (!container) return;
+            container.innerHTML = '';
+            if (!columnStride || !pageWidth) return;
+            const content = document.getElementById('epub-content');
+            if (!content) return;
+            const contentRect = content.getBoundingClientRect();
+            const pageStart   = currentEpubPage * columnStride;
+            const pageEnd     = pageStart + pageWidth;
+
+            for (const bm of lineBookmarks) {
+                const el = content.querySelector(`[data-anchor="${bm.anchor}"]`);
+                if (!el) continue;
+                const rects = el.getClientRects();
+                // Find the first fragment of this element that lands on the current page.
+                let targetRect = null;
+                for (let i = 0; i < rects.length; i++) {
+                    const rawLeft = rects[i].left - contentRect.left;
+                    if (rawLeft >= pageStart - 2 && rawLeft < pageEnd) {
+                        targetRect = rects[i]; break;
+                    }
+                }
+                if (!targetRect) continue;
+
+                // Determine left margin X.  getClientRects() returns VIEWPORT
+                // coordinates (after the translateX page-scroll transform), so
+                // elements on the current page always appear at their visual
+                // screen X — left-column elements near 0, right-column near
+                // pageWidth/2 — regardless of which page we're on.  Compare
+                // directly against pageWidth/2; no pageStart subtraction needed.
+                const isRightCol = currentColumnCount === 2 &&
+                    targetRect.left >= pageWidth / 2;
+                const flagX = isRightCol ? Math.round(pageWidth / 2) : 0;
+                const flagY = Math.round(targetRect.top);
+                // Flag height = one CSS line height (approx fontSize * 1.5),
+                // but capped to the element's first-line rect height if smaller.
+                const lineH = Math.max(16, Math.min(Math.round(targetRect.height), Math.round(fontSize * 1.6)));
+
+                const flag = document.createElement('div');
+                flag.className = 'line-bm-flag';
+                flag.title = 'Tap to remove line bookmark';
+                flag.style.cssText = `left:${flagX}px;top:${flagY}px;height:${lineH}px;`;
+                // Small downward-pointing ribbon SVG, scaled to the line height.
+                const notch = Math.round(lineH * 0.28);
+                flag.innerHTML =
+                    `<svg width="14" height="${lineH}" viewBox="0 0 14 ${lineH}" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">` +
+                    `<path d="M1 0 L13 0 L13 ${lineH - notch} L7 ${lineH} L1 ${lineH - notch} Z"/>` +
+                    `</svg>`;
+                flag.addEventListener('click', ev => {
+                    ev.stopPropagation();
+                    toggleLineBookmark(bm.anchor);
+                });
+                container.appendChild(flag);
             }
         }
 
@@ -4394,13 +4719,21 @@
                 return h;
             }
 
-            // Helper: resolve page, build a row and append to body
+            // Helper: resolve page, build a row and append to body.
+            // Secondary line: "Chapter · Page X / Y · date"  (parts that are
+            // empty are dropped, so older bookmarks without chapter/date still
+            // render cleanly with just the page count).
             function appendBmRow(bm, deleteFn) {
                 const page = findPageForAnchor(bm.anchor);
                 const snippet = (bm.text || '').trim().slice(0, 120) || '\u2014';
+                const parts = [];
+                if (bm.chapter) parts.push(bm.chapter);
+                if (page != null) parts.push(`Page ${page + 1} / ${totalPages}`);
+                const when = fmtBmDate(bm.created);
+                if (when) parts.push(when);
                 body.appendChild(buildNavRow({
                     primary:  snippet,
-                    secondary: page != null ? `Page ${page + 1} / ${totalPages}` : '\u2014',
+                    secondary: parts.join(' \u00B7 ') || '\u2014',
                     onOpen:   () => { if (page != null) jumpToPage(page); },
                     onDelete: () => deleteFn(bm.id),
                 }));
@@ -4556,12 +4889,73 @@
 
             const viewport = document.getElementById('epub-viewport') || document.getElementById('reader-container');
 
-            viewport.addEventListener('touchstart', (e) => {
+            // Long-press detection for margin bookmarks.
+            // A touch that stays in the left margin zone (< SIDE_PADDING px from the
+            // left edge of the current page) for LONG_PRESS_MS ms WITHOUT moving more
+            // than LP_MOVE_TOLERANCE px is interpreted as a line-bookmark gesture,
+            // NOT a page-turn tap.  Movement tolerance matters because a still finger
+            // on a capacitive screen still generates a stream of touchmove events
+            // with sub-pixel jitter — cancelling on any movement kills the timer
+            // before it can fire.
+            const LONG_PRESS_MS = 500;
+            const LP_MOVE_TOLERANCE = 12;   // CSS px
+            let _lpTimer = null;      // setTimeout handle
+            let _lpFired = false;     // true once the long-press fires; suppresses touchend
+            let _lpStartX = 0, _lpStartY = 0;
+
+            function _isMarginTouch(clientX) {
+                // Left margin of left page (single or dual).
+                if (clientX < SIDE_PADDING) return true;
+                // Left margin of right page in dual-column layout.  We use
+                // currentColumnCount (live) instead of isDualPage because the
+                // layout can be 2-up either from the user preference OR auto-
+                // selected based on viewport width (see calculatePages).
+                if (currentColumnCount === 2 &&
+                    clientX >= pageWidth / 2 && clientX < pageWidth / 2 + SIDE_PADDING) return true;
+                return false;
+            }
+
+            // Listen on the document, not the viewport — guarantees we catch
+            // the touch no matter which child element owns the event target.
+            document.addEventListener('touchstart', (e) => {
                 touchStartX = e.changedTouches[0].screenX;
                 touchStartY = e.changedTouches[0].screenY;
+                _lpFired = false;
+                clearTimeout(_lpTimer);
+                _lpTimer = null;
+                const t = e.changedTouches[0];
+                _lpStartX = t.clientX; _lpStartY = t.clientY;
+                if (_isMarginTouch(t.clientX)) {
+                    const cy = t.clientY;
+                    const cx = t.clientX;
+                    _lpTimer = setTimeout(() => {
+                        _lpFired = true;
+                        if (navigator.vibrate) navigator.vibrate(30);
+                        const anchor = findAnchorAtY(cy, cx);
+                        if (anchor != null) toggleLineBookmark(anchor);
+                    }, LONG_PRESS_MS);
+                }
+            }, { passive: true });
+
+            // Cancel the long-press timer only if the finger moves more than the
+            // tolerance — capacitive jitter on a still finger is normal and should
+            // not abort the gesture.
+            viewport.addEventListener('touchmove', (e) => {
+                if (!_lpTimer) return;
+                const t = e.changedTouches[0];
+                const dx = Math.abs(t.clientX - _lpStartX);
+                const dy = Math.abs(t.clientY - _lpStartY);
+                if (dx > LP_MOVE_TOLERANCE || dy > LP_MOVE_TOLERANCE) {
+                    clearTimeout(_lpTimer);
+                    _lpTimer = null;
+                }
             }, { passive: true });
 
             viewport.addEventListener('touchend', (e) => {
+                clearTimeout(_lpTimer);
+                _lpTimer = null;
+                // Long-press already handled the gesture — skip normal tap/swipe logic.
+                if (_lpFired) { _lpFired = false; return; }
                 touchEndX = e.changedTouches[0].screenX;
                 touchEndY = e.changedTouches[0].screenY;
                 // If there's a live text selection, suppress page-turn and

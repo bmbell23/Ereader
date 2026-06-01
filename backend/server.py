@@ -28,6 +28,10 @@ DATA_DIR = os.environ.get('EREADER_DATA_DIR',
 os.makedirs(DATA_DIR, exist_ok=True)
 HIGHLIGHTS_FILE = os.path.join(DATA_DIR, 'highlights.json')
 _highlights_lock = threading.Lock()
+# Auto-bookmarks are an "auto-save" of the user's place — we only need the
+# most recent N per book. Older ones are pruned on every new auto-bookmark
+# create (see /api/highlights POST). Manual / line bookmarks are unbounded.
+AUTO_BOOKMARK_LIMIT_PER_BOOK = 5
 
 # Per-book reading progress (last anchor / page / fraction). Same file-on-disk
 # pattern as highlights. Shape on disk: { "<bookId>": {progress dict}, ... }
@@ -402,8 +406,8 @@ def create_highlight():
     """Create a highlight or bookmark. Body is the partial item; we fill
     in id + created timestamp."""
     body = request.get_json(silent=True) or {}
-    if body.get('type') not in ('highlight', 'bookmark', 'auto-bookmark'):
-        return jsonify({'error': 'type must be "highlight" or "bookmark"'}), 400
+    if body.get('type') not in ('highlight', 'bookmark', 'auto-bookmark', 'line-bookmark'):
+        return jsonify({'error': 'type must be "highlight", "bookmark", "auto-bookmark", or "line-bookmark"'}), 400
     if not body.get('bookId'):
         return jsonify({'error': 'bookId is required'}), 400
 
@@ -432,11 +436,29 @@ def create_highlight():
         'text': body.get('text') or '',
         'note': body.get('note') or '',
         'color': body.get('color') or 'yellow',
+        # Chapter title at time of creation. Captured client-side from the
+        # active TOC entry so the bookmarks list can show "where in the book"
+        # without re-resolving against the live tocTree on every render.
+        'chapter': body.get('chapter') or '',
         'created': int(time.time() * 1000),
     }
     with _highlights_lock:
         items = _load_highlights()
         items.append(item)
+        # Auto-bookmarks: keep only the most recent N per book. Anything older
+        # is "stale auto-save data" — the user already has a fresher snapshot.
+        if item['type'] == 'auto-bookmark':
+            book_id = item['bookId']
+            autos = [it for it in items
+                     if it.get('type') == 'auto-bookmark'
+                     and str(it.get('bookId')) == book_id]
+            if len(autos) > AUTO_BOOKMARK_LIMIT_PER_BOOK:
+                autos.sort(key=lambda x: x.get('created') or 0, reverse=True)
+                keep = {it['id'] for it in autos[:AUTO_BOOKMARK_LIMIT_PER_BOOK]}
+                items = [it for it in items
+                         if not (it.get('type') == 'auto-bookmark'
+                                 and str(it.get('bookId')) == book_id
+                                 and it['id'] not in keep)]
         _save_highlights(items)
     return jsonify(item), 201
 

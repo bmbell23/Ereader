@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <!-- Tell the WebView not to use its HTTP cache for this page -->
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
@@ -24,8 +24,9 @@
             padding: 0;
             overflow-x: hidden;
             /* Reserve room for the fixed .status-bar so the first row of book
-               covers isn't clipped under it. Must equal the bar's height. */
-            padding-top: 80px;
+               covers isn't clipped under it. 80px = bar's own height;
+               env(safe-area-inset-top) accounts for the Android status bar. */
+            padding-top: calc(80px + env(safe-area-inset-top, 0px));
         }
         /* Top transparent status/toolbar.
            Row 1: clock (left) + version (right) — 24px tall
@@ -41,6 +42,8 @@
             -webkit-backdrop-filter: blur(6px);
             display: flex;
             flex-direction: column;
+            /* Push content below the Android system status bar. */
+            padding-top: env(safe-area-inset-top, 0px);
         }
         .status-bar-row1 {
             position: relative;
@@ -120,7 +123,7 @@
         }
         .menu-popup {
             position: fixed;
-            top: 84px;
+            top: calc(84px + env(safe-area-inset-top, 0px));
             right: 8px;
             background: #2a2a2a;
             border-radius: 8px;
