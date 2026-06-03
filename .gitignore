@@ -50,6 +50,9 @@ backend/data/
 # Audiobookshelf credentials (token) — never commit
 backend/abs.env
 
+# Calibre content-server write credentials — never commit
+backend/calibre.env
+
 # Misc
 *.orig
 .watchmanconfig
