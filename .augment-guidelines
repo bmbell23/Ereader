@@ -57,6 +57,7 @@ description: Ereader agent guidelines — extends shared server guidelines
   - `minSdk 24`, `targetSdk 34`, `compileSdk 34`, JDK 17
   - Manifest declares `android:configChanges=...|screenSize|...|orientation|...` so foldable posture changes don't recreate the Activity — they fire `onConfigurationChanged` instead.
   - Suppresses the Chromium text-selection floating toolbar via `wrapEmptyMenu()` while keeping selection itself working (see in-file comment for full history of why).
+  - **Background audiobook playback**: `PlaybackService.java` is a foreground service (`foregroundServiceType=mediaPlayback`) that keeps the WebView `<audio>` playing when the screen locks and owns the `MediaSessionCompat` that hardware/headphone/lock-screen buttons drive. Audio itself stays in the WebView — the service only (a) holds a `PARTIAL_WAKE_LOCK` while playing (a foreground service alone still gets Dozed after a few minutes, which throttles the JS thread and stalls hls.js segment fetches — audio dies while `<audio>` still reads as "playing"), (b) holds the session + posts an ongoing `MediaStyle` notification, and (c) forwards button callbacks to JS (see "JS ↔ Java Bridge"). State/stop pushes from JS go in-process via the static `PlaybackService.applyState`/`stopFromBridge` (not repeated `startForegroundService`, which Android 12+ blocks from the background once locked). Manifest adds `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_MEDIA_PLAYBACK`, `WAKE_LOCK`, `POST_NOTIFICATIONS` (runtime-requested on Android 13+ in `onCreate`), declares the service + an `androidx.media.session.MediaButtonReceiver`, and depends on `androidx.media:media`.
   - Build output: `web/ereader.apk` (debug-signed via `~/.android/debug.keystore`, served from the static server as an in-place upgrade — no uninstall needed).
   - **Do not rebuild or flash the APK without permission.**
 - **React Native app**: `app/` — older RN attempt, not currently the primary client. EPUB reading is `coming soon` placeholder. Don't touch unless asked.
@@ -156,6 +157,10 @@ Implemented by `MainActivity.JsBridge`. Available **only** inside the APK WebVie
 - `Android.hideSystemBars()` — re-enters sticky-immersive fullscreen.
 - `Android.keepScreenOn(boolean)` — toggles `FLAG_KEEP_SCREEN_ON` on the window (the Web Wake Lock API silently no-ops in this WebView, so this is the reliable path).
 - `Android.shareImage(base64Png, chooserTitle)` — writes a PNG to `cacheDir/share/`, wraps it in a FileProvider `content://` URI, and fires `ACTION_SEND` (used for the "share quote" canvas export, because the Web Share API requires a secure context and we serve plain HTTP over Tailscale).
+- `Android.mediaStart(title, artist, coverUrl)` — starts/refreshes the foreground `PlaybackService` with this book's metadata (cover fetched off-thread for the lock screen).
+- `Android.mediaState(playing, position, duration, rate)` — pushes play/pause + book-global position/duration (**seconds**) + playback rate to the service so the notification/lock-screen scrubber stays fresh. `player.js` calls this forced on play/pause and throttled (~2s) on `timeupdate`.
+- `Android.mediaStop()` — tears down the service + notification (player closed / navigated away).
+- **Reverse direction**: the service's `MediaSession` callbacks (hardware/headphone/lock-screen + notification buttons) are routed back via `MainActivity.dispatchMedia` → `webView.evaluateJavascript("window.__mediaControl('<action>')")`. `player.js` defines `window.__mediaControl(action)` handling `play` / `pause` / `next` / `prev` / `forward` / `backward` / `seek:<ms>`, driving the `<audio>` element.
 
 ## Primary Test Device
 

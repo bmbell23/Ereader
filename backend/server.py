@@ -54,7 +54,9 @@ _highlights_lock = threading.Lock()
 # Auto-bookmarks are an "auto-save" of the user's place — we only need the
 # most recent N per book. Older ones are pruned on every new auto-bookmark
 # create (see /api/highlights POST). Manual / line bookmarks are unbounded.
-AUTO_BOOKMARK_LIMIT_PER_BOOK = 5
+# Applies per bookId, so the ebook (Calibre id) and audiobook (abs:<id>) sides
+# of a dual-format work each keep their own most-recent N.
+AUTO_BOOKMARK_LIMIT_PER_BOOK = 10
 
 # Per-book reading progress (last anchor / page / fraction). Same file-on-disk
 # pattern as highlights. Shape on disk: { "<bookId>": {progress dict}, ... }
@@ -1162,6 +1164,41 @@ def unified_library_item(book_id):
     book.setdefault('mediaTypes', ['ebook'])
     return jsonify(book)
 
+@app.route('/api/booklinks/<book_id>', methods=['GET'])
+def book_links(book_id):
+    """Resolve the cross-format siblings of a book so the reader/player can show
+    each other's bookmarks (synced by percentage). Given a Calibre id, returns
+    the matched audiobook id(s) as "abs:<absId>"; given an "abs:<absId>", returns
+    the Calibre id of the matched ebook. Uses the pre-built library cache so it's
+    cheap. Always returns {bookId, siblings:[...]} (empty list when unmatched or
+    ABS is off)."""
+    book_id = str(book_id)
+    siblings = []
+    if ABS_ENABLED:
+        enrich_map, _ = _get_library_cache()
+        if book_id.startswith('abs:'):
+            abs_id = book_id[4:]
+            for cid, m in enrich_map.items():
+                ed_ids = []
+                for ed in (m.get('audioEditions') or []):
+                    ed_ids += [p.get('absId') for p in (ed.get('parts') or [])]
+                if m.get('absId') == abs_id or abs_id in ed_ids:
+                    siblings.append(cid)
+                    break
+        else:
+            m = enrich_map.get(book_id)
+            if m:
+                seen = set()
+                for ed in (m.get('audioEditions') or []):
+                    for p in (ed.get('parts') or []):
+                        aid = p.get('absId')
+                        if aid and aid not in seen:
+                            seen.add(aid)
+                            siblings.append('abs:' + aid)
+                if not siblings and m.get('absId'):
+                    siblings.append('abs:' + m['absId'])
+    return jsonify({'bookId': book_id, 'siblings': siblings})
+
 # Fields the series/saga views need per book; drops heavy ones (description,
 # audiobook.chapters) so the grouped payload stays lean.
 _SERIES_BOOK_FIELDS = ('id', 'title', 'author', 'authors', 'cover', 'thumbnail',
@@ -1512,6 +1549,15 @@ def create_highlight():
         'endOffset': body.get('endOffset'),
         'page': body.get('page'),
         'total': body.get('total'),
+        # percent (0..1) is the cross-format coordinate: it lets a bookmark made
+        # in the ebook surface in the audiobook player (and vice versa) at the
+        # equivalent spot. position/duration (seconds) + mediaType are populated
+        # for audiobook-origin bookmarks so the player can seek to the exact
+        # second; ebook-origin bookmarks leave them null and rely on percent.
+        'percent': body.get('percent'),
+        'position': body.get('position'),
+        'duration': body.get('duration'),
+        'mediaType': body.get('mediaType') or '',
         'text': body.get('text') or '',
         'note': body.get('note') or '',
         'color': body.get('color') or 'yellow',

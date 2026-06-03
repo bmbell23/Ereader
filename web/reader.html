@@ -361,9 +361,6 @@
             border-radius: 6px;
             background: transparent;
             border: none;
-            color: rgba(255, 255, 255, 0.45);
-            font-size: 15px;
-            line-height: 1;
             display: none;
             align-items: center;
             justify-content: center;
@@ -371,7 +368,8 @@
             cursor: pointer;
             -webkit-tap-highlight-color: transparent;
         }
-        #search-btn:active { color: rgba(255, 255, 255, 0.9); }
+        #search-btn img { width: 18px; height: 18px; filter: invert(1); opacity: 0.45; display: block; }
+        #search-btn:active img { opacity: 0.9; }
         /* In-book search overlay rows. */
         .search-section {
             color: #7aa7d8;
@@ -940,7 +938,7 @@
 
     <!-- Floating in-book search button (right of menu btn). Shown only for EPUB by
          setupNavigation(); opens the full-screen search overlay below. -->
-    <button id="search-btn" title="Search this book" onclick="openSearch()">🔍</button>
+    <button id="search-btn" title="Search this book" onclick="openSearch()"><img src="assets/search.png" alt="Search"></button>
 
     <div id="reader-container">
         <div class="loading">Loading book...</div>
@@ -2844,40 +2842,66 @@
             } catch (_) {}
         }
 
+        // Resolve the matching audiobook's progress (dual-format works) so a
+        // spot reached while listening resumes the ebook at the same percentage.
+        // Returns the audiobook progress record, or null.
+        async function fetchAudiobookSibling() {
+            try {
+                const r = await fetch(API_URL + '/booklinks/' + encodeURIComponent(bookId));
+                if (!r.ok) return null;
+                const d = await r.json();
+                const sib = (d.siblings || []).find(x => String(x).startsWith('abs:'));
+                if (!sib) return null;
+                const pr = await fetch(API_URL + '/progress/' + encodeURIComponent(sib));
+                if (!pr.ok) return null;
+                return await pr.json();
+            } catch (_) { return null; }
+        }
+
         // Pull server-side progress and reconcile with localStorage BEFORE
-        // calculatePages runs its first paint. Last-writer-wins by ts vs
-        // updated. The reader then reads localStorage as usual.
+        // calculatePages runs its first paint. Candidates are this ebook's own
+        // record and the matching audiobook's; newest `updated` wins, beating
+        // the local copy by ts. The reader then reads localStorage as usual.
         async function syncReadingStateFromServer() {
             if (!bookId) return;
             try {
-                const r = await fetch(API_URL + '/progress/' + encodeURIComponent(bookId));
-                if (!r.ok) return;
-                const remote = await r.json();
-                const remoteTs = remote && remote.updated;
-                if (!remoteTs) return;
+                const candidates = [];
+                try {
+                    const r = await fetch(API_URL + '/progress/' + encodeURIComponent(bookId));
+                    if (r.ok) candidates.push(await r.json());
+                } catch (_) {}
+                const sibAudio = await fetchAudiobookSibling();
+                if (sibAudio && !sibAudio.error) candidates.push(sibAudio);
+
                 let localTs = 0;
                 try {
                     const raw = localStorage.getItem(STATE_KEY);
                     if (raw) localTs = (JSON.parse(raw) || {}).ts || 0;
                 } catch (_) {}
-                if (remoteTs > localTs) {
-                    // Server wins — adopt remote position. Shape matches
-                    // loadReadingState()'s expectations.
+
+                const valid = candidates.filter(x => x && !x.error && x.updated);
+                valid.sort((a, b) => (b.updated || 0) - (a.updated || 0));
+                const remote = valid[0];
+                if (remote && remote.updated > localTs) {
+                    // Server wins — adopt remote position. An audiobook winner
+                    // only has a percent, so drop anchor/page/font and let
+                    // calculatePages locate the page from `progress`.
+                    const isAudio = remote.mediaType === 'audiobook';
                     localStorage.setItem(STATE_KEY, JSON.stringify({
-                        page:     remote.page,
-                        total:    remote.total,
+                        page:     isAudio ? null : remote.page,
+                        total:    isAudio ? null : remote.total,
                         progress: remote.progress,
-                        anchor:   remote.anchor,
-                        fontSize: remote.fontSize,
+                        anchor:   isAudio ? null : remote.anchor,
+                        fontSize: isAudio ? undefined : remote.fontSize,
                         ts:       remote.updated
                     }));
                     console.log('☁️  Restored reading position from server:', remote);
                 }
-                // Restore reading-speed buffer regardless of who wins on
-                // position — the rolling sample buffer is per-book metadata
-                // that should follow the book across devices.
-                if (Array.isArray(remote.recentPages)) {
-                    _recentPages = remote.recentPages.slice(-READING_SPEED.bufferSize);
+                // Restore reading-speed buffer from THIS ebook's own record
+                // (the audiobook has none) regardless of who won on position.
+                const own = candidates.find(x => x && x.mediaType !== 'audiobook');
+                if (own && Array.isArray(own.recentPages)) {
+                    _recentPages = own.recentPages.slice(-READING_SPEED.bufferSize);
                 }
             } catch (_) {}
         }

@@ -39,4 +39,8 @@ android {
 
 dependencies {
     implementation 'androidx.appcompat:appcompat:1.6.1'
+    // MediaSessionCompat + MediaButtonReceiver + MediaStyle notification, so
+    // the audiobook player keeps playing in the background and responds to
+    // hardware/headphone media buttons (see PlaybackService).
+    implementation 'androidx.media:media:1.7.0'
 }

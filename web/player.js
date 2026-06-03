@@ -120,17 +120,19 @@ async function init() {
     }
     recomputeStarts();
 
-    // Our saved resume position (preferred over ABS's own session currentTime).
-    // It's a BOOK-global time; map it onto the part that contains it.
+    // Our saved resume position (preferred over ABS's own session currentTime),
+    // reconciled with the matching ebook so reading in either format resumes
+    // the other at the same spot. It's a BOOK-global time; map it onto the part
+    // that contains it. An ebook winner gives a percent — converted to seconds
+    // here when the book total is known, else deferred to loadPart.
     let savedPos = 0;
-    if (PROGRESS_KEY) {
-        try {
-            const r = await fetch(`${API_URL}/progress/${encodeURIComponent(PROGRESS_KEY)}`);
-            if (r.ok) {
-                const p = await r.json();
-                if (p && typeof p.position === 'number') savedPos = p.position;
-            }
-        } catch (_) {}
+    const resume = await resolveResumePosition();
+    if (resume.kind === 'seconds') {
+        savedPos = resume.value;
+    } else if (resume.kind === 'percent') {
+        const total = bookTotal();
+        if (total > 0) savedPos = resume.value * total;
+        else resumePercent = resume.value;
     }
     let startPart = 0, localSeek = savedPos;
     if (editionDuration > 0 && savedPos > 0) {
@@ -174,6 +176,13 @@ async function loadPart(i, seekTo, autoplay) {
     if (!(PARTS[i].duration > 0) && duration > 0) {
         PARTS[i].duration = duration;
         recomputeStarts();
+    }
+    // A cross-format ebook resume may have arrived as a percent we couldn't
+    // convert until this (single-part) duration was known just above. Apply it
+    // now, once, to the freshly-loaded part.
+    if (resumePercent != null && !seekTo) {
+        seekTo = resumePercent * bookTotal();
+        resumePercent = null;
     }
     pendingSeek = seekTo || (PARTS.length === 1
         ? (s.currentTime || s.startTime || 0) : 0);
@@ -323,6 +332,7 @@ function updateUI() {
     $('chapter-title').textContent = ctitle;
     const rows = $('chapter-list').children;
     for (let i = 0; i < rows.length; i++) rows[i].classList.toggle('active', i === ci);
+    NativeMedia.state();  // throttled position push to the lock-screen scrubber
 }
 audio.addEventListener('timeupdate', updateUI);
 audio.addEventListener('durationchange', updateUI);
@@ -336,6 +346,7 @@ function reflectPlayState() {
     const mini = $('ro-mini');
     if (mini) mini.textContent = playing ? '🎧 playing' : '🎧 paused';
     if ('mediaSession' in navigator) navigator.mediaSession.playbackState = playing ? 'playing' : 'paused';
+    NativeMedia.state(true);  // start/refresh the foreground service + notification
 }
 function togglePlay() { audio.paused ? audio.play().catch(() => {}) : audio.pause(); }
 function skip(delta) {
@@ -406,8 +417,8 @@ function closeReader() {
 $('search-btn').addEventListener('click', () => openReader(true));
 $('ro-back').addEventListener('click', closeReader);
 
-audio.addEventListener('play', () => { reflectPlayState(); lastSyncAt = Date.now(); startSync(); });
-audio.addEventListener('pause', () => { reflectPlayState(); sync(); stopSync(); });
+audio.addEventListener('play', () => { reflectPlayState(); lastSyncAt = Date.now(); startSync(); startAutoBm(); });
+audio.addEventListener('pause', () => { reflectPlayState(); sync(); stopSync(); stopAutoBm(); });
 audio.addEventListener('ended', () => {
     reflectPlayState(); sync();
     // Auto-advance to the next part of a multi-part edition.
@@ -457,6 +468,199 @@ function openDrawer() { $('drawer-backdrop').classList.add('open'); }
 function closeDrawer() { $('drawer-backdrop').classList.remove('open'); }
 $('chapters-btn2').addEventListener('click', openDrawer);
 $('drawer-backdrop').addEventListener('click', (e) => { if (e.target === $('drawer-backdrop')) closeDrawer(); });
+
+// ---------- Bookmarks ----------
+// Bookmarks live on OUR backend keyed by bookId. The audiobook side uses
+// "abs:<id>" (PROGRESS_KEY); the matching ebook (if any) uses its Calibre id.
+// We store a `percent` (0..1) on every bookmark so a spot marked in one format
+// surfaces in the other at the equivalent place — not exact, but close enough.
+let linkedEbookId = (HAS_EBOOK && EBOOK_ID) ? EBOOK_ID : '';
+
+// Discover the matching ebook id when the player wasn't launched with one
+// (audio-only navigation of a work that does have an ebook). Fire-and-forget.
+async function resolveEbookSibling() {
+    if (linkedEbookId || !PROGRESS_KEY) return;
+    try {
+        const r = await fetch(`${API_URL}/booklinks/${encodeURIComponent(PROGRESS_KEY)}`);
+        if (!r.ok) return;
+        const d = await r.json();
+        const s = (d.siblings || []).find(x => !String(x).startsWith('abs:'));
+        if (s) linkedEbookId = String(s);
+    } catch (_) {}
+}
+
+// Cross-format resume: the most-recently-updated progress record wins, whether
+// it was the audiobook's own or the matching ebook's. An ebook record only
+// carries a percent, so we map it onto the audio timeline. When the book total
+// isn't known yet (single-part, duration arrives with the play session) we
+// stash the percent in `resumePercent` for loadPart to apply post-load.
+let resumePercent = null;
+async function resolveResumePosition() {
+    if (!PROGRESS_KEY) return { kind: 'none' };
+    const recs = [];
+    try {
+        const r = await fetch(`${API_URL}/progress/${encodeURIComponent(PROGRESS_KEY)}`);
+        if (r.ok) recs.push(await r.json());
+    } catch (_) {}
+    await resolveEbookSibling();
+    if (linkedEbookId) {
+        try {
+            const r = await fetch(`${API_URL}/progress/${encodeURIComponent(linkedEbookId)}`);
+            if (r.ok) recs.push(await r.json());
+        } catch (_) {}
+    }
+    const valid = recs.filter(p => p && !p.error && p.updated);
+    if (!valid.length) return { kind: 'none' };
+    valid.sort((a, b) => (b.updated || 0) - (a.updated || 0));
+    const best = valid[0];
+    if (best.mediaType === 'audiobook' && typeof best.position === 'number') {
+        return { kind: 'seconds', value: best.position };
+    }
+    return { kind: 'percent', value: (typeof best.progress === 'number') ? best.progress : 0 };
+}
+
+function curChapterTitle() {
+    const ci = currentChapterIndex(audio.currentTime || 0);
+    if (ci < 0) return '';
+    const ch = chapters[ci];
+    return ch ? (ch.title || ('Chapter ' + (ci + 1))) : '';
+}
+
+// Brief visual confirmation that a bookmark was saved (the SVG flashes pink).
+function flashBookmarkAdded() {
+    const b = $('bm-add');
+    if (!b) return;
+    b.style.color = 'var(--brand-pink)';
+    setTimeout(() => { b.style.color = ''; }, 600);
+}
+
+function bookmarkBody(type) {
+    const pos = globalTime();
+    const total = bookTotal();
+    return {
+        type, bookId: PROGRESS_KEY, bookTitle: TITLE, bookAuthor: AUTHOR,
+        mediaType: 'audiobook',
+        position: pos, duration: total,
+        percent: total ? Math.min(1, pos / total) : 0,
+        text: curChapterTitle() || fmt(pos),
+        chapter: curChapterTitle(),
+    };
+}
+
+async function addBookmark() {
+    if (!PROGRESS_KEY) return;
+    flashBookmarkAdded();
+    try {
+        await fetch(`${API_URL}/highlights`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(bookmarkBody('bookmark')),
+        });
+    } catch (_) {}
+}
+
+// Auto-bookmark every ~60s of playback (the backend keeps only the most recent
+// 10 per book, matching the ebook behaviour). Driven by an interval that only
+// runs while audio is playing (started/stopped alongside the progress sync).
+let autoBmTimer = null;
+function startAutoBm() { if (!autoBmTimer) autoBmTimer = setInterval(createAutoBookmark, 60000); }
+function stopAutoBm() { if (autoBmTimer) { clearInterval(autoBmTimer); autoBmTimer = null; } }
+async function createAutoBookmark() {
+    if (!PROGRESS_KEY || !bookTotal()) return;
+    try {
+        await fetch(`${API_URL}/highlights`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(bookmarkBody('auto-bookmark')),
+        });
+    } catch (_) {}
+}
+
+// Normalise a stored bookmark to a common shape with a percent + (optional)
+// absolute audio position. ebook bookmarks fall back to page/total for percent.
+function normBookmark(b, origin) {
+    let percent = (typeof b.percent === 'number') ? b.percent : null;
+    if (percent == null && origin === 'ebook' && b.total) percent = (b.page || 0) / b.total;
+    const pos = (typeof b.position === 'number') ? b.position : null;
+    return { id: b.id, origin, type: b.type, percent, pos,
+             text: b.text || '', chapter: b.chapter || '', created: b.created || 0 };
+}
+
+async function fetchAllBookmarks() {
+    const reqs = [
+        fetch(`${API_URL}/highlights?bookId=${encodeURIComponent(PROGRESS_KEY)}&type=bookmark`),
+        fetch(`${API_URL}/highlights?bookId=${encodeURIComponent(PROGRESS_KEY)}&type=auto-bookmark`),
+    ];
+    if (linkedEbookId) {
+        reqs.push(fetch(`${API_URL}/highlights?bookId=${encodeURIComponent(linkedEbookId)}&type=bookmark`));
+        reqs.push(fetch(`${API_URL}/highlights?bookId=${encodeURIComponent(linkedEbookId)}&type=auto-bookmark`));
+    }
+    const out = [];
+    try {
+        const res = await Promise.all(reqs);
+        for (let i = 0; i < res.length; i++) {
+            if (!res[i].ok) continue;
+            const data = await res[i].json();
+            const origin = i < 2 ? 'audio' : 'ebook';
+            for (const b of (data.items || [])) out.push(normBookmark(b, origin));
+        }
+    } catch (_) {}
+    out.sort((a, b) => (a.percent || 0) - (b.percent || 0));
+    return out;
+}
+
+function seekToBookmark(n) {
+    const total = bookTotal();
+    const g = (n.origin === 'audio' && n.pos != null) ? n.pos : (n.percent || 0) * total;
+    seekGlobal(g);
+    if (audio.paused) audio.play().catch(() => {});
+    closeBookmarks();
+}
+
+async function deleteBookmark(id) {
+    try { await fetch(`${API_URL}/highlights/${encodeURIComponent(id)}`, { method: 'DELETE' }); }
+    catch (_) {}
+    renderBookmarks();
+}
+
+async function renderBookmarks() {
+    const list = $('bm-list');
+    list.innerHTML = '<div class="bm-empty">Loading…</div>';
+    const items = await fetchAllBookmarks();
+    list.innerHTML = '';
+    if (!items.length) {
+        list.innerHTML = '<div class="bm-empty">No bookmarks yet.<br>Tap the bookmark button to save your spot.</div>';
+        return;
+    }
+    const total = bookTotal();
+    for (const n of items) {
+        const row = document.createElement('div');
+        row.className = 'bm-row';
+        const main = document.createElement('div');
+        main.className = 'bm-main';
+        const label = document.createElement('div');
+        label.className = 'bm-label';
+        const kind = n.type === 'auto-bookmark' ? '⏱ ' : '🔖 ';
+        label.textContent = kind + (n.chapter || n.text || 'Bookmark');
+        const sub = document.createElement('div');
+        sub.className = 'bm-sub';
+        const pctTxt = Math.round((n.percent || 0) * 100) + '%';
+        const timeTxt = (n.origin === 'audio' && n.pos != null) ? fmt(n.pos)
+                        : fmt((n.percent || 0) * total);
+        sub.textContent = (n.origin === 'ebook' ? '📖 ' : '🎧 ') + pctTxt + ' · ' + timeTxt;
+        main.appendChild(label); main.appendChild(sub);
+        const del = document.createElement('button');
+        del.className = 'bm-del'; del.textContent = '×'; del.title = 'Delete';
+        del.addEventListener('click', (e) => { e.stopPropagation(); deleteBookmark(n.id); });
+        row.appendChild(main); row.appendChild(del);
+        row.addEventListener('click', () => seekToBookmark(n));
+        list.appendChild(row);
+    }
+}
+
+function openBookmarks() { $('bm-backdrop').classList.add('open'); renderBookmarks(); }
+function closeBookmarks() { $('bm-backdrop').classList.remove('open'); }
+$('bm-add').addEventListener('click', addBookmark);
+$('bm-list-btn').addEventListener('click', openBookmarks);
+$('bm-backdrop').addEventListener('click', (e) => { if (e.target === $('bm-backdrop')) closeBookmarks(); });
 
 // ---------- Progress sync ----------
 // Persist book-global resume position to OUR backend (keyed by abs:<id>) so
@@ -514,8 +718,10 @@ function doClose() {
     if (closed) return;
     closed = true;
     stopSync();
+    stopAutoBm();
     saveProgress();
     closePartSession(sid);
+    NativeMedia.stop();  // tear down the foreground service + notification
 }
 window.addEventListener('pagehide', doClose);
 window.addEventListener('beforeunload', doClose);
@@ -537,5 +743,61 @@ function setupMediaSession() {
         h('nexttrack', nextChapter);
     } catch (_) {}
 }
+
+// ---------- Native (Android) media session bridge ----------
+// Inside the APK WebView, window.Android exposes mediaStart/mediaState/mediaStop
+// (MainActivity.JsBridge). These drive the foreground PlaybackService that keeps
+// audio alive when the screen locks and routes hardware/headphone/lock-screen
+// media buttons back here via window.__mediaControl. No-ops in a desktop browser.
+const NativeMedia = (() => {
+    const has = typeof Android !== 'undefined' && Android
+        && typeof Android.mediaStart === 'function';
+    let started = false, lastPush = 0;
+    return {
+        start() {
+            if (!has) return;
+            try {
+                Android.mediaStart(TITLE, AUTHOR,
+                    ABS_ID ? `${API_URL}/audiobooks/${encodeURIComponent(ABS_ID)}/cover` : '');
+                started = true;
+            } catch (_) {}
+        },
+        // force=true pushes immediately (play/pause change); otherwise throttled
+        // so timeupdate (~4x/s) doesn't spam the service with position updates.
+        state(force) {
+            if (!has) return;
+            if (!started) this.start();
+            const now = Date.now();
+            if (!force && now - lastPush < 2000) return;
+            lastPush = now;
+            try {
+                Android.mediaState(!audio.paused && !audio.ended,
+                    globalTime(), bookTotal(), chosenRate);
+            } catch (_) {}
+        },
+        stop() {
+            if (!has || !started) return;
+            started = false;
+            try { Android.mediaStop(); } catch (_) {}
+        },
+    };
+})();
+
+// Media-button / notification actions from the native MediaSession land here.
+// Vocabulary mirrors PlaybackService's MediaSession callback (play / pause /
+// next / prev / forward / backward / seek:<ms>).
+window.__mediaControl = function (action) {
+    if (!action) return;
+    if (action === 'play') audio.play().catch(() => {});
+    else if (action === 'pause') audio.pause();
+    else if (action === 'next') nextChapter();
+    else if (action === 'prev') prevChapter();
+    else if (action === 'forward') skip(30);
+    else if (action === 'backward') skip(-30);
+    else if (action.indexOf('seek:') === 0) {
+        const ms = parseFloat(action.slice(5));
+        if (!isNaN(ms)) seekGlobal(ms / 1000);
+    }
+};
 
 init();

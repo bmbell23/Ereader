@@ -81,8 +81,19 @@
         .times { display: flex; justify-content: space-between; font-size: 11px; color: #9a9a9a; }
 
         /* ---- Transport ---- */
-        .controls { display: flex; align-items: center; justify-content: center; gap: 16px; margin-top: 2px; }
+        .controls { display: flex; align-items: center; justify-content: center; gap: 16px; margin-top: 2px;
+            position: relative; width: 100%; max-width: 560px; }
+        /* Bookmark-add sits outside the symmetric group so play stays centred.
+           .controls spans the bar width, so right:0 reaches the far right edge. */
+        #bm-add { position: absolute; right: 0; top: 50%; transform: translateY(-50%); }
         .controls .icon-btn { font-size: 26px; position: relative; }
+        /* PNG icons for search / bookmark — inverted to white for the dark bg */
+        .icon-png { width: 24px; height: 24px; filter: invert(1); display: block; }
+        /* Bookmark-add: same png + a small "+" badge so it reads as "add" */
+        .bm-add-wrap { position: relative; display: inline-block; }
+        .bm-add-plus { position: absolute; bottom: -4px; right: -5px;
+            font-size: 12px; font-weight: 900; line-height: 1; color: white;
+            text-shadow: 0 0 3px rgba(0,0,0,0.7); pointer-events: none; }
         .play-btn {
             width: 74px; height: 74px; border-radius: 50%;
             background: var(--brand-grad);
@@ -98,7 +109,8 @@
 
         /* ---- Bottom bar: speed slider ---- */
         .bottom-bar { display: flex; align-items: center; gap: 14px;
-            padding: 12px 20px calc(14px + env(safe-area-inset-bottom, 0px)); }
+            padding: 12px 20px 12px;
+            margin-bottom: calc(60px + env(safe-area-inset-bottom, 0px)); }
         .speed-wrap { flex: 1; display: flex; align-items: center; gap: 10px; }
         .speed-pill { flex-shrink: 0; min-width: 52px; text-align: center; font-size: 13px;
             font-weight: 700; color: #fff; background: rgba(134,64,192,0.28);
@@ -130,6 +142,20 @@
         .ch-row.active { color: var(--brand-pink); font-weight: 600; }
         .ch-row .ch-time { color: #888; font-size: 12px; flex-shrink: 0; }
 
+        /* Bookmark rows */
+        .bm-row { padding: 12px 16px; display: flex; align-items: center; gap: 12px; cursor: pointer; }
+        .bm-row:active { background: #2a2a2a; }
+        .bm-row .bm-main { flex: 1; min-width: 0; }
+        .bm-row .bm-label { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .bm-row .bm-sub { font-size: 12px; color: #888; margin-top: 2px;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .bm-row .bm-del { flex-shrink: 0; background: none; border: none; color: #777;
+            font-size: 20px; line-height: 1; padding: 4px 6px; cursor: pointer; border-radius: 6px; }
+        .bm-row .bm-del:active { background: #3a2a2a; color: #d04040; }
+        .bm-empty { color: #777; padding: 20px 16px; text-align: center; font-size: 14px; }
+        .bm-sec { padding: 12px 16px 4px; font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
+            text-transform: uppercase; color: #8640C0; }
+
         /* Reader overlay (in-book search / read while audio keeps playing) */
         .reader-overlay { position: fixed; inset: 0; z-index: 90; background: var(--bg);
             display: none; flex-direction: column; }
@@ -155,7 +181,8 @@
     <div class="top-bar">
         <button class="icon-btn" id="back-btn" title="Back">‹</button>
         <span class="now" id="now-playing">Loading…</span>
-        <button class="icon-btn hidden" id="search-btn" title="Search the book">🔍</button>
+        <button class="icon-btn hidden" id="search-btn" title="Search the book"><img src="assets/search.png" alt="Search" class="icon-png"></button>
+        <button class="icon-btn" id="bm-list-btn" title="Bookmarks"><img src="assets/bookmark.png" alt="Bookmarks" class="icon-png"></button>
     </div>
 
     <div class="stage">
@@ -187,6 +214,13 @@
             <button class="play-btn" id="play" title="Play/Pause"><img id="play-img" src="assets/play.png" alt="Play"></button>
             <button class="icon-btn" id="fwd30" title="Forward 30s">↻<span class="skip-label">30</span></button>
             <button class="icon-btn" id="next-ch" title="Next chapter">⏭</button>
+            <!-- Absolutely positioned so it doesn't shift the centred group -->
+            <button class="icon-btn" id="bm-add" title="Bookmark this spot" aria-label="Bookmark this spot">
+                <span class="bm-add-wrap">
+                    <img src="assets/bookmark.png" alt="" class="icon-png">
+                    <span class="bm-add-plus" aria-hidden="true">+</span>
+                </span>
+            </button>
         </div>
     </div>
 
@@ -202,6 +236,15 @@
         <div class="drawer">
             <h3>Chapters</h3>
             <div class="drawer-list" id="chapter-list"></div>
+        </div>
+    </div>
+
+    <!-- Bookmarks drawer. Lists this audiobook's bookmarks plus any made in the
+         matching ebook (synced by percentage). Tapping a row seeks there. -->
+    <div class="drawer-backdrop" id="bm-backdrop">
+        <div class="drawer">
+            <h3>Bookmarks</h3>
+            <div class="drawer-list" id="bm-list"></div>
         </div>
     </div>
 

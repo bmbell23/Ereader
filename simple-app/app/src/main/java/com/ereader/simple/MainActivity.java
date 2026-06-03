@@ -22,6 +22,8 @@ import android.view.WindowInsets;
 import android.view.WindowInsetsController;
 import android.view.WindowManager;
 import android.graphics.Color;
+import android.content.pm.PackageManager;
+import java.lang.ref.WeakReference;
 
 public class MainActivity extends Activity {
     private WebView webView;
@@ -32,9 +34,56 @@ public class MainActivity extends Activity {
     // event. Cleared again when the web UI calls hideSystemBars().
     private boolean systemBarsRequested = false;
 
+    // Weak self-reference so PlaybackService (same process) can route media
+    // button / notification actions back into the WebView's <audio> via JS.
+    private static WeakReference<MainActivity> sRef;
+
+    // Called from PlaybackService's MediaSession callback. `action` is one of
+    // play / pause / next / prev / forward / backward / seek:<ms>. Forwarded
+    // to window.__mediaControl in player.js, which drives the <audio> element.
+    static void dispatchMedia(final String action) {
+        MainActivity a = (sRef != null) ? sRef.get() : null;
+        if (a != null) a.runMediaControl(action);
+    }
+
+    private void runMediaControl(final String action) {
+        if (action == null) return;
+        runOnUiThread(() -> {
+            if (webView == null) return;
+            // action is a fixed vocabulary (ascii + digits); single-quote safe.
+            webView.evaluateJavascript(
+                "window.__mediaControl && window.__mediaControl('" + action + "')", null);
+        });
+    }
+
+    private void startMediaService(Intent i) {
+        try {
+            if (PlaybackService.ACTION_STOP.equals(i.getAction())) {
+                startService(i);  // not foreground — service will stop itself
+            } else if (android.os.Build.VERSION.SDK_INT >= 26) {
+                startForegroundService(i);
+            } else {
+                startService(i);
+            }
+        } catch (Exception e) {
+            android.util.Log.e("Ereader", "startMediaService failed", e);
+        }
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+        sRef = new WeakReference<>(this);
+
+        // Android 13+ gates notifications (incl. the media-control notification
+        // that backs lock-screen / headphone controls) behind a runtime grant.
+        if (android.os.Build.VERSION.SDK_INT >= 33
+                && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
+                    != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(
+                new String[]{ android.Manifest.permission.POST_NOTIFICATIONS }, 1);
+        }
 
         // AGGRESSIVE fullscreen setup
         getWindow().getDecorView().setSystemUiVisibility(
@@ -264,6 +313,52 @@ public class MainActivity extends Activity {
                 }
             });
         }
+        // ---- Background audiobook playback + media controls ----
+        // The player (player.js) calls these to drive the foreground
+        // PlaybackService that keeps audio alive when the screen locks and
+        // owns the MediaSession hardware/headphone buttons talk to.
+        // mediaStart: begin/refresh the session with this book's metadata.
+        @JavascriptInterface
+        public void mediaStart(String title, String artist, String coverUrl) {
+            Intent i = new Intent(MainActivity.this, PlaybackService.class)
+                    .setAction(PlaybackService.ACTION_START);
+            i.putExtra("title", title);
+            i.putExtra("artist", artist);
+            i.putExtra("coverUrl", coverUrl);
+            i.putExtra("playing", true);
+            startMediaService(i);
+        }
+        // mediaState: push the current play/pause state + book-global position
+        // (seconds), total duration (seconds) and playback rate. While the
+        // service is already running we update it in-process (no background FGS
+        // start, which Android 12+ blocks once the screen is locked).
+        @JavascriptInterface
+        public void mediaState(final boolean playing, final double position,
+                               final double duration, final double rate) {
+            runOnUiThread(() -> {
+                if (PlaybackService.isRunning()) {
+                    PlaybackService.applyState(playing, position, duration, rate);
+                    return;
+                }
+                Intent i = new Intent(MainActivity.this, PlaybackService.class)
+                        .setAction(PlaybackService.ACTION_UPDATE);
+                i.putExtra("playing", playing);
+                i.putExtra("position", position);
+                i.putExtra("duration", duration);
+                i.putExtra("rate", rate);
+                startMediaService(i);
+            });
+        }
+        // mediaStop: tear down the session + notification (player closed).
+        @JavascriptInterface
+        public void mediaStop() {
+            runOnUiThread(() -> {
+                if (PlaybackService.isRunning()) { PlaybackService.stopFromBridge(); return; }
+                Intent i = new Intent(MainActivity.this, PlaybackService.class)
+                        .setAction(PlaybackService.ACTION_STOP);
+                startMediaService(i);
+            });
+        }
         // Share a PNG image generated client-side (canvas → base64). The
         // Web Share API requires a secure context, but our WebView loads
         // over plain HTTP from Tailscale, so we cannot rely on
@@ -307,6 +402,12 @@ public class MainActivity extends Activity {
         } else {
             super.onBackPressed();
         }
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (sRef != null && sRef.get() == this) sRef = null;
+        super.onDestroy();
     }
 
     // Foldable posture changes (fold <-> unfold) fire onConfigurationChanged
