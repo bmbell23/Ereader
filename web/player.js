@@ -455,7 +455,6 @@ function renderChapters() {
 }
 function openDrawer() { $('drawer-backdrop').classList.add('open'); }
 function closeDrawer() { $('drawer-backdrop').classList.remove('open'); }
-$('chapters-btn').addEventListener('click', openDrawer);
 $('chapters-btn2').addEventListener('click', openDrawer);
 $('drawer-backdrop').addEventListener('click', (e) => { if (e.target === $('drawer-backdrop')) closeDrawer(); });
 
