@@ -47,6 +47,9 @@ Thumbs.db
 # Runtime data
 backend/data/
 
+# Audiobookshelf credentials (token) — never commit
+backend/abs.env
+
 # Misc
 *.orig
 .watchmanconfig

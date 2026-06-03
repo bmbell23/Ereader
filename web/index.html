@@ -313,6 +313,67 @@
             background: #4caf50;
             box-shadow: 0 0 4px rgba(0,0,0,0.6);
         }
+        /* Media-type badges (top-left of a cover). Only shown when an item has
+           an audiobook — pure ebooks (the common case) stay unbadged to keep
+           the grid clean. Dual-format shows 📖🎧, audio-only shows 🎧. */
+        .book-badges {
+            position: absolute;
+            top: 4px;
+            left: 4px;
+            display: flex;
+            gap: 3px;
+            font-size: 12px;
+            line-height: 1;
+        }
+        .book-badge {
+            background: rgba(0, 0, 0, 0.6);
+            border-radius: 6px;
+            padding: 3px 4px;
+            backdrop-filter: blur(2px);
+        }
+        /* Read/Listen action sheet for dual-format works. */
+        .sheet-backdrop {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.6);
+            display: none;
+            z-index: 1200;
+            align-items: flex-end;
+        }
+        .sheet-backdrop.open { display: flex; }
+        .sheet {
+            width: 100%;
+            background: #1e1e1e;
+            border-radius: 16px 16px 0 0;
+            padding: 16px 16px calc(20px + env(safe-area-inset-bottom, 0px));
+            box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.5);
+        }
+        .sheet-title {
+            font-size: 14px;
+            color: #aaa;
+            text-align: center;
+            margin-bottom: 14px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .sheet-btn {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            width: 100%;
+            background: #2a2a2a;
+            border: none;
+            border-radius: 10px;
+            color: #fff;
+            padding: 16px;
+            font-size: 16px;
+            margin-bottom: 10px;
+            cursor: pointer;
+        }
+        .sheet-btn:active { background: #383838; }
+        .sheet-btn .sheet-icon { font-size: 22px; }
+        .sheet-btn .sheet-sub { color: #888; font-weight: 400; font-size: 13px; }
         .book-title {
             font-size: 12px;
             font-weight: 600;
@@ -427,6 +488,17 @@
     <div class="book-context-menu" id="book-ctx-menu">
         <div class="ctx-header" id="book-ctx-title"></div>
         <button id="ctx-clear-progress" class="danger">🗑️ Clear Reading Progress</button>
+    </div>
+
+    <!-- Read/Listen action sheet (shown for any work with multiple openable
+         formats: an ebook plus one-or-more audio editions, e.g. a standard
+         Audiobook and a Dramatized Audiobook). Buttons are built per-work in
+         showFormatSheet(). Tapping outside the sheet dismisses it. -->
+    <div class="sheet-backdrop" id="format-sheet-backdrop" onclick="if(event.target===this)hideFormatSheet()">
+        <div class="sheet">
+            <div class="sheet-title" id="format-sheet-title"></div>
+            <div id="format-sheet-btns"></div>
+        </div>
     </div>
 
     <!-- Settings overlay -->
@@ -586,7 +658,12 @@
             isLoading = true;
 
             try {
-                const url = `${API_URL}/books?limit=${BATCH_SIZE}&offset=${currentOffset}`;
+                // /api/library = Calibre ebooks merged with Audiobookshelf
+                // audiobooks. Matched works keep their Calibre id; audio-only
+                // items use id "abs:<id>" and are appended ONCE on the first
+                // page (offset 0). Falls back to the Calibre-only list when ABS
+                // is off, so this is safe even without audiobooks configured.
+                const url = `${API_URL}/library?limit=${BATCH_SIZE}&offset=${currentOffset}`;
                 console.log('Fetching books from:', url);
                 const response = await fetch(url);
                 if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
@@ -598,8 +675,13 @@
                 const existingIds = new Set(homeBooks.map(b => String(b.id)));
                 const uniqueNew = newBooks.filter(b => !existingIds.has(String(b.id)));
                 homeBooks = homeBooks.concat(uniqueNew);
-                homeOffset += newBooks.length; // advance by server batch size, not deduped count
-                homeIsComplete = newBooks.length < BATCH_SIZE;
+                // Advance the Calibre offset by the EBOOK count only — audio-only
+                // rows (appended on page 0) aren't part of Calibre's paged set,
+                // so counting them would skip real books on the next page.
+                const ebookCount = newBooks.filter(
+                    b => (b.mediaTypes || ['ebook']).includes('ebook')).length;
+                homeOffset += ebookCount;
+                homeIsComplete = ebookCount < BATCH_SIZE;
                 allBooks = homeBooks;
                 currentOffset = homeOffset;
 
@@ -658,18 +740,43 @@
         // hasn't yet paged into view via infinite scroll, and ones whose
         // progress was set on another device (no localStorage entry here).
         const progressMap = new Map();
+        // Audiobook progress is keyed "abs:<absId>" in the backend; dual-format
+        // rows are keyed by their Calibre id, so we also index audio records by
+        // their raw absId to surface audiobook listening on those rows.
+        const audioProgressByAbsId = new Map();
         // Track ids we've already inserted so reRenders don't refetch.
         const mergedProgressIds = new Set();
         let progressLoadedAt = 0;
 
+        // Raw ABS id for a book row (audio-only rows carry it in the id itself).
+        function rawAbsIdFor(book) {
+            if (book && book.absId) return String(book.absId);
+            const id = String((book && book.id) != null ? book.id : book || '');
+            return id.startsWith('abs:') ? id.slice(4) : '';
+        }
+        // Backend audio-progress fraction (0..100) for a row, if any.
+        function audioPctFor(book) {
+            const rec = audioProgressByAbsId.get(rawAbsIdFor(book));
+            return rec && typeof rec.progress === 'number' ? Math.round(rec.progress * 100) : 0;
+        }
+
         // Best-available "last read" timestamp for a book — backend mtime wins
         // (cross-device + survives WebView storage wipes); localStorage `ts`
         // as a fallback for books we've read here but the server hasn't seen.
-        function recentTsFor(id) {
+        function recentTsFor(book) {
+            const id = (book && typeof book === 'object') ? book.id : book;
+            let ts = 0;
             const p = progressMap.get(String(id));
-            if (p && typeof p.updated === 'number') return p.updated;
+            if (p && typeof p.updated === 'number') ts = p.updated;
+            // Dual-format rows: pick up audiobook listening keyed by absId.
+            const absId = rawAbsIdFor(book && typeof book === 'object' ? book : { id });
+            if (absId) {
+                const a = audioProgressByAbsId.get(absId);
+                if (a && typeof a.updated === 'number') ts = Math.max(ts, a.updated);
+            }
             const s = readingStateFor(id);
-            return s && typeof s.ts === 'number' ? s.ts : 0;
+            if (s && typeof s.ts === 'number') ts = Math.max(ts, s.ts);
+            return ts;
         }
 
         function applySort(list) {
@@ -677,7 +784,7 @@
             if (sortMode === 'title') {
                 arr.sort((a, b) => (a.title || '').localeCompare(b.title || ''));
             } else if (sortMode === 'recent') {
-                arr.sort((a, b) => recentTsFor(b.id) - recentTsFor(a.id));
+                arr.sort((a, b) => recentTsFor(b) - recentTsFor(a));
             }
             // 'author' is the backend's natural order; leave as-is.
             return arr;
@@ -696,8 +803,10 @@
                 const data = await res.json();
                 const items = Array.isArray(data.items) ? data.items : [];
                 progressMap.clear();
+                audioProgressByAbsId.clear();
                 for (const it of items) {
                     if (it && it.bookId) progressMap.set(String(it.bookId), it);
+                    if (it && it.absId) audioProgressByAbsId.set(String(it.absId), it);
                 }
                 progressLoadedAt = Date.now();
 
@@ -794,26 +903,40 @@
             const sorted = applySort(books);
 
             const booksHTML = sorted.map(book => {
-                const format = (book.formats[0] || 'epub').toLowerCase();
+                const format = ((book.formats || [])[0] || 'epub').toLowerCase();
                 const coverUrl = book.cover || book.thumbnail;
                 const state = readingStateFor(book.id);
-                const progressPct = state && state.progress != null
+                const readPct = state && state.progress != null
                     ? Math.round(((state.page + 1) / state.total) * 100) : 0;
+                // Audiobook listening (from the backend) shows on the same bar.
+                const progressPct = Math.max(readPct, audioPctFor(book));
                 const cachedDot = cachedBookIds.has(book.id)
                     ? '<div class="book-cached-dot" title="Downloaded"></div>' : '';
                 const progressBar = progressPct > 0 ? `
-                    <div class="book-progress" title="${progressPct}% read">
+                    <div class="book-progress" title="${progressPct}% complete">
                         <div class="book-progress-fill" style="width: ${progressPct}%"></div>
                     </div>` : '';
+                // mediaTypes drives the format badges + tap routing. Default to
+                // ebook for plain Calibre rows that predate the unified library.
+                const types = book.mediaTypes || ['ebook'];
+                const hasAudio = types.includes('audiobook');
+                const hasEbook = types.includes('ebook');
+                const badges = hasAudio
+                    ? `<div class="book-badges">${hasEbook ? '<span class="book-badge" title="Ebook">📖</span>' : ''}<span class="book-badge" title="Audiobook">🎧</span></div>`
+                    : '';
                 return `
                 <div class="book" data-book-id="${book.id}"
                      data-book-title="${escapeHTML(book.title)}"
+                     data-book-author="${escapeHTML(book.author || '')}"
                      data-book-format="${format}"
-                     onclick="openBook('${book.id}', '${format}', '${encodeURIComponent(book.title)}')">
+                     data-media-types="${types.join(',')}"
+                     data-abs-id="${book.absId || ''}"
+                     onclick="onBookOpen(this)">
                     <div class="book-cover-wrap">
                         <img data-src="${coverUrl}" class="book-cover"
                              src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
                              onerror="this.style.background='linear-gradient(135deg, #667eea 0%, #764ba2 100%)'">
+                        ${badges}
                         ${cachedDot}
                         ${progressBar}
                     </div>
@@ -856,6 +979,124 @@
             // have it, or fetch + cache it on first open. We don't pre-fetch
             // here \u2014 the reader's own cache-then-network path handles it.
             window.location.href = `reader.html?v=${BUILD}&id=${id}&format=${format}&title=${title}`;
+        }
+
+        // Open the audiobook player for an ABS item. absId may be the raw ABS id
+        // or the "abs:<id>" form audio-only rows carry as their id. For
+        // dual-format works we also pass the Calibre ebook id + format so the
+        // player can open the reader / in-book search while audio keeps playing.
+        // editionId (optional) points at an edition stashed in localStorage so
+        // the player can play a multi-part edition back-to-back.
+        function openPlayer(absId, title, author, ebookId, ebookFormat, editionId) {
+            const raw = String(absId || '').replace(/^abs:/, '');
+            let url = `player.html?v=${BUILD}&absId=${encodeURIComponent(raw)}`
+                + `&title=${encodeURIComponent(title || '')}`
+                + `&author=${encodeURIComponent(author || '')}`;
+            if (ebookId) {
+                url += `&bookId=${encodeURIComponent(ebookId)}`
+                    + `&format=${encodeURIComponent(ebookFormat || 'epub')}`
+                    + `&hasEbook=1`;
+            }
+            if (editionId) url += `&edition=${encodeURIComponent(editionId)}`;
+            window.location.href = url;
+        }
+
+        // First (lowercased) format for a book, defaulting to epub.
+        function ebookFormatOf(book) {
+            return ((book.formats || [])[0] || 'epub').toString().toLowerCase();
+        }
+
+        // Stash the chosen audio edition (so the player can read its ordered
+        // parts) and navigate. Works for both dual-format and audio-only rows.
+        function listenToEdition(edition, book) {
+            const hasEbook = (book.mediaTypes || ['ebook']).includes('ebook');
+            const ebookId = hasEbook ? book.id : '';
+            const primary = (edition && edition.absId) || book.absId
+                || String(book.id || '').replace(/^abs:/, '');
+            let editionId = '';
+            if (edition && edition.editionId && (edition.parts || []).length) {
+                try {
+                    localStorage.setItem('ereader.player.ed:' + edition.editionId,
+                        JSON.stringify(edition));
+                    editionId = edition.editionId;
+                } catch (_) {}
+            }
+            openPlayer(primary, book.title, book.author,
+                ebookId, ebookFormatOf(book), editionId);
+        }
+
+        // Tap router for a book card. Ebook-only -> reader; single audio edition
+        // -> player; anything with a choice (ebook + audio, or multiple audio
+        // editions) -> the format action sheet. Looks the full book up in
+        // allBooks so it can read its audioEditions list.
+        function onBookOpen(el) {
+            const id = el.dataset.bookId;
+            const book = allBooks.find(b => String(b.id) === String(id)) || {
+                id,
+                title: el.dataset.bookTitle || '',
+                author: el.dataset.bookAuthor || '',
+                formats: [el.dataset.bookFormat || 'epub'],
+                mediaTypes: (el.dataset.mediaTypes || 'ebook').split(',').filter(Boolean),
+                absId: el.dataset.absId || '',
+            };
+            const types = book.mediaTypes || ['ebook'];
+            const hasAudio = types.includes('audiobook');
+            const hasEbook = types.includes('ebook');
+            const editions = book.audioEditions || [];
+            if (hasEbook && hasAudio) {
+                showFormatSheet(book);
+            } else if (hasAudio) {
+                // Audio-only: skip the sheet unless there's a real choice.
+                if (editions.length > 1) showFormatSheet(book);
+                else listenToEdition(editions[0] || null, book);
+            } else {
+                openBook(book.id, ebookFormatOf(book), encodeURIComponent(book.title));
+            }
+        }
+
+        // ---------- Format action sheet (multi-format works) ----------
+        // One "Read" button (when there's an ebook) plus one button per audio
+        // edition (Audiobook / Dramatized Audiobook), each tagged with its part
+        // count when it's a stitched multi-part set.
+        function showFormatSheet(book) {
+            const backdrop = document.getElementById('format-sheet-backdrop');
+            document.getElementById('format-sheet-title').textContent = book.title;
+            const wrap = document.getElementById('format-sheet-btns');
+            wrap.innerHTML = '';
+            const types = book.mediaTypes || ['ebook'];
+
+            if (types.includes('ebook')) {
+                const b = document.createElement('button');
+                b.className = 'sheet-btn';
+                b.innerHTML = '<span class="sheet-icon">📖</span> Read';
+                b.onclick = () => {
+                    hideFormatSheet();
+                    openBook(book.id, ebookFormatOf(book), encodeURIComponent(book.title));
+                };
+                wrap.appendChild(b);
+            }
+
+            // Fall back to a synthetic single-part edition for legacy rows that
+            // carry only a bare absId (no audioEditions list).
+            const editions = (book.audioEditions && book.audioEditions.length)
+                ? book.audioEditions
+                : (book.absId ? [{
+                    editionId: 'audiobook:' + book.absId, label: 'Audiobook',
+                    absId: book.absId, parts: [{ absId: book.absId }],
+                  }] : []);
+            editions.forEach(ed => {
+                const b = document.createElement('button');
+                b.className = 'sheet-btn';
+                const n = (ed.parts && ed.parts.length > 1)
+                    ? ` <span class="sheet-sub">· ${ed.parts.length} parts</span>` : '';
+                b.innerHTML = `<span class="sheet-icon">🎧</span> ${escapeHTML(ed.label || 'Listen')}${n}`;
+                b.onclick = () => { hideFormatSheet(); listenToEdition(ed, book); };
+                wrap.appendChild(b);
+            });
+            backdrop.classList.add('open');
+        }
+        function hideFormatSheet() {
+            document.getElementById('format-sheet-backdrop').classList.remove('open');
         }
 
         // IndexedDB for offline storage (schema MUST match reader.html)

@@ -12,6 +12,9 @@ import json
 import uuid
 import threading
 import time
+import re
+import unicodedata
+from collections import defaultdict
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for mobile app access
@@ -19,6 +22,26 @@ CORS(app)  # Enable CORS for mobile app access
 # Calibre Content Server configuration
 CALIBRE_URL = os.environ.get('CALIBRE_URL', 'http://localhost:8083')
 CALIBRE_LIBRARY = os.environ.get('CALIBRE_LIBRARY', 'library')
+
+# Audiobookshelf (ABS) configuration — optional second backend source for
+# audiobooks. When ABS_URL/ABS_TOKEN are unset (or ABS is unreachable at
+# request time) every ABS code path degrades to an empty result, so the
+# merged /api/library falls back to the Calibre-only list and the ebook
+# experience is untouched. See the "Audiobook Integration" spec (Requests).
+ABS_URL = os.environ.get('ABS_URL', '').rstrip('/')
+ABS_TOKEN = os.environ.get('ABS_TOKEN', '')
+ABS_LIBRARY_ID = os.environ.get('ABS_LIBRARY_ID', '')
+ABS_ENABLED = bool(ABS_URL and ABS_TOKEN)
+# Host the *client* (phone WebView) uses to reach ABS media/HLS directly. The
+# backend talks to ABS over localhost, but the WebView is remote, so playback
+# track URLs must point at a reachable host. Defaults to ABS_URL with a
+# localhost/127.0.0.1 host swapped for the Tailscale IP (matches PUBLIC_HOST).
+ABS_PUBLIC_URL = os.environ.get('ABS_PUBLIC_URL', '').rstrip('/')
+if not ABS_PUBLIC_URL and ABS_URL:
+    ABS_PUBLIC_URL = re.sub(r'//(localhost|127\.0\.0\.1)\b', '//100.69.184.113', ABS_URL)
+# host:port the phone uses to reach THIS backend. Used to build absolute cover
+# URLs and the HLS-proxy URLs we hand back in playback sessions.
+PUBLIC_HOST = os.environ.get('PUBLIC_HOST', '100.69.184.113:8091')
 
 # Persisted user data (highlights + bookmarks). Single JSON file on disk —
 # trivial to back up, trivial to grep. Guarded by a lock because Flask is
@@ -45,6 +68,20 @@ _progress_lock = threading.Lock()
 REQUESTS_FILE = os.path.join(DATA_DIR, 'requests.json')
 _requests_lock = threading.Lock()
 REQUEST_STATUSES = ('Backlog', 'Requested', 'In Progress', 'Done')
+
+# Manual audiobook<->ebook links for the edge cases auto-matching misses
+# (multi-part sets whose parts don't share a title/author, divergent author
+# spellings, etc). Optional — absent file means "no manual overrides". Three
+# accepted value shapes per Calibre id (see _normalize_links):
+#   "573": "<absId>"                         -> one edition, parts=[absId]
+#   "573": ["<absId1>", "<absId2>"]          -> one edition, those ordered parts
+#   "573": {"editions": [                      -> full control: many editions,
+#       {"kind": "dramatized",                   each with kind/label + ordered
+#        "label": "Dramatized Audiobook",        part absIds
+#        "parts": ["<absId1>", "<absId2>"]}]}
+# Generate/audit entries with `python3 match_audit.py`.
+LINKS_FILE = os.path.join(DATA_DIR, 'links.json')
+_links_lock = threading.Lock()
 
 def _normalize_sections(raw):
     """Coerce a client-supplied `sections` value into the on-disk shape:
@@ -241,6 +278,16 @@ def get_book_metadata(book_id):
         except (AttributeError, TypeError):
             pass
 
+        # Optional Calibre custom column "#asin" — when present it's the most
+        # reliable key for matching this work to an Audiobookshelf item (ASIN
+        # is stable; audiobook ISBNs are frequently null/wrong). Read the same
+        # way as #word_count; stays None when the column doesn't exist.
+        asin = None
+        try:
+            asin = book.get('user_metadata', {}).get('#asin', {}).get('#value#')
+        except (AttributeError, TypeError):
+            pass
+
         return {
             'id': str(book_id),
             'title': book.get('title', 'Unknown'),
@@ -256,6 +303,7 @@ def get_book_metadata(book_id):
             'cover': f'http://{host}/api/books/{book_id}/cover',
             'description': book.get('comments', ''),
             'isbn': book.get('isbn', ''),
+            'asin': asin or '',
             'published': book.get('pubdate', ''),
             'rating': book.get('rating', 0),
             'wordCount': word_count,
@@ -263,6 +311,429 @@ def get_book_metadata(book_id):
     except Exception as e:
         print(f"Error fetching book {book_id}: {e}")
         return None
+
+# ---------------------------------------------------------------------------
+# Audiobookshelf (ABS) integration — optional second source for audiobooks.
+# Every network call is wrapped so any failure (not configured, timeout, auth,
+# ABS down) returns an empty result. /api/library then serves the Calibre-only
+# list and never 500s. See "Audiobook Integration" + "Migration & Safety" in
+# the in-app Requests doc for the full design.
+# ---------------------------------------------------------------------------
+
+# Resolved ABS library id is cached after first lookup (it doesn't change at
+# runtime). Reset only on process restart.
+_abs_cache = {'library_id': None}
+
+def _abs_headers():
+    return {'Authorization': f'Bearer {ABS_TOKEN}'}
+
+def _abs_get(path, params=None, timeout=15):
+    """GET against ABS, returning parsed JSON or None on any failure. No-op
+    (None) when ABS isn't configured."""
+    if not ABS_ENABLED:
+        return None
+    try:
+        r = requests.get(f'{ABS_URL}{path}', headers=_abs_headers(),
+                         params=params, timeout=timeout)
+        r.raise_for_status()
+        return r.json()
+    except Exception as e:
+        print(f"⚠️  ABS GET {path} failed: {e}")
+        return None
+
+def _abs_post(path, json_body=None, timeout=20):
+    """POST against ABS, returning parsed JSON ({} when the body is empty, as
+    /session/.../close and /sync do) or None on any failure. No-op (None) when
+    ABS isn't configured."""
+    if not ABS_ENABLED:
+        return None
+    try:
+        r = requests.post(f'{ABS_URL}{path}', headers=_abs_headers(),
+                          json=(json_body or {}), timeout=timeout)
+        r.raise_for_status()
+        ct = r.headers.get('Content-Type', '')
+        if r.content and ct.startswith('application/json'):
+            return r.json()
+        return {}
+    except Exception as e:
+        print(f"⚠️  ABS POST {path} failed: {e}")
+        return None
+
+def get_abs_library_id():
+    """Resolve which ABS library to surface: honour ABS_LIBRARY_ID, else the
+    first library whose mediaType is 'book', else the first one. Cached."""
+    if not ABS_ENABLED:
+        return None
+    if ABS_LIBRARY_ID:
+        return ABS_LIBRARY_ID
+    if _abs_cache['library_id']:
+        return _abs_cache['library_id']
+    data = _abs_get('/api/libraries')
+    if not data:
+        return None
+    libs = data.get('libraries', []) if isinstance(data, dict) else (data or [])
+    chosen = None
+    for lib in libs:
+        if lib.get('mediaType') == 'book':
+            chosen = lib.get('id')
+            break
+    if not chosen and libs:
+        chosen = libs[0].get('id')
+    _abs_cache['library_id'] = chosen
+    return chosen
+
+def normalize_abs_item(raw):
+    """Map an ABS LibraryItem onto the same dict shape get_book_metadata()
+    returns, plus audiobook-specific fields. Returns None for non-book items
+    or on any parse error. Handles both minified (list) and expanded items."""
+    try:
+        if raw.get('mediaType') != 'book':
+            return None
+        media = raw.get('media', {}) or {}
+        meta = media.get('metadata', {}) or {}
+        abs_id = raw.get('id')
+        if not abs_id:
+            return None
+        host = PUBLIC_HOST
+
+        # authors: [{id,name}] (expanded) or authorName (minified)
+        authors = []
+        if isinstance(meta.get('authors'), list):
+            authors = [a.get('name') for a in meta['authors'] if a.get('name')]
+        if not authors and meta.get('authorName'):
+            authors = [meta['authorName']]
+        if not authors:
+            authors = ['Unknown']
+
+        # series: [{name,sequence}] (expanded) or seriesName (minified)
+        series, series_index = '', 0
+        if isinstance(meta.get('series'), list) and meta['series']:
+            s0 = meta['series'][0]
+            series = s0.get('name', '') or ''
+            try:
+                series_index = float(s0.get('sequence') or 0)
+            except (TypeError, ValueError):
+                series_index = 0
+        elif meta.get('seriesName'):
+            series = meta['seriesName']
+
+        narrators = meta.get('narrators') or []
+        if not narrators and meta.get('narratorName'):
+            narrators = [meta['narratorName']]
+
+        return {
+            'id': f'abs:{abs_id}',
+            'absId': abs_id,
+            'title': meta.get('title') or 'Unknown',
+            'authors': authors,
+            'author': ', '.join(authors),
+            'publisher': meta.get('publisher') or '',
+            'formats': [],
+            'format': 'AUDIO',
+            'tags': meta.get('genres', []) or [],
+            'series': series,
+            'series_index': series_index,
+            'thumbnail': f'http://{host}/api/audiobooks/{abs_id}/cover?type=thumb',
+            'cover': f'http://{host}/api/audiobooks/{abs_id}/cover',
+            'audioCover': f'http://{host}/api/audiobooks/{abs_id}/cover',
+            'description': meta.get('description') or '',
+            'isbn': meta.get('isbn') or '',
+            'asin': meta.get('asin') or '',
+            'published': meta.get('publishedYear') or meta.get('publishedDate') or '',
+            'rating': 0,
+            'wordCount': None,
+            'mediaTypes': ['audiobook'],
+            'narrators': narrators,
+            'audiobook': {
+                'duration': media.get('duration'),
+                'chapters': media.get('chapters') or [],
+            },
+        }
+    except Exception as e:
+        print(f"⚠️  normalize_abs_item failed: {e}")
+        return None
+
+def get_abs_items(limit=None, offset=0):
+    """Fetch audiobooks from the configured ABS library as normalized dicts.
+    Returns [] on any failure. mediaType filtered to 'book' in normalize."""
+    lib_id = get_abs_library_id()
+    if not lib_id:
+        return []
+    # limit=0 asks ABS for the full set; we merge/paginate on our side.
+    data = _abs_get(f'/api/libraries/{lib_id}/items', params={'limit': 0})
+    if not data:
+        return []
+    results = data.get('results', []) if isinstance(data, dict) else []
+    out = []
+    for raw in results:
+        n = normalize_abs_item(raw)
+        if n:
+            out.append(n)
+    return out
+
+# --- matching helpers -------------------------------------------------------
+
+def _norm(s):
+    """Normalize a title/string for fuzzy comparison: strip accents, lower,
+    drop a leading article, strip punctuation, collapse whitespace."""
+    s = unicodedata.normalize('NFKD', s or '').encode('ascii', 'ignore').decode('ascii')
+    s = re.sub(r'^(the|a|an)\s+', '', s.lower().strip())
+    s = re.sub(r'[^\w\s]', '', s)
+    return re.sub(r'\s+', ' ', s).strip()
+
+def _norm_author(name):
+    """Normalize an author name; collapses initials ('J.R.R.' -> 'jrr')."""
+    return _norm(re.sub(r'\.(?=\S)', '', name or ''))
+
+def _strip_edition(s):
+    """Drop edition/format markers that differ between an ebook and its
+    audiobook edition so the title keys can match exactly: parenthetical /
+    bracketed asides ((Unabridged), (Dramatized Adaptation), (Part 1 of 3),
+    [...]) and a leading track number ('03 - ' / '03. '). Author-gated callers
+    keep this from producing false positives."""
+    s = re.sub(r'\([^)]*\)', ' ', s or '')
+    s = re.sub(r'\[[^\]]*\]', ' ', s)
+    s = re.sub(r'^\s*\d+\s*[-.]\s+', '', s)
+    return s
+
+def _first_author(item):
+    """First author, comma-split so an ABS comma-joined authorName
+    ('Robert Jordan, Brandon Sanderson') reduces to the lead author. Calibre's
+    display-form names ('Joe Abercrombie') have no comma, so this is a no-op
+    there."""
+    a = item.get('authors') or []
+    name = a[0] if a else (item.get('author') or '')
+    return name.split(',')[0].strip()
+
+# A "part" marker inside an ABS title: "(Part 1 of 2)", "(1 of 2)", "Disc 3 of
+# 9", or a bare "... 2 of 2". Captures (index, total). We only treat it as a
+# real multi-part set when total > 1 (see _group_editions).
+_PART_RE = re.compile(r'(?:part|pt\.?|disc|book|vol\.?|cd)?\s*(\d+)\s+of\s+(\d+)', re.I)
+
+def _parse_part(title):
+    """(index, total) for a multi-part audiobook title, or (None, None)."""
+    m = _PART_RE.search(title or '')
+    if not m:
+        return None, None
+    try:
+        return int(m.group(1)), int(m.group(2))
+    except (TypeError, ValueError):
+        return None, None
+
+def _strip_part(s):
+    """Drop a bare 'N of M' part marker (the parenthesised form is already
+    removed by _strip_edition; this catches the unwrapped 'Iron Gold 2 of 2')."""
+    return _PART_RE.sub(' ', s or '')
+
+def _kind_of(item):
+    """Classify an ABS edition: 'dramatized' for GraphicAudio / full-cast /
+    dramatized adaptations, else 'audiobook' (a standard narrated reading)."""
+    hay = ' '.join(str(item.get(f, '') or '') for f in
+                   ('title', 'author', 'publisher')).lower()
+    if 'dramatiz' in hay or 'graphic audio' in hay or 'graphicaudio' in hay \
+            or 'full cast' in hay or 'full-cast' in hay:
+        return 'dramatized'
+    return 'audiobook'
+
+def _load_links():
+    """Raw manual-overrides dict from disk. {} when the file is absent."""
+    if not os.path.exists(LINKS_FILE):
+        return {}
+    try:
+        with _links_lock, open(LINKS_FILE) as f:
+            d = json.load(f)
+            return d if isinstance(d, dict) else {}
+    except Exception as e:
+        print(f"⚠️  Could not load links: {e}")
+        return {}
+
+def _normalize_links(raw):
+    """Coerce the three accepted on-disk shapes (str / list / {editions:[...]})
+    into a uniform { calibre_id(str): [ {kind?, label?, parts:[absId,...]} ] }.
+    Drops malformed entries silently."""
+    out = {}
+    for cid, val in (raw or {}).items():
+        specs = []
+        if isinstance(val, str):
+            if val.strip():
+                specs.append({'parts': [val.strip()]})
+        elif isinstance(val, list):
+            parts = [str(p).strip() for p in val if str(p).strip()]
+            if parts:
+                specs.append({'parts': parts})
+        elif isinstance(val, dict):
+            for ed in (val.get('editions') or []):
+                if not isinstance(ed, dict):
+                    continue
+                parts = [str(p).strip() for p in (ed.get('parts') or []) if str(p).strip()]
+                if not parts:
+                    continue
+                specs.append({'kind': ed.get('kind'),
+                              'label': ed.get('label'), 'parts': parts})
+        if specs:
+            out[str(cid)] = specs
+    return out
+
+def _make_edition(parts_items, kind=None, label=None):
+    """Build a logical audio edition from one-or-more ordered ABS items (parts).
+    Sums durations; keeps a private `_item` ref to part 1 for cover/match keys."""
+    p0 = parts_items[0]
+    k = kind or _kind_of(p0)
+    lbl = label or ('Dramatized Audiobook' if k == 'dramatized' else 'Audiobook')
+    parts, total_dur = [], 0.0
+    for i, a in enumerate(parts_items):
+        ab = a.get('audiobook') or {}
+        try:
+            dur = float(ab.get('duration') or 0)
+        except (TypeError, ValueError):
+            dur = 0.0
+        total_dur += dur
+        parts.append({'absId': a['absId'], 'title': a.get('title'),
+                      'duration': dur, 'cover': a.get('audioCover') or a.get('cover'),
+                      'index': i})
+    return {
+        'editionId': f'{k}:{p0["absId"]}',
+        'kind': k, 'label': lbl, 'parts': parts, 'duration': total_dur,
+        'cover': p0.get('audioCover') or p0.get('cover'),
+        'narrators': p0.get('narrators', []), 'absId': p0['absId'],
+        '_item': p0,
+    }
+
+def _group_editions(abs_items, links_norm):
+    """Collapse the flat ABS item list into logical editions. Returns
+    (editions, forced_assoc) where forced_assoc maps editionId -> calibre_id for
+    editions pinned by a manual override. Multi-part sets are auto-detected by
+    a shared (base-title, author, kind, part-total) key; everything else is a
+    single-part edition. Manual overrides take precedence and are consumed
+    first, so they can stitch parts auto-grouping can't (divergent title/author)."""
+    by_absid = {a['absId']: a for a in abs_items}
+    used, editions, forced_assoc = set(), [], {}
+
+    # 1. Manual overrides first — they can group parts auto-detection misses.
+    for cid, specs in links_norm.items():
+        for spec in specs:
+            items = [by_absid[p] for p in spec['parts']
+                     if p in by_absid and p not in used]
+            if not items:
+                continue
+            for a in items:
+                used.add(a['absId'])
+            ed = _make_edition(items, kind=spec.get('kind'), label=spec.get('label'))
+            forced_assoc[ed['editionId']] = str(cid)
+            editions.append(ed)
+
+    # 2. Auto-group the rest: real multi-part sets share a key; the part marker
+    #    distinguishes them so two standalone same-title editions never merge.
+    groups, singles = defaultdict(list), []
+    for a in abs_items:
+        if a['absId'] in used:
+            continue
+        idx, tot = _parse_part(a['title'])
+        if idx and tot and tot > 1:
+            base = _norm(_strip_edition(_strip_part(a['title'].split(':')[0])))
+            key = (base, _norm_author(_first_author(a)), _kind_of(a), tot)
+            groups[key].append((idx, a))
+        else:
+            singles.append(a)
+    for key, lst in groups.items():
+        lst.sort(key=lambda t: t[0])
+        editions.append(_make_edition([a for _, a in lst]))
+    for a in singles:
+        editions.append(_make_edition([a]))
+    return editions, forced_assoc
+
+def _public_edition(ed):
+    """Edition dict minus private (_-prefixed) keys, safe to JSON-serialize."""
+    return {k: v for k, v in ed.items() if not k.startswith('_')}
+
+def match_works(calibre_items, abs_items, include_audio_only=True):
+    """Merge Calibre + ABS into one unified list. Ebook items keep their Calibre
+    id (preserving progress/highlight/cache keys); audio-only items keep
+    abs:{absId}. ABS items are first grouped into logical editions (multi-part
+    sets stitched), then each Calibre work collects ALL matching editions into
+    an `audioEditions` list (a work can have both a standard audiobook and a
+    dramatized adaptation). Match order per work: manual link, ISBN, ASIN, then
+    title+first-author with subtitle- and edition-stripped retries.
+
+    include_audio_only appends editions that matched nothing; pass False on
+    paginated pages>0 so audio-only items aren't repeated on every page."""
+    editions, forced_assoc = _group_editions(abs_items, _normalize_links(_load_links()))
+
+    by_isbn, by_asin = defaultdict(list), defaultdict(list)
+    by_ta, by_ta_sub, by_ta_strip = defaultdict(list), defaultdict(list), defaultdict(list)
+    for ed in editions:
+        if ed['editionId'] in forced_assoc:
+            continue  # pinned by id; don't also match it by title to other works
+        a = ed['_item']
+        if a.get('isbn'):
+            by_isbn[str(a['isbn']).strip()].append(ed)
+        if a.get('asin'):
+            by_asin[str(a['asin']).strip()].append(ed)
+        na = _norm_author(_first_author(a))
+        t = a['title']
+        by_ta[(_norm(t), na)].append(ed)
+        by_ta_sub[(_norm(t.split(':')[0]), na)].append(ed)
+        ks = _norm(_strip_edition(_strip_part(t.split(':')[0])))
+        if ks:
+            by_ta_strip[(ks, na)].append(ed)
+
+    consumed = set()
+
+    def collect(c):
+        found, seen = [], set()
+        def add(ed):
+            if ed['editionId'] not in consumed and ed['editionId'] not in seen:
+                seen.add(ed['editionId'])
+                found.append(ed)
+        cid = str(c['id'])
+        for ed in editions:
+            if forced_assoc.get(ed['editionId']) == cid:
+                add(ed)
+        if c.get('isbn'):
+            for ed in by_isbn.get(str(c['isbn']).strip(), []):
+                add(ed)
+        if c.get('asin'):
+            for ed in by_asin.get(str(c['asin']).strip(), []):
+                add(ed)
+        na = _norm_author(_first_author(c))
+        for ed in by_ta.get((_norm(c['title']), na), []):
+            add(ed)
+        for ed in by_ta_sub.get((_norm(c['title'].split(':')[0]), na), []):
+            add(ed)
+        ks = _norm(_strip_edition(c['title'].split(':')[0]))
+        if ks:
+            for ed in by_ta_strip.get((ks, na), []):
+                add(ed)
+        # Standard audiobook before dramatized; stable otherwise.
+        found.sort(key=lambda e: 0 if e['kind'] == 'audiobook' else 1)
+        return found
+
+    merged = []
+    for c in calibre_items:
+        item = dict(c)
+        item['mediaTypes'] = ['ebook']
+        found = collect(c)
+        if found:
+            for ed in found:
+                consumed.add(ed['editionId'])
+            primary = found[0]
+            item['mediaTypes'] = ['ebook', 'audiobook']
+            item['audioEditions'] = [_public_edition(ed) for ed in found]
+            item['absId'] = primary['absId']
+            item['audioCover'] = primary.get('cover')
+            item['narrators'] = primary.get('narrators', [])
+            item['audiobook'] = primary['_item'].get('audiobook')
+        merged.append(item)
+
+    if include_audio_only:
+        for ed in editions:
+            if ed['editionId'] in consumed:
+                continue
+            row = dict(ed['_item'])
+            row['mediaTypes'] = ['audiobook']
+            row['audioEditions'] = [_public_edition(ed)]
+            merged.append(row)
+    return merged
 
 @app.route('/api/books', methods=['GET'])
 def list_books():
@@ -387,6 +858,230 @@ def search_books():
         'offset': offset,
         'limit': limit
     })
+
+# ---------- Audiobooks / unified library (Audiobookshelf) ----------
+# These endpoints are additive: /api/books and /api/search above are
+# unchanged so the existing ebook UI keeps working byte-for-byte. /api/library
+# is the new merged view the audiobook-aware UI will consume; it falls back to
+# the Calibre-only list whenever ABS is off or unreachable (never 500s).
+
+@app.route('/api/audiobooks', methods=['GET'])
+def list_audiobooks():
+    """Debug/inspection route: the raw normalized ABS audiobook list plus the
+    absEnabled flag. Returns absEnabled=false and an empty list when ABS isn't
+    configured, so the frontend can feature-detect without guessing."""
+    items = get_abs_items() if ABS_ENABLED else []
+    return jsonify({
+        'absEnabled': ABS_ENABLED,
+        'audiobooks': items,
+        'total': len(items),
+    })
+
+@app.route('/api/library', methods=['GET'])
+def unified_library():
+    """Merged Calibre + ABS library. Ebook items keep their Calibre id (so all
+    existing progress/highlight/cache keys still resolve); audio-only items use
+    abs:{absId}. Degrades to the exact Calibre-only list when ABS is off or
+    down. Audio-only items are appended only on the first page (offset 0) so
+    they aren't repeated across paginated requests."""
+    limit = request.args.get('limit', type=int)
+    offset = request.args.get('offset', default=0, type=int)
+    query = request.args.get('query')
+
+    books, total = get_calibre_books(limit=limit, offset=offset, query=query)
+
+    abs_items = get_abs_items() if ABS_ENABLED else []
+    if abs_items:
+        # Only append unmatched audio-only items on the first page; a search
+        # query also restricts to the Calibre result set's matches for now.
+        include_audio_only = (offset == 0)
+        merged = match_works(books, abs_items, include_audio_only=include_audio_only)
+    else:
+        merged = books
+
+    return jsonify({
+        'books': merged,
+        'total': total,
+        'offset': offset,
+        'limit': limit,
+        'absEnabled': ABS_ENABLED,
+    })
+
+@app.route('/api/audiobooks/<abs_id>/cover', methods=['GET'])
+def get_audiobook_cover(abs_id):
+    """Proxy an Audiobookshelf item cover. Mirrors /api/books/<id>/cover:
+    same 30-day cache and SVG placeholder fallback, so the frontend can treat
+    audio and ebook covers identically. Returns the placeholder when ABS is
+    off, the item has no cover, or anything errors."""
+    placeholder = '''<svg width="200" height="300" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+            <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" style="stop-color:#f5576c;stop-opacity:1" />
+                <stop offset="100%" style="stop-color:#f093fb;stop-opacity:1" />
+            </linearGradient>
+        </defs>
+        <rect width="200" height="300" fill="url(#grad)"/>
+        <text x="100" y="150" text-anchor="middle" fill="white" font-size="60">🎧</text>
+    </svg>'''
+    if not ABS_ENABLED:
+        return Response(placeholder, mimetype='image/svg+xml')
+    try:
+        url = f'{ABS_URL}/api/items/{abs_id}/cover'
+        response = requests.get(url, headers=_abs_headers(), timeout=10)
+        if response.status_code == 404:
+            return Response(placeholder, mimetype='image/svg+xml')
+        response.raise_for_status()
+        res = Response(response.content,
+                       mimetype=response.headers.get('Content-Type', 'image/jpeg'))
+        res.headers['Cache-Control'] = 'public, max-age=2592000'
+        return res
+    except Exception as e:
+        print(f"⚠️  Error fetching ABS cover {abs_id}: {e}")
+        return Response(placeholder, mimetype='image/svg+xml')
+
+# ---------- Audiobook playback (ABS session proxy) ----------
+# The Flask proxy starts/stops the ABS playback session and hands the client
+# the media URLs. HLS tracks (transcode) are routed back through THIS backend's
+# /api/audiobooks/hls proxy: ABS sends no CORS headers on /hls, so hls.js's XHR
+# from the :8090 WebView would be blocked reading the manifest/segments. Routing
+# them through :8091 (permissive CORS) fixes that and keeps the ABS token
+# server-side. Direct single-file tracks stay as absolute ?token= URLs — a plain
+# <audio> element plays them cross-origin without CORS (no double-hop).
+
+# Default mime set advertised to ABS; presence of these decides DirectPlay vs
+# Transcode. Sending [] forces a single stitched HLS manifest.
+_ABS_MIME_TYPES = ['audio/mpeg', 'audio/mp4', 'audio/aac', 'audio/ogg', 'audio/flac']
+
+def _rewrite_track_urls(session):
+    """Rewrite ABS server-relative contentUrls so the phone can fetch them.
+    HLS (/hls/<sid>/output.m3u8) -> the backend HLS proxy (CORS-clean, token
+    hidden). Direct files (/s/item/.../Part 1.mp3) -> absolute ?token= ABS URL
+    (media element handles cross-origin playback itself)."""
+    base = ABS_PUBLIC_URL or ABS_URL
+    for t in (session.get('audioTracks') or []):
+        p = t.get('contentUrl', '') or ''
+        if not p.startswith('/'):
+            continue
+        if p.startswith('/hls/'):
+            # Strip leading /hls/ and any query (token re-added per-request by
+            # the proxy). Relative segment names in the manifest then resolve
+            # back to the proxy automatically — no body rewriting needed.
+            sub = p[len('/hls/'):].split('?', 1)[0]
+            t['contentUrl'] = f"http://{PUBLIC_HOST}/api/audiobooks/hls/{sub}"
+        else:
+            sep = '&' if '?' in p else '?'
+            t['contentUrl'] = f"{base}{p}{sep}token={ABS_TOKEN}"
+    return session
+
+@app.route('/api/audiobooks/<abs_id>/play', methods=['POST'])
+def play_audiobook(abs_id):
+    """Start an ABS playback session for an item and return it with track URLs
+    rewritten to absolute token-bearing URLs. Multi-file guard: a DirectPlay
+    (playMethod 0) split across >1 file is painful to stitch client-side, so we
+    close it and re-request with supportedMimeTypes:[] to force one HLS manifest.
+    Read playMethod (0=DirectPlay,1=DirectStream,2=Transcode), currentTime
+    (resume point), duration, chapters, and audioTracks on the client."""
+    if not ABS_ENABLED:
+        return jsonify({'error': 'Audiobooks not available'}), 503
+    client = request.get_json(silent=True) or {}
+    body = {
+        'deviceInfo': {'clientName': 'GreatReads', 'clientVersion': _read_version()},
+        'supportedMimeTypes': client.get('supportedMimeTypes', _ABS_MIME_TYPES),
+        'mediaPlayer': 'html5',
+    }
+    session = _abs_post(f'/api/items/{abs_id}/play', body)
+    if not session:
+        return jsonify({'error': 'Could not start playback session'}), 502
+
+    tracks = session.get('audioTracks') or []
+    if session.get('playMethod') == 0 and len(tracks) > 1:
+        sid = session.get('id')
+        if sid:
+            _abs_post(f'/api/session/{sid}/close', {})
+        forced = _abs_post(f'/api/items/{abs_id}/play',
+                           {**body, 'supportedMimeTypes': []})
+        if forced:
+            session = forced
+
+    return jsonify(_rewrite_track_urls(session))
+
+@app.route('/api/audiobooks/sessions/<sid>/sync', methods=['POST'])
+def sync_audiobook_session(sid):
+    """Forward a playback sync to ABS (POST /api/session/<sid>/sync). Body:
+    {currentTime, timeListened (seconds since the PREVIOUS sync — a delta, not
+    cumulative), duration}. Keeps ABS progress + multi-device websocket events
+    up to date. Call ~every 15s while playing."""
+    if not ABS_ENABLED:
+        return jsonify({'error': 'Audiobooks not available'}), 503
+    body = request.get_json(silent=True) or {}
+    payload = {
+        'currentTime': body.get('currentTime', 0),
+        'timeListened': body.get('timeListened', 0),
+        'duration': body.get('duration', 0),
+    }
+    res = _abs_post(f'/api/session/{sid}/sync', payload)
+    if res is None:
+        return jsonify({'error': 'sync failed'}), 502
+    return jsonify(res or {'ok': True})
+
+@app.route('/api/audiobooks/sessions/<sid>/close', methods=['POST'])
+def close_audiobook_session(sid):
+    """Close an ABS playback session (POST /api/session/<sid>/close). Optional
+    body is forwarded as a final sync. Best-effort: always returns ok so the
+    client's beforeunload/sendBeacon path never blocks."""
+    if not ABS_ENABLED:
+        return jsonify({'error': 'Audiobooks not available'}), 503
+    body = request.get_json(silent=True) or {}
+    _abs_post(f'/api/session/{sid}/close', body or {})
+    return jsonify({'ok': True})
+
+@app.route('/api/audiobooks/hls/<path:subpath>', methods=['GET'])
+def proxy_hls(subpath):
+    """Proxy ABS HLS manifests + segments through this backend so the WebView
+    (served from :8090) can fetch them without CORS errors — ABS sends no
+    Access-Control-Allow-Origin on /hls — and without ever seeing the ABS token.
+    The manifest's segment names are relative (output-0.ts), so they resolve
+    back to this route automatically; no body rewriting needed. The token is
+    re-attached server-side on every upstream fetch."""
+    if not ABS_ENABLED:
+        return Response('', status=503)
+    params = dict(request.args)
+    params['token'] = ABS_TOKEN
+    # ABS transcodes segments on demand, so a freshly-requested .ts (especially
+    # right after a seek) 404s until ffmpeg reaches it. Retry briefly before
+    # giving up; the manifest itself is always ready immediately.
+    is_seg = subpath.endswith('.ts')
+    attempts = 12 if is_seg else 1
+    r = None
+    for i in range(attempts):
+        try:
+            r = requests.get(f'{ABS_URL}/hls/{subpath}', headers=_abs_headers(),
+                             params=params, timeout=30, stream=True)
+        except Exception as e:
+            print(f"⚠️  ABS HLS proxy {subpath} failed: {e}")
+            return Response('', status=502)
+        if r.status_code == 404 and is_seg and i < attempts - 1:
+            r.close()
+            time.sleep(0.5)
+            continue
+        break
+    if r.status_code >= 400:
+        # Pass the upstream status through so hls.js can retry on its side too.
+        r.close()
+        return Response('', status=r.status_code)
+    ct = r.headers.get('Content-Type', '')
+    if subpath.endswith('.m3u8') or 'mpegurl' in ct.lower():
+        res = Response(r.content, mimetype='application/vnd.apple.mpegurl')
+        res.headers['Cache-Control'] = 'no-cache'
+        return res
+    # Stream segment bytes (chunked) so we don't buffer whole .ts files.
+    def _gen():
+        for chunk in r.iter_content(chunk_size=65536):
+            if chunk:
+                yield chunk
+    res = Response(_gen(), mimetype=ct or 'video/mp2t')
+    res.headers['Cache-Control'] = 'no-cache'
+    return res
 
 # ---------- Highlights & Bookmarks ----------
 # Single endpoint family handles both. An item is:
@@ -518,6 +1213,12 @@ def update_highlight(item_id):
 #     updated: epoch_ms }
 # Anchor is the data-anchor index from reader.html — pins the exact source-DOM
 # block so the position survives font-size / unfold re-pagination.
+#
+# Audiobook records (keyed by "abs:<absId>") reuse the same store but add
+# audio-specific fields so the player can resume to the second and the library
+# can show audiobooks in "Continue reading" alongside ebooks:
+#   { mediaType: 'audiobook', position: float (seconds), duration: float (seconds),
+#     absId: str, progress: 0..1, ... }
 
 @app.route('/api/progress', methods=['GET'])
 def list_progress():
@@ -565,6 +1266,17 @@ def put_progress(book_id):
         'recentPages': recent,
         'updated':     int(time.time() * 1000),
     }
+    # Audiobook resume state — only persisted when the client sends it (the
+    # audiobook player). Ebook progress PUTs omit these and they stay absent,
+    # so this is fully backward compatible.
+    if body.get('mediaType'):
+        item['mediaType'] = body.get('mediaType')
+    if body.get('position') is not None:
+        item['position'] = body.get('position')
+    if body.get('duration') is not None:
+        item['duration'] = body.get('duration')
+    if body.get('absId'):
+        item['absId'] = body.get('absId')
     with _progress_lock:
         data = _load_progress()
         data[str(book_id)] = item

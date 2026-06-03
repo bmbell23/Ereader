@@ -44,9 +44,11 @@ description: Ereader agent guidelines — extends shared server guidelines
   - Calibre upstream: `$CALIBRE_URL` (default `http://localhost:8083`), library `$CALIBRE_LIBRARY`
   - Run via `backend/run.sh` (creates venv, installs requirements, starts on 0.0.0.0:8091)
   - PID file: `server.pid`, logs: `backend/server.log`
+  - **Audiobookshelf (ABS)**: optional second source for audiobooks. `$ABS_URL` (default `http://localhost:13378`, the local `audiobookshelf` container → :80), `$ABS_TOKEN` (per-user API token), `$ABS_LIBRARY_ID` (optional; first `book` library if blank). `$ABS_PUBLIC_URL` (optional; the host the **phone** uses to fetch HLS/media directly — defaults to `$ABS_URL` with a `localhost`/`127.0.0.1` host swapped for the Tailscale IP `100.69.184.113`, since the WebView can't reach the server's localhost). Credentials live in `backend/abs.env` (gitignored; template `backend/abs.env.example`), sourced by `run.sh`. `ABS_ENABLED = bool(ABS_URL and ABS_TOKEN)` — when off, every ABS path no-ops and the library degrades to Calibre-only (never 500s). Read-only.
 - **Web reader**: static files in `web/` served on port **8090** (separate process)
-  - `web/index.html` — library browser (~1240 lines)
+  - `web/index.html` — library browser (~1240 lines). Consumes `/api/library` (Calibre+ABS merged); cards show 📖/🎧 media-type badges (audio-only → 🎧, dual → 📖🎧, ebook-only → none). Tap routing: ebook-only → reader, audio-only → player, dual → Read/Listen action sheet.
   - `web/reader.html` — PDF + EPUB reader (~4450 lines, consumed in-app via WebView)
+  - `web/player.html` + `web/player.js` — audiobook player (consumed in-app via WebView). Opened as `player.html?absId=&title=&author=` (dual-format works also pass `&bookId=&format=&hasEbook=1` so the player can open the ebook). Loads hls.js from CDN; starts an ABS session via the backend play route, plays HLS (transcode) or direct single-file. UI uses the brand (bi-pride) gradient `#4067EF→#8640C0→#C940B0`; large cover; PNG play/pause button (`web/play.png` / `web/pause.png`, inverted to white over the gradient). Two seekable progress bars (book + chapter), each showing elapsed / remaining + percent — **remaining is wall-clock time at the current speed** (`remaining_content / rate`). Speed is a slider 1.0×–3.0× in 0.1 steps, shown in a pill and **persisted in `localStorage['ereader.audio.speed']`** so it propagates across books (re-applied on each media load). Resume position is persisted to OUR backend (`PUT /api/progress/abs:<absId>`) every ~15s sync + on close, and read back on open — independent of ABS's own session currentTime. When `hasEbook`, a 🔍 button opens `reader.html` in a same-origin iframe overlay and calls its `openSearch()`; audio keeps playing while reading/searching; the player's ‹ back button closes the session (stops audio). Also: ±30s, prev/next chapter, chapter drawer, Media Session lock-screen controls.
   - `web/requests.html` + `web/requests.js` — in-app feature-request / TODO list ("📋 Requests" hamburger entry). See "Requests Workflow" below.
   - `web/about.html` + `web/about.js` — in-app About page ("ℹ️ About" hamburger entry). Documents the reading-speed algorithm and shows live `/api/version` + `/api/build-stamp`.
   - `web/serve.py` — preferred static server (no-cache headers, correct `.apk` MIME, permissive CORS). Use this over `python3 -m http.server` so the WebView never serves stale HTML.
@@ -74,10 +76,18 @@ All endpoints are JSON unless noted. CORS is permissive.
 
 - **Books (Calibre proxy)**
   - `GET  /api/books?limit&offset&query` — list books (sorted by author last name, then series, then pubdate)
-  - `GET  /api/books/<id>` — single book metadata; includes `wordCount` from the Calibre `#word_count` custom column (null when unset)
+  - `GET  /api/books/<id>` — single book metadata; includes `wordCount` from the Calibre `#word_count` custom column (null when unset) and `asin` from the optional `#asin` custom column (`''` when unset; used for ABS matching)
   - `GET  /api/books/<id>/cover?type=cover|thumb` — proxied image (30-day cache, SVG placeholder fallback)
   - `GET  /api/books/<id>/download?format=epub|pdf|...` — streams the file from Calibre
   - `GET  /api/search?q&limit&offset` — same as `/api/books` with a query
+- **Audiobooks / unified library (Audiobookshelf)** — additive; `/api/books` + `/api/search` are unchanged. All degrade to Calibre-only / empty when ABS is off.
+  - `GET  /api/library?limit&offset&query` — merged Calibre + ABS list. Ebook items keep their **Calibre numeric id** (so progress/highlight/cache keys still resolve); audio-only items use **`abs:{absId}`**. Each item gets `mediaTypes` (`['ebook']` / `['ebook','audiobook']` / `['audiobook']`); matched items also carry `absId`, `audioCover`, `narrators`, `audiobook{duration,chapters}`. Audio-only items are appended only on `offset==0`. Returns `absEnabled`. Match order per work: manual `links.json` → ISBN → ASIN → normalized title+first-author, with two fallbacks: subtitle-stripped, then edition-marker-stripped (drops `(Unabridged)`/`(Dramatized…)`/`(Part N of M)`/`[…]`/leading `03 - ` track numbers; first author is comma-split so ABS co-author strings reduce to the lead). All title tiers are author-gated, so the strips stay false-positive-free.
+  - `GET  /api/audiobooks` — debug: raw normalized ABS list + `absEnabled` flag
+  - `GET  /api/audiobooks/<absId>/cover?type=cover|thumb` — proxies ABS `/api/items/{id}/cover` (30-day cache, 🎧 SVG placeholder fallback)
+  - `POST /api/audiobooks/<absId>/play` — starts an ABS playback session (`POST /api/items/{id}/play`) and returns it with each `audioTracks[].contentUrl` rewritten. **HLS** tracks (`/hls/<sid>/output.m3u8`) point at the backend HLS proxy below (no token); **direct** single-file tracks point at an absolute `?token=` URL on `$ABS_PUBLIC_URL` (a plain `<audio>` element plays those cross-origin without CORS). Read `playMethod` (0=DirectPlay,1=DirectStream,2=Transcode), `currentTime` (resume point), `duration`, `chapters`, `audioTracks`. **Multi-file guard:** a DirectPlay split across >1 file is closed and re-requested with `supportedMimeTypes:[]` to force one stitched HLS manifest. 503 when ABS off.
+  - `GET  /api/audiobooks/hls/<path:subpath>` — proxies the ABS HLS manifest + `.ts` segments (token re-attached server-side, so it never reaches the phone). Needed because ABS sends no `Access-Control-Allow-Origin` on `/hls`, so hls.js's XHR from the `:8090` WebView would be CORS-blocked; routing through `:8091` (permissive CORS) fixes it. Manifest segment names are relative, so they resolve back to this route — no body rewriting. ABS transcodes segments on demand, so a fresh `.ts` 404s until ffmpeg produces it; the proxy retries (~6s) then passes the upstream status through for hls.js to retry too. Does stream audio bytes (one LAN hop, unavoidable for CORS).
+  - `POST /api/audiobooks/sessions/<sid>/sync` — forwards to ABS `POST /api/session/<sid>/sync`. Body `{currentTime, timeListened (delta seconds since the previous sync, NOT cumulative), duration}`. Call ~every 15s while playing.
+  - `POST /api/audiobooks/sessions/<sid>/close` — forwards to ABS `POST /api/session/<sid>/close`; optional body forwarded as a final sync. Always returns `{ok:true}` (best-effort; client calls it via `sendBeacon` on navigate-away).
 - **Highlights & bookmarks** (see "Highlight Model" below)
   - `GET    /api/highlights?bookId&type&q` — filtered list, newest first
   - `POST   /api/highlights` — create (server fills `id` + `created`)
@@ -105,7 +115,9 @@ All endpoints are JSON unless noted. CORS is permissive.
   - `highlights.json` — list of highlight/bookmark items (lock: `_highlights_lock`)
   - `progress.json` — `{ "<bookId>": {progress record}, ... }` (lock: `_progress_lock`)
   - `requests.json` — list of feature-request items (lock: `_requests_lock`). Seeded from `REQUESTS_SEED` in `server.py` on first run if the file doesn't exist.
+  - `links.json` — optional manual audiobook↔ebook overrides for matches auto-matching misses (lock: `_links_lock`). Shape: `{ "<calibre_id>": "<abs_id>", ... }`. Read-only in Phase 1; absent file means no overrides.
 - `backend/data/` is `.gitignore`d — these are runtime state, not source. Don't re-add them to the repo.
+- ABS credentials live in `backend/abs.env` (gitignored; template `backend/abs.env.example`) — never commit the token.
 - Atomic writes via `tmp + os.replace`. Trivial to back up; trivial to grep.
 - **Read-only access to the Calibre library is the rule** — never write back to Calibre from this project.
 
@@ -178,6 +190,8 @@ The reader re-renders highlights every time it paginates; never trust `page` to 
 
 Progress records (`/api/progress/<bookId>`) use the same `anchor` field plus a `progress` float (0..1) and a `fontSize` so the next device opens at the same place at the same size. They also carry `recentPages` — a rolling buffer (max 30) of `{ms: int, words: int}` samples capturing how long the user spent on recent pages and the per-page word count at that moment. The reader uses this to compute WPM / WPP / time-remaining in the bottom-bar metrics row. Two-stage outlier filter: (1) at insert time, samples outside `[readingMinSec, readingMaxSec]` (default 10s..120s, settable in the main Settings overlay → keys `ereader.settings.readingMinSec` / `ereader.settings.readingMaxSec`) are dropped as accidental swipes / phone-down time; (2) at compute time, a MAD-based modified-z-score filter (Iglewicz & Hoaglin, `|0.6745·(x−median)/MAD| > 3.5`) drops contextual outliers (epigraph / chapter-end pages) — applied to ms-per-word when a word count is available, raw ms otherwise, gated by `outlierMinSamples` (5) so tiny buffers don't trigger it. EPUB only — PDFs don't populate this. The full algorithm is also documented in `web/about.js` (user-facing).
 
+Audiobook progress records use the same `/api/progress/<bookId>` endpoint with `bookId = "abs:<absId>"`. Extra fields: `mediaType` (`"audiobook"`), `absId` (raw ABS id without the `abs:` prefix), `position` (seconds, float), `duration` (seconds, float). The `progress` float is derived as `position / duration`. These records surface in the library "recently read" sort (`audioProgressByAbsId` map in `index.html`) and drive the cover progress bar for audio-only and dual-format rows.
+
 ## Calibre Integration
 
 - Source of truth: a Calibre Content Server (NOT the Calibre DB directly)
@@ -195,6 +209,15 @@ cd /home/brandon/projects/Ereader/backend && ./run.sh &
 ```
 
 For the static web server (port 8090), check `ps aux | grep 8090` for the actual command — varies (often `python3 -m http.server 8090 --directory web`).
+
+## Testing
+
+- `backend/run-tests.sh` runs the whole suite (stdlib `unittest`, no extra deps; uses the existing `venv`). `./run-tests.sh test_matching` runs one module. Modules live in `backend/tests/`:
+  - `test_matching.py` — offline unit tests of `_norm`/`_norm_author`/`_strip_edition`/`_first_author`/`match_works` (imports `server.py`, synthetic data, no network).
+  - `test_services.py` — reachability of backend :8091, static :8090, Calibre, and ABS (FAIL, not skip, when down; ABS group skips if `absEnabled` is false).
+  - `test_api.py` — every `/api` read route + self-cleaning CRUD round-trips for highlights/progress/requests.
+  - `test_audiobooks.py` — play→sync→close lifecycle and the HLS proxy chain (manifest + `.ts` via the backend, asserts CORS `*` and that track URLs never point at raw ABS :13378). Skipped when ABS is off.
+- HTTP tests hit the **running** services — start the backend + static server first. The old `backend/test-server.sh` is stale (hardcodes the wrong port 5000); prefer `run-tests.sh`.
 
 ## Hot-reloading the web reader
 
