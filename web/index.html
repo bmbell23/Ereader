@@ -1067,15 +1067,18 @@
         async function loadCover(img) {
             if (img.dataset.loading) return;
             img.dataset.loading = "true";
-            const bookId = img.closest('.book').dataset.bookId;
             const originalUrl = img.dataset.src;
+            if (!originalUrl) return;
+            // Cache key is the cover URL itself, so the small grid thumbnail and
+            // any full-size cover are stored as separate entries (variant-aware).
+            const cacheKey = originalUrl;
             if (!db) { img.src = originalUrl; return; }
 
             try {
                 const tx = db.transaction(['covers'], 'readonly');
                 const store = tx.objectStore('covers');
                 const cached = await new Promise((resolve) => {
-                    const req = store.get(bookId);
+                    const req = store.get(cacheKey);
                     req.onsuccess = () => resolve(req.result);
                     req.onerror = () => resolve(null);
                 });
@@ -1091,12 +1094,30 @@
                 const blob = await res.blob();
 
                 const saveTx = db.transaction(['covers'], 'readwrite');
-                saveTx.objectStore('covers').put({ id: bookId, blob });
+                saveTx.objectStore('covers').put({ id: cacheKey, blob });
 
                 img.src = URL.createObjectURL(blob);
             } catch (e) {
                 img.src = originalUrl;
             }
+        }
+
+        // Lazy cover loading: only fetch a cover once its card nears the
+        // viewport, so a freshly-rendered batch (BATCH_SIZE cards) doesn't fire
+        // dozens of requests at once. One shared observer; replaced cards are
+        // GC'd with their observations, so no manual cleanup is needed.
+        let _coverObserver = null;
+        function _lazyLoadCovers(root) {
+            const imgs = (root || document).querySelectorAll('.book-cover[data-src]');
+            if (!('IntersectionObserver' in window)) { imgs.forEach(loadCover); return; }
+            if (!_coverObserver) {
+                _coverObserver = new IntersectionObserver((entries, obs) => {
+                    entries.forEach(e => {
+                        if (e.isIntersecting) { obs.unobserve(e.target); loadCover(e.target); }
+                    });
+                }, { rootMargin: '300px' });
+            }
+            imgs.forEach(img => _coverObserver.observe(img));
         }
 
         // SVG format badges, shared by the grid and the series detail view.
@@ -1108,7 +1129,9 @@
         function bookCardHTML(book, opts) {
             opts = opts || {};
             const format = ((book.formats || [])[0] || 'epub').toLowerCase();
-            const coverUrl = book.cover || book.thumbnail;
+            // Grid uses the lightweight thumbnail; the full cover is reserved
+            // for the reader/player where it's shown large.
+            const coverUrl = book.thumbnail || book.cover;
             const state = readingStateFor(book.id);
             const readPct = state && state.progress != null
                 ? Math.round(((state.page + 1) / state.total) * 100) : 0;
@@ -1181,8 +1204,8 @@
             content.innerHTML = '<div class="books">' + booksHTML + '</div>' +
                 (!isComplete ? '<div class="loading-more">Loading more...</div>' : '');
 
-            // Trigger cover loading from cache/network
-            document.querySelectorAll('.book-cover[data-src]').forEach(loadCover);
+            // Trigger cover loading lazily as cards scroll into view.
+            _lazyLoadCovers();
 
             // Attach an IntersectionObserver to the sentinel so the next batch
             // loads the moment it scrolls into view — works on desktop and mobile
@@ -1206,7 +1229,7 @@
                      data-series="${escapeHTML(s.name)}"
                      onclick="openSeriesDetail(this.dataset.series)">
                     <div class="book-cover-wrap">
-                        <img data-src="${first.cover || first.thumbnail || ''}" class="book-cover"
+                        <img data-src="${first.thumbnail || first.cover || ''}" class="book-cover"
                              src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
                              onerror="this.style.background='linear-gradient(135deg, #667eea 0%, #764ba2 100%)'">
                         <div class="series-count">${s.count}</div>
@@ -1232,7 +1255,7 @@
                 return;
             }
             content.innerHTML = '<div class="books">' + list.map(seriesCardHTML).join('') + '</div>';
-            document.querySelectorAll('.book-cover[data-src]').forEach(loadCover);
+            _lazyLoadCovers();
         }
         async function loadSeries() {
             seriesLoading = true;
@@ -1270,7 +1293,7 @@
             document.getElementById('series-detail-list').innerHTML =
                 '<div class="books">' + books.map(b => bookCardHTML(b, {showSeriesNum: true})).join('') + '</div>';
             document.getElementById('series-overlay').classList.add('open');
-            document.querySelectorAll('#series-detail-list .book-cover[data-src]').forEach(loadCover);
+            _lazyLoadCovers(document.getElementById('series-detail-list'));
         }
         function closeSeriesDetail() {
             document.getElementById('series-overlay').classList.remove('open');
@@ -1446,7 +1469,7 @@
                 refreshCachedIds();
                 // If books were already rendered before DB was ready,
                 // trigger cover loading now.
-                document.querySelectorAll('.book-cover[data-src]').forEach(loadCover);
+                _lazyLoadCovers();
             };
         }
 

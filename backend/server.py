@@ -930,7 +930,11 @@ def get_book_cover(book_id):
 
     try:
         url = f'{CALIBRE_URL}/get/{cover_type}/{book_id}/{CALIBRE_LIBRARY}'
-        response = requests.get(url, timeout=10)
+        # Calibre's default thumb is a useless 60x80; ask for a grid-sized one
+        # (scaled to fit the box, preserving aspect). Calibre caches the result
+        # on its own disk, so repeat requests are cheap.
+        params = {'sz': '400x600'} if cover_type == 'thumb' else None
+        response = requests.get(url, params=params, timeout=10)
 
         if response.status_code == 404:
             # Return a placeholder SVG if no cover
@@ -1177,6 +1181,7 @@ def get_audiobook_cover(abs_id):
     same 30-day cache and SVG placeholder fallback, so the frontend can treat
     audio and ebook covers identically. Returns the placeholder when ABS is
     off, the item has no cover, or anything errors."""
+    cover_type = request.args.get('type', 'cover')  # 'cover' or 'thumb'
     placeholder = '''<svg width="200" height="300" xmlns="http://www.w3.org/2000/svg">
         <defs>
             <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -1191,7 +1196,10 @@ def get_audiobook_cover(abs_id):
         return Response(placeholder, mimetype='image/svg+xml')
     try:
         url = f'{ABS_URL}/api/items/{abs_id}/cover'
-        response = requests.get(url, headers=_abs_headers(), timeout=10)
+        # ABS resizes server-side when given a width; ignored (full cover) if
+        # unsupported, so this is safe. Keeps the grid payload light.
+        params = {'width': 400} if cover_type == 'thumb' else None
+        response = requests.get(url, headers=_abs_headers(), params=params, timeout=10)
         if response.status_code == 404:
             return Response(placeholder, mimetype='image/svg+xml')
         response.raise_for_status()
