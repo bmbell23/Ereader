@@ -550,10 +550,23 @@ function bookmarkBody(type) {
 async function addBookmark() {
     if (!PROGRESS_KEY) return;
     flashBookmarkAdded();
+    const body = bookmarkBody('bookmark');
+    // Advance reading progress too — but only if this bookmark sits at (or
+    // beyond) the furthest point any existing bookmark reached. A manual
+    // bookmark dropped at an earlier spot (e.g. after scrubbing back) must
+    // not rewind the library's progress bar.
+    try {
+        const existing = await fetchAllBookmarks();
+        const maxPct = existing.reduce((m, n) => Math.max(m, n.percent || 0), 0);
+        if ((body.percent || 0) >= maxPct) {
+            saveReadingState();
+            saveProgress();
+        }
+    } catch (_) {}
     try {
         await fetch(`${API_URL}/highlights`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(bookmarkBody('bookmark')),
+            body: JSON.stringify(body),
         });
     } catch (_) {}
 }
@@ -566,6 +579,10 @@ function startAutoBm() { if (!autoBmTimer) autoBmTimer = setInterval(createAutoB
 function stopAutoBm() { if (autoBmTimer) { clearInterval(autoBmTimer); autoBmTimer = null; } }
 async function createAutoBookmark() {
     if (!PROGRESS_KEY || !bookTotal()) return;
+    // Mirror position to localStorage + backend immediately so the library
+    // shows fresh progress at every auto-bookmark interval (every ~60s).
+    saveReadingState();
+    saveProgress();
     try {
         await fetch(`${API_URL}/highlights`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -603,7 +620,8 @@ async function fetchAllBookmarks() {
             for (const b of (data.items || [])) out.push(normBookmark(b, origin));
         }
     } catch (_) {}
-    out.sort((a, b) => (a.percent || 0) - (b.percent || 0));
+    // Newest / furthest-progress first.
+    out.sort((a, b) => (b.percent || 0) - (a.percent || 0));
     return out;
 }
 
@@ -630,30 +648,51 @@ async function renderBookmarks() {
         list.innerHTML = '<div class="bm-empty">No bookmarks yet.<br>Tap the bookmark button to save your spot.</div>';
         return;
     }
-    const total = bookTotal();
-    for (const n of items) {
-        const row = document.createElement('div');
-        row.className = 'bm-row';
-        const main = document.createElement('div');
-        main.className = 'bm-main';
-        const label = document.createElement('div');
-        label.className = 'bm-label';
-        const kind = n.type === 'auto-bookmark' ? '⏱ ' : '🔖 ';
-        label.textContent = kind + (n.chapter || n.text || 'Bookmark');
-        const sub = document.createElement('div');
-        sub.className = 'bm-sub';
-        const pctTxt = Math.round((n.percent || 0) * 100) + '%';
-        const timeTxt = (n.origin === 'audio' && n.pos != null) ? fmt(n.pos)
-                        : fmt((n.percent || 0) * total);
-        sub.textContent = (n.origin === 'ebook' ? '📖 ' : '🎧 ') + pctTxt + ' · ' + timeTxt;
-        main.appendChild(label); main.appendChild(sub);
-        const del = document.createElement('button');
-        del.className = 'bm-del'; del.textContent = '×'; del.title = 'Delete';
-        del.addEventListener('click', (e) => { e.stopPropagation(); deleteBookmark(n.id); });
-        row.appendChild(main); row.appendChild(del);
-        row.addEventListener('click', () => seekToBookmark(n));
-        list.appendChild(row);
+    // Same format badge SVGs as the book-cover badges in index.html, scaled to 13 px.
+    const ICON_EBOOK = '<svg width="13" height="13" viewBox="0 0 11 11" xmlns="http://www.w3.org/2000/svg"><rect width="11" height="11" rx="2" fill="#0066CC"/><rect x="2" y="2.5" width="7" height="1.2" rx="0.6" fill="white"/><rect x="2" y="4.9" width="7" height="1.2" rx="0.6" fill="white"/><rect x="2" y="7.3" width="5" height="1.2" rx="0.6" fill="white"/></svg>';
+    const ICON_AUDIO = '<svg width="13" height="13" viewBox="0 0 11 11" xmlns="http://www.w3.org/2000/svg"><rect width="11" height="11" rx="2" fill="#FF6600"/><path d="M1.8 7 A3.7 4.5 0 0 1 9.2 7" stroke="white" stroke-width="1.3" fill="none" stroke-linecap="round"/><rect x="1.2" y="6.5" width="1.5" height="3" rx="0.5" fill="white"/><rect x="8.3" y="6.5" width="1.5" height="3" rx="0.5" fill="white"/></svg>';
+    // Manual bookmarks: white icon. Auto-saved: brand-gradient tint.
+    const BM_ICON_MANUAL = '<img src="assets/bookmark.png" style="width:13px;height:13px;filter:invert(1);vertical-align:middle;margin-right:5px;" aria-hidden="true">';
+    const BM_ICON_AUTO   = '<img src="assets/bookmark.png" style="width:13px;height:13px;filter:invert(1) sepia(1) saturate(5) hue-rotate(240deg);vertical-align:middle;margin-right:5px;" aria-hidden="true">';
+
+    const manual = items.filter(n => n.type !== 'auto-bookmark');
+    const auto   = items.filter(n => n.type === 'auto-bookmark');
+
+    function renderSection(sectionItems, sectionLabel, bmIcon) {
+        if (!sectionItems.length) return;
+        const hdr = document.createElement('div');
+        hdr.className = 'bm-sec';
+        hdr.textContent = sectionLabel;
+        list.appendChild(hdr);
+        const total = bookTotal();
+        for (const n of sectionItems) {
+            const row = document.createElement('div');
+            row.className = 'bm-row';
+            const main = document.createElement('div');
+            main.className = 'bm-main';
+            const label = document.createElement('div');
+            label.className = 'bm-label';
+            const txt = (n.chapter || n.text || 'Bookmark').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            label.innerHTML = bmIcon + txt;
+            const sub = document.createElement('div');
+            sub.className = 'bm-sub';
+            const pctTxt = Math.round((n.percent || 0) * 100) + '%';
+            const timeTxt = (n.origin === 'audio' && n.pos != null) ? fmt(n.pos)
+                            : fmt((n.percent || 0) * total);
+            const originIcon = n.origin === 'ebook' ? ICON_EBOOK : ICON_AUDIO;
+            sub.innerHTML = originIcon + ' ' + pctTxt + ' · ' + timeTxt;
+            main.appendChild(label); main.appendChild(sub);
+            const del = document.createElement('button');
+            del.className = 'bm-del'; del.textContent = '×'; del.title = 'Delete';
+            del.addEventListener('click', (e) => { e.stopPropagation(); deleteBookmark(n.id); });
+            row.appendChild(main); row.appendChild(del);
+            row.addEventListener('click', () => seekToBookmark(n));
+            list.appendChild(row);
+        }
     }
+
+    renderSection(manual, 'Bookmarks', BM_ICON_MANUAL);
+    renderSection(auto,   'Auto-saved', BM_ICON_AUTO);
 }
 
 function openBookmarks() { $('bm-backdrop').classList.add('open'); renderBookmarks(); }
