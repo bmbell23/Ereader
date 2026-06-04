@@ -1012,16 +1012,10 @@
         function applySort(list) {
             const arr = list.slice();
             if (sortMode === 'title') {
-                // Recently-read books float to the top (newest first); the rest
-                // sort alphabetically. Mirrors the author-sort behaviour where
-                // ensureProgressBooksLoaded() prepends in-progress books naturally.
-                arr.sort((a, b) => {
-                    const ta = recentTsFor(a), tb = recentTsFor(b);
-                    if (ta > 0 && tb > 0) return tb - ta;
-                    if (ta > 0) return -1;
-                    if (tb > 0) return 1;
-                    return (a.title || '').localeCompare(b.title || '');
-                });
+                // Pure A→Z by title. "Author" sort already surfaces recently-read
+                // books at the top via ensureProgressBooksLoaded(); Title sort is
+                // intended to be a clean alphabetical view, so no timestamp floating.
+                arr.sort((a, b) => (a.title || '').localeCompare(b.title || ''));
             }
             // 'author' is the backend's natural order + prepended progress books;
             // leave as-is so the natural sort is preserved.
@@ -1077,11 +1071,17 @@
 
                 // Prepend the new ones so they're visible at the top of the
                 // grid immediately; applySort will then order them correctly.
+                // Re-derive the dedup set from the CURRENT homeBooks: loadBooks()
+                // may have appended a page (containing some of these same
+                // in-progress books) while our metadata fetches were in flight.
+                // The stale `have` (snapshotted before those fetches) would
+                // double-insert them — the duplicate-card bug under Title sort.
+                const current = new Set(homeBooks.map(b => String(b.id)));
                 const merged = [];
                 for (const b of fetched) {
-                    if (b && !have.has(String(b.id))) {
+                    if (b && !current.has(String(b.id))) {
                         merged.push(b);
-                        have.add(String(b.id));
+                        current.add(String(b.id));
                         mergedProgressIds.add(String(b.id));
                     }
                 }
@@ -1228,7 +1228,18 @@
                 return;
             }
 
-            const sorted = applySort(applyFilter(books));
+            // Defensive: collapse duplicate ids before rendering. A startup race
+            // between loadBooks() and ensureProgressBooksLoaded() can leave the
+            // same in-progress book in the array twice; keep the first occurrence
+            // so prepended (recently-read) books stay on top.
+            const seen = new Set();
+            const deduped = books.filter(b => {
+                const k = String(b.id);
+                if (seen.has(k)) return false;
+                seen.add(k);
+                return true;
+            });
+            const sorted = applySort(applyFilter(deduped));
             const booksHTML = sorted.map(b => bookCardHTML(b)).join('');
 
             content.innerHTML = '<div class="books">' + booksHTML + '</div>' +

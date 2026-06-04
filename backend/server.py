@@ -581,6 +581,28 @@ def _get_library_cache():
         # Cache miss: fetch everything and run the full merge once.
         all_books, _ = get_calibre_books(limit=0, offset=0)
         abs_items = get_abs_items() if ABS_ENABLED else []
+
+        # Resilience: a transient ABS outage makes get_abs_items() return [],
+        # which would otherwise rebuild an audio-stripped cache and pin it for
+        # the full TTL — every dual-format work would flip to ebook-only and a
+        # matched audiobook could resurface as a separate card. If ABS is
+        # enabled, came back empty, and the PREVIOUS build had audio data, keep
+        # serving that last-good merge and retry again soon instead of poisoning
+        # the cache. (A cold start with ABS down still builds ebook-only — there
+        # is nothing better to serve — and self-heals on the next rebuild.)
+        prev = _library_cache['enrich_map']
+        prev_had_audio = prev is not None and (
+            bool(_library_cache['audio_only'])
+            or any('audiobook' in (m.get('mediaTypes') or [])
+                   for m in prev.values()))
+        if ABS_ENABLED and not abs_items and prev_had_audio:
+            print("⚠️  ABS returned 0 items — retaining previous library cache "
+                  "(transient outage); will retry shortly")
+            # Nudge ts so the next call retries in ~15s rather than waiting out
+            # the full TTL, but don't hammer ABS on every single request.
+            _library_cache['ts'] = now - _LIBRARY_CACHE_TTL + 15
+            return _library_cache['enrich_map'], _library_cache['audio_only']
+
         if abs_items:
             merged = match_works(all_books, abs_items, include_audio_only=True)
         else:
