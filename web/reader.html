@@ -174,18 +174,22 @@
         #epub-content .epub-chapter-sep {
             break-before: column;
         }
-        /* Spacer injected in dual-page mode before a chapter that would
-           naturally land on a right-hand page (odd page index). Pushes the
-           chapter to the next left page so chapter starts always appear on a
-           fresh dual-page spread. Hidden in single-page mode. */
+        /* Spacer injected before every chapter start (h1 and per-file spine
+           items). Inert by default; activated (.active) only in dual-page mode
+           and only for chapters that would otherwise land on the right-hand
+           column of a spread. An active spacer consumes one blank column,
+           pushing its chapter to the left column of the next spread so chapter
+           starts always open a fresh spread. Activation is computed in
+           applyDualPageChapterBreaks() after layout is measured. */
         #epub-content .dual-page-chapter-spacer {
             display: none;
             height: 0;
-            break-before: column;
         }
-        body.dual-page #epub-content .dual-page-chapter-spacer {
+        #epub-content .dual-page-chapter-spacer.active {
             display: block;
             height: 0;
+            break-before: column;
+            -webkit-column-break-before: always;
         }
         /* Per-spine-item wrapper. Carries data-spine-href so the TOC can
            resolve hrefs (which are scoped per-file in nav.xhtml / toc.ncx)
@@ -1648,12 +1652,23 @@
                 }
             });
 
-            // Insert dual-page chapter spacers before all h1 elements (except
-            // spine-first headings). In single-page mode these are display:none.
-            // In dual-page mode, they ensure each chapter starts on a fresh
-            // left page of a spread by forcing a column break. This may create
-            // a blank right page at the end of the previous chapter, which is
-            // acceptable to prevent mixing chapter boundaries on one spread.
+            // Insert an (inert) dual-page chapter spacer before every chapter
+            // start, so applyDualPageChapterBreaks() can later activate just the
+            // ones that need pushing onto a fresh spread. Two kinds of chapter
+            // start get a spacer:
+            //   1. Each non-first per-file spine-item wrapper (the common
+            //      chapter-per-file case — these break to a new column via
+            //      .epub-spine-item, but that column may be the right half of a
+            //      spread in dual-page mode).
+            //   2. Each within-file h1 that isn't a spine-first heading.
+            // The spacers stay display:none until activated, so single-page mode
+            // and the un-pushed chapters are completely unaffected.
+            epubContent.querySelectorAll('.epub-spine-item').forEach(wrapper => {
+                if (wrapper.classList.contains('epub-spine-item-first')) return;
+                const spacer = document.createElement('div');
+                spacer.className = 'dual-page-chapter-spacer';
+                wrapper.parentNode.insertBefore(spacer, wrapper);
+            });
             epubContent.querySelectorAll('h1').forEach(h1 => {
                 if (!spineFirstHeadings.has(h1)) {
                     const spacer = document.createElement('div');
@@ -1972,6 +1987,69 @@
         //                       captureFirstVisibleAnchor() (e.g. font-size
         //                       change). When supplied, we trust it over a
         //                       fresh capture.
+        // Deactivate every dual-page chapter spacer (single-page mode, or before
+        // recomputing which ones to activate). Leaves the inert spacers in place.
+        function clearDualPageChapterBreaks() {
+            const content = document.getElementById('epub-content');
+            if (!content) return;
+            content.querySelectorAll('.dual-page-chapter-spacer.active')
+                .forEach(s => s.classList.remove('active'));
+        }
+
+        // Dual-page only: activate the minimal set of chapter spacers so every
+        // chapter start opens on the LEFT column of a spread.
+        //
+        // Each visible spread is `currentColumnCount` columns (2 in dual mode).
+        // A chapter that naturally lands on a non-left column would share a
+        // spread with the previous chapter's tail — the thing we want to avoid.
+        // Activating a spacer inserts exactly one blank column before that
+        // chapter, shifting it (and everything after it) right by one column.
+        // So we measure each chapter's NATURAL column once (clean layout) and
+        // walk in document order tracking the running shift: a chapter whose
+        // effective column (natural + shift) isn't the first of a spread gets a
+        // spacer, which bumps the shift for all following chapters.
+        function applyDualPageChapterBreaks() {
+            const content = document.getElementById('epub-content');
+            if (!content || !columnStride || currentColumnCount < 2) return;
+            // Measure against a clean layout so the columns are the natural ones.
+            clearDualPageChapterBreaks();
+            // eslint-disable-next-line no-unused-expressions
+            content.offsetHeight; // force reflow before measuring
+
+            const spacers = Array.from(content.querySelectorAll('.dual-page-chapter-spacer'));
+            if (!spacers.length) return;
+            const contentLeft = content.getBoundingClientRect().left;
+            const colWidth = columnStride / currentColumnCount; // one column slot
+
+            // Natural column index of each chapter (the element after its
+            // spacer). Use the FIRST client rect, not getBoundingClientRect():
+            // a spine-item wrapper fragments across many columns and its union
+            // box would report the leftmost fragment (≈ column 0), not where the
+            // chapter actually begins. rects[0] is the starting fragment.
+            const naturalCols = spacers.map(spacer => {
+                const el = spacer.nextElementSibling;
+                if (!el) return null;
+                const rects = el.getClientRects();
+                const r = (rects && rects.length) ? rects[0] : el.getBoundingClientRect();
+                const left = r.left - contentLeft;
+                return Math.round((left - SIDE_PADDING) / colWidth);
+            });
+
+            let shift = 0;
+            spacers.forEach((spacer, i) => {
+                const nat = naturalCols[i];
+                if (nat == null) return;
+                if (((nat + shift) % currentColumnCount) !== 0) {
+                    spacer.classList.add('active');
+                    shift += 1;
+                }
+            });
+
+            // Force reflow so the caller's scrollWidth read sees the new spacers.
+            // eslint-disable-next-line no-unused-expressions
+            content.offsetHeight;
+        }
+
         function calculatePages(preserveProgress = false, presetAnchor) {
             const content = document.getElementById('epub-content');
             const viewport = document.getElementById('epub-viewport');
@@ -2077,6 +2155,15 @@
             content.offsetHeight;
 
             setTimeout(() => {
+                // Push chapter starts onto fresh spreads (dual-page only) BEFORE
+                // measuring, so totalPages and every anchor→page lookup below
+                // reflect the spacer-adjusted layout. Single-page just clears.
+                if (currentColumnCount >= 2) {
+                    applyDualPageChapterBreaks();
+                } else {
+                    clearDualPageChapterBreaks();
+                }
+
                 contentWidth = content.scrollWidth;
                 // Number of viewport-sized pages. Use ceil so trailing content isn't clipped.
                 totalPages = Math.max(1, Math.ceil(contentWidth / columnStride));
@@ -2762,15 +2849,20 @@
             let bookRemain = null;
             let chRemain   = null;
 
-            if (_pageStartBookRemainSec != null && pageSecNow < _pageStartBookRemainSec) {
-                bookRemain = _pageStartBookRemainSec - pageSecNow;
+            // Once a per-page baseline exists, the countdown owns the value for
+            // the whole page: clamp at 0 when the allotted time elapses instead
+            // of falling through to the static recompute. On the last page of a
+            // chapter/book that recompute would jump back up to a full per-page
+            // estimate; clamping keeps it at 0:00 until the page is turned.
+            if (_pageStartBookRemainSec != null) {
+                bookRemain = Math.max(0, _pageStartBookRemainSec - pageSecNow);
             } else if (avgSec != null) {
                 // Include the current page in the estimate (currentEpubPage is 0-indexed).
                 bookRemain = Math.max(0, totalPages - currentEpubPage) * avgSec;
             }
 
-            if (_pageStartChRemainSec != null && pageSecNow < _pageStartChRemainSec) {
-                chRemain = _pageStartChRemainSec - pageSecNow;
+            if (_pageStartChRemainSec != null) {
+                chRemain = Math.max(0, _pageStartChRemainSec - pageSecNow);
             } else if (avgSec != null && chapterStarts && chapterStarts.length > 0) {
                 // Chapter remaining — mirrors the chapter-derivation logic in
                 // updateProgress(). Skipped when no chapter map is available.
@@ -4722,11 +4814,10 @@
             // Toggle is a no-op when fold is closed — the button is also
             // visually disabled, but be defensive in case it's tapped via a11y.
             if (!isFoldOpen()) return;
-            // Capture BEFORE flipping the body class. The class toggle
-            // activates .dual-page-chapter-spacer { display:block } which
-            // reflows the DOM; capturing after would read element rects
-            // against a layout that no longer matches the columnStride we
-            // pair them with.
+            // Capture BEFORE re-paginating. calculatePages() reflows the DOM
+            // (column geometry changes, chapter spacers get re-applied);
+            // capturing after would read element rects against a layout that no
+            // longer matches the columnStride we pair them with.
             const preset = captureFineAnchor() ?? captureFirstVisibleAnchor();
             dualPagePref = !dualPagePref;
             isDualPage = dualPagePref; // fold is open, so effective == pref
