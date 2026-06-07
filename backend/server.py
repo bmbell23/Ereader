@@ -1198,7 +1198,31 @@ def unified_library_item(book_id):
     in-progress books WITHOUT losing their audiobook side — fetching the
     Calibre-only /api/books/<id> here would strip mediaTypes/absId/audioEditions
     and make a dual-format work look ebook-only. Degrades to the plain Calibre
-    metadata when ABS is off. 404 when the Calibre book is gone."""
+    metadata when ABS is off. 404 when the Calibre book is gone. Also handles
+    audio-only items (id starting with "abs:") when ABS is enabled."""
+    book_id_str = str(book_id)
+
+    # Handle audiobook IDs (abs:...)
+    if book_id_str.startswith('abs:'):
+        if not ABS_ENABLED:
+            return jsonify({'error': 'Audiobooks not available'}), 404
+        abs_id = book_id_str[4:]
+
+        # First check if this is a dual-format book (has matching Calibre ebook)
+        enrich_map, audio_only = _get_library_cache()
+        for calibre_id, enriched in enrich_map.items():
+            if enriched.get('absId') == abs_id:
+                # Found the dual-format book - return it
+                return jsonify(enriched)
+
+        # Not dual-format, check audio-only items
+        for item in audio_only:
+            if item.get('id') == book_id_str or item.get('absId') == abs_id:
+                return jsonify(item)
+
+        return jsonify({'error': 'Audiobook not found'}), 404
+
+    # Calibre book
     book = get_book_metadata(book_id)
     if not book:
         return jsonify({'error': 'Book not found'}), 404
@@ -1867,6 +1891,333 @@ def greatreads_sync():
     return jsonify({'dryRun': dry_run, 'greatReadsUrl': GREATREADS_URL,
                     'synced': synced, 'syncedCount': len(synced),
                     'skipped': skipped})
+
+@app.route('/api/greatreads/format/<book_id>', methods=['GET'])
+def greatreads_get_format(book_id):
+    """Get the media format that GreatReads is tracking for this book.
+
+    Returns: {
+        media: str | null  # "Physical", "Ebook", "Audio", or null if not found
+        readingId: int | null
+        status: str | null  # "in_progress", "finished", etc.
+    }
+    """
+    # Get book metadata to find title
+    book_meta = None
+    if str(book_id).startswith('abs:'):
+        # Audiobook - need to fetch from the merged library cache
+        if ABS_ENABLED:
+            enrich_map, audio_only = _get_library_cache()
+            # Check if it's in the matched enrichments
+            for cid, enriched in enrich_map.items():
+                if enriched.get('absId') == book_id[4:]:
+                    book_meta = enriched
+                    break
+            # If not found, check audio-only items
+            if not book_meta:
+                for item in audio_only:
+                    if item.get('id') == str(book_id):
+                        book_meta = item
+                        break
+    else:
+        # Calibre book
+        try:
+            book_meta = get_book_metadata(int(book_id))
+        except (ValueError, TypeError):
+            pass
+
+    if not book_meta:
+        return jsonify({'media': None, 'readingId': None, 'status': None})
+
+    title = book_meta.get('title', '')
+    norm_title = _norm(_strip_edition(title))
+
+    try:
+        # Check for existing reading (any status, but prioritize in_progress)
+        r = requests.get(GREATREADS_URL + '/api/readings/',
+                        params={'book_title': title}, timeout=15)
+        r.raise_for_status()
+        readings = r.json()
+
+        # Look for an existing reading that matches by title
+        # Prioritize in_progress, then any other status
+        in_progress = None
+        any_reading = None
+
+        for rd in (readings or []):
+            rd_title = (rd.get('book') or {}).get('title') or ''
+            rd_norm = _norm(_strip_edition(rd_title))
+            if rd_norm == norm_title:
+                if rd.get('status') == 'in_progress':
+                    in_progress = rd
+                    break
+                elif not any_reading:
+                    any_reading = rd
+
+        match = in_progress or any_reading
+        if match:
+            return jsonify({
+                'media': match.get('media'),
+                'readingId': match.get('id'),
+                'status': match.get('status')
+            })
+    except Exception as e:
+        print(f'Warning: Failed to fetch GreatReads format: {e}')
+
+    return jsonify({'media': None, 'readingId': None, 'status': None})
+
+@app.route('/api/greatreads/finish', methods=['POST'])
+def greatreads_finish():
+    """Mark a book as finished in GreatReads with rating and finish date.
+
+    Body: {
+        bookId: str (Calibre id or "abs:<id>"),
+        title: str,
+        author: str,
+        media: str ("Physical", "Ebook", "Audio"),
+        finishDate: str (YYYY-MM-DD),
+        rating: float (0-10 overall rating),
+        ratings: {  # optional detailed ratings
+            horror: float (0-10),
+            spice: float (0-10),
+            world_building: float (0-10),
+            writing: float (0-10),
+            characters: float (0-10),
+            readability: float (0-10),
+            enjoyment: float (0-10)
+        },
+        readingId: int | null  # optional; the exact GreatReads reading to update (for re-reads)
+    }
+
+    Returns: {
+        success: bool,
+        readingId: int,
+        message: str,
+        nextBook: {...} | null  # next book in series if available
+    }
+    """
+    body = request.get_json(silent=True) or {}
+    book_id = str(body.get('bookId', ''))
+    title = body.get('title', '')
+    author = body.get('author', '')
+    media = body.get('media', 'Ebook')
+    finish_date = body.get('finishDate', '')
+    rating_overall = body.get('rating', 0)
+    detailed_ratings = body.get('ratings', {})
+    reading_id = body.get('readingId')  # Optional; the exact reading to update
+
+    if not all([book_id, title, finish_date]):
+        return jsonify({'error': 'Missing required fields: bookId, title, finishDate'}), 400
+
+    # Normalize title for matching (same logic as sync)
+    norm_title = _norm(_strip_edition(title))
+
+    # Find existing reading in GreatReads or prepare to create one
+    try:
+        existing = None
+
+        # If we already know the exact reading ID (from /api/greatreads/format),
+        # use it directly — this handles re-reads correctly.
+        if reading_id:
+            try:
+                r = requests.get(GREATREADS_URL + f'/api/readings/{reading_id}/', timeout=15)
+                r.raise_for_status()
+                existing = r.json()
+            except Exception as e:
+                print(f'Warning: Failed to fetch reading #{reading_id}: {e}')
+                # Fall through to search by title+media
+
+        # Otherwise, search by title and media
+        if not existing:
+            r = requests.get(GREATREADS_URL + '/api/readings/',
+                            params={'book_title': title}, timeout=15)
+            r.raise_for_status()
+            readings = r.json()
+
+            # Look for an existing reading that matches by title and media.
+            # Prioritize in-progress readings (the one being finished now), but
+            # fall back to any reading if only finished/abandoned ones exist.
+            any_match = None
+            for rd in (readings or []):
+                rd_title = (rd.get('book') or {}).get('title') or ''
+                rd_media = rd.get('media') or ''
+                rd_norm = _norm(_strip_edition(rd_title))
+                if rd_norm == norm_title and rd_media == media:
+                    if rd.get('status') == 'in_progress':
+                        existing = rd
+                        break  # Found the in-progress one, use it
+                    elif not any_match:
+                        any_match = rd
+
+            if not existing:
+                existing = any_match
+
+        if existing:
+            # Update existing reading to finished
+            reading_id = existing['id']
+            update_data = {
+                'date_finished_actual': finish_date,
+                'status': 'finished',
+                'rating_overall': rating_overall,
+            }
+            # Add detailed ratings if provided
+            for key, value in detailed_ratings.items():
+                update_data[f'rating_{key}'] = value
+
+            ur = requests.put(GREATREADS_URL + f'/api/readings/{reading_id}/',
+                            json=update_data, timeout=15)
+            ur.raise_for_status()
+            message = f'Marked existing reading #{reading_id} as finished'
+        else:
+            # Create new finished reading
+            # First, try to find the book in GreatReads by title
+            br = requests.get(GREATREADS_URL + '/api/books/',
+                            params={'title': title}, timeout=15)
+            br.raise_for_status()
+            books = br.json()
+
+            greatreads_book_id = None
+            if books:
+                # Use first match (could be improved with fuzzy matching)
+                greatreads_book_id = books[0].get('id')
+
+            if not greatreads_book_id:
+                # Book doesn't exist in GreatReads - would need to create it
+                # For now, return an error directing user to add it manually
+                return jsonify({
+                    'error': 'Book not found in GreatReads',
+                    'message': f'Please add "{title}" by {author} to your GreatReads library first',
+                    'nextBook': None
+                }), 404
+
+            # Create new reading
+            create_data = {
+                'book_id': greatreads_book_id,
+                'media': media,
+                'date_started': finish_date,  # Use finish date as start if unknown
+                'date_finished_actual': finish_date,
+                'status': 'finished',
+                'rating_overall': rating_overall,
+            }
+            for key, value in detailed_ratings.items():
+                create_data[f'rating_{key}'] = value
+
+            cr = requests.post(GREATREADS_URL + '/api/readings/',
+                             json=create_data, timeout=15)
+            cr.raise_for_status()
+            created = cr.json()
+            reading_id = created.get('id')
+            message = f'Created new reading #{reading_id} and marked as finished'
+
+    except Exception as e:
+        return jsonify({'error': 'GreatReads API error', 'detail': str(e)}), 502
+
+    # Find next book in the GreatReads chain for this media format.
+    # In GreatReads, each reading has an id_previous field that points to the
+    # previous reading in the chain. The NEXT reading is the one whose id_previous
+    # points to the CURRENT reading. We need to find it BEFORE marking current as
+    # finished, then START it when we finish the current one.
+    next_book = None
+    next_reading_id = None
+    try:
+        # Get ALL readings for this media (not just in-progress, because the next
+        # one hasn't been started yet)
+        all_resp = requests.get(GREATREADS_URL + '/api/readings/',
+                               params={'media': media}, timeout=15)
+        all_resp.raise_for_status()
+        all_readings = all_resp.json()
+
+        # Find the reading whose id_previous points to the reading we're finishing
+        for rd in (all_readings or []):
+            if rd.get('id_previous') == reading_id:
+                # Found it! This is the next book in the chain
+                next_reading_id = rd.get('id')
+                tbr_book = rd.get('book') or {}
+                tbr_title = tbr_book.get('title') or ''
+
+                if not tbr_title:
+                    continue
+
+                # Search our library for this book
+                norm_tbr = _norm(_strip_edition(tbr_title))
+
+                # Check merged library
+                if ABS_ENABLED:
+                    enrich_map, audio_only = _get_library_cache()
+                    all_items = list(enrich_map.values()) + audio_only
+                else:
+                    all_items, _ = get_calibre_books(limit=0, offset=0)
+
+                # Find best match by normalized title
+                for item in all_items:
+                    item_title = item.get('title') or ''
+                    norm_item = _norm(_strip_edition(item_title))
+                    if norm_tbr == norm_item:
+                        # Found it - return minimal book info
+                        next_book = {
+                            'id': item.get('id'),
+                            'title': item.get('title'),
+                            'author': item.get('author'),
+                            'cover': item.get('cover') or item.get('thumbnail'),
+                            'mediaTypes': item.get('mediaTypes', [])
+                        }
+                        break
+
+                break  # Found the next reading, stop searching
+    except Exception as e:
+        print(f'Warning: Failed to find next GreatReads chain book: {e}')
+
+    # Start the next reading in the GreatReads chain (if we found one)
+    if next_reading_id:
+        try:
+            start_resp = requests.patch(GREATREADS_URL + f'/api/readings/{next_reading_id}/',
+                                       json={'date_started': finish_date, 'status': 'in_progress'},
+                                       timeout=15)
+            start_resp.raise_for_status()
+            print(f'Started next reading #{next_reading_id} in GreatReads chain')
+        except Exception as e:
+            print(f'Warning: Failed to start next reading #{next_reading_id}: {e}')
+
+    # Clear our progress record since book is finished.
+    # For dual-format books, we use unified progress (Calibre ID), but we also
+    # check for any legacy audiobook-only progress (abs:<absId>) and clear it.
+    try:
+        with _progress_lock:
+            data = _load_progress()
+            cleared = []
+
+            # Clear main progress record
+            if str(book_id) in data:
+                del data[str(book_id)]
+                cleared.append(str(book_id))
+
+            # For dual-format books, also clear any abs:<absId> progress
+            # (shouldn't exist with unified progress, but defensive)
+            if not book_id.startswith('abs:'):
+                # Get book metadata to find absId if it exists
+                book_meta = None
+                if ABS_ENABLED:
+                    enrich_map, _ = _get_library_cache()
+                    book_meta = enrich_map.get(str(book_id))
+
+                if book_meta and book_meta.get('absId'):
+                    abs_key = 'abs:' + book_meta['absId']
+                    if abs_key in data:
+                        del data[abs_key]
+                        cleared.append(abs_key)
+
+            if cleared:
+                _save_progress(data)
+                print(f'Cleared progress for: {", ".join(cleared)}')
+    except Exception as e:
+        print(f'Warning: Failed to clear progress: {e}')
+
+    return jsonify({
+        'success': True,
+        'readingId': reading_id,
+        'message': message,
+        'nextBook': next_book
+    })
 
 # ---------- Feature requests / TODO list ----------
 # Backing store for the in-app "Requests" page (web/requests.html). One JSON

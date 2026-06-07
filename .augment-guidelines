@@ -46,7 +46,7 @@ description: Ereader agent guidelines — extends shared server guidelines
   - PID file: `server.pid`, logs: `backend/server.log`
   - **Audiobookshelf (ABS)**: optional second source for audiobooks. `$ABS_URL` (default `http://localhost:13378`, the local `audiobookshelf` container → :80), `$ABS_TOKEN` (per-user API token), `$ABS_LIBRARY_ID` (optional; first `book` library if blank). `$ABS_PUBLIC_URL` (optional; the host the **phone** uses to fetch HLS/media directly — defaults to `$ABS_URL` with a `localhost`/`127.0.0.1` host swapped for the Tailscale IP `100.69.184.113`, since the WebView can't reach the server's localhost). Credentials live in `backend/abs.env` (gitignored; template `backend/abs.env.example`), sourced by `run.sh`. `ABS_ENABLED = bool(ABS_URL and ABS_TOKEN)` — when off, every ABS path no-ops and the library degrades to Calibre-only (never 500s). Read-only.
 - **Web reader**: static files in `web/` served on port **8090** (separate process)
-  - `web/index.html` — library browser (~1240 lines). Consumes `/api/library` (Calibre+ABS merged); cards show 📖/🎧 media-type badges (audio-only → 🎧, dual → 📖🎧, ebook-only → none). Tap routing: ebook-only → reader, audio-only → player, dual → Read/Listen action sheet.
+  - `web/index.html` — library browser (~1278 lines). Consumes `/api/library` (Calibre+ABS merged); cards show 📖/🎧 media-type badges (audio-only → 🎧, dual → 📖🎧, ebook-only → none). Tap routing: ebook-only → reader, audio-only → player, dual → Read/Listen action sheet. **Sort modes:** Author (actively in-progress books — `0 < progress < 1` — newest-updated first, then rest by author last name → series → series_index → published), Title (pure A→Z), Series (grouped grid), Saga (grouped grid). `applySort()` implements the client-side portion; backend pre-sorts `/api/library` by author but `ensureProgressBooksLoaded()` prepends missing in-progress books, so client must re-sort. Books with `progress === 0` (opened but not read) or `progress >= 1` (finished) sort with the rest, not as in-progress.
   - `web/reader.html` — PDF + EPUB reader (~4450 lines, consumed in-app via WebView)
   - `web/player.html` + `web/player.js` — audiobook player (consumed in-app via WebView). Opened as `player.html?absId=&title=&author=` (dual-format works also pass `&bookId=&format=&hasEbook=1` so the player can open the ebook). Loads hls.js from CDN; starts an ABS session via the backend play route, plays HLS (transcode) or direct single-file. UI uses the brand (bi-pride) gradient `#4067EF→#8640C0→#C940B0`; large cover; PNG play/pause button (`web/play.png` / `web/pause.png`, inverted to white over the gradient). Two seekable progress bars (book + chapter), each showing elapsed / remaining + percent — **remaining is wall-clock time at the current speed** (`remaining_content / rate`). Speed is a slider 1.0×–3.0× in 0.1 steps, shown in a pill and **persisted in `localStorage['ereader.audio.speed']`** so it propagates across books (re-applied on each media load). Resume position is persisted to OUR backend (`PUT /api/progress/abs:<absId>`) every ~15s sync + on close, and read back on open — independent of ABS's own session currentTime. It is ALSO mirrored synchronously to `localStorage['ereader.state.abs:<absId>']` (`{position,duration,progress,mediaType:'audiobook',ts}`, same shape/prefix the EPUB reader uses for `ereader.state.<bookId>`) — written on the throttled (~2s) UI tick and on close. The library reads this snapshot as a freshness-winning fallback so the audio progress bar updates instantly on return even before the keepalive backend PUT commits (avoids the back-button race where `index.html` re-fetches `/api/progress` before the player's final save lands). When `hasEbook`, a 🔍 button opens `reader.html` in a same-origin iframe overlay and calls its `openSearch()`; audio keeps playing while reading/searching; the player's ‹ back button closes the session (stops audio). Also: ±30s, prev/next chapter, chapter drawer, Media Session lock-screen controls.
   - `web/requests.html` + `web/requests.js` — in-app feature-request / TODO list ("📋 Requests" hamburger entry). See "Requests Workflow" below.
@@ -103,12 +103,32 @@ All endpoints are JSON unless noted. CORS is permissive.
   - `GET  /api/series` — groups the full merged library (Calibre + ABS) into series. Reuses the full-library cache so grouping spans all Calibre pages and audio-only items. Returns `{series:[{name, count, mediaTypes, cover, books:[…]}, …], absEnabled}`. Books with no series are omitted; books within each group are sorted by `_series_sort_key` (unnumbered `series_index: null` first — ahead of 0/negatives — then numeric ascending, then title). Series cards are sorted alphabetically. Used by the frontend Series sort pill. The frontend series-detail overlay renders a `#N` badge (bottom-left of each card, lifted above any progress bars) via `bookCardHTML(book, {showSeriesNum:true})`; unnumbered books show no badge. **ABS bakes the sequence into the series name** (`"Dresden Files #10.4"`, `"A Song of Ice and Fire #3"`) with `series_index = 0`, which would split every audiobook into its own one-book group — `normalize_abs_item` calls `_split_abs_series` to peel the trailing `#N`/`#N.N` off into a clean base name + numeric `series_index`, so audio-only items group under the same series as their Calibre ebook counterparts (read-only against ABS; the fix lives entirely in our normalization).
 - **Saga** (Calibre `#universe` custom column, label "Universe", e.g. "The Cosmere")
   - `GET  /api/saga` — groups the library into sagas by the Calibre `#universe` custom column (read in `get_book_metadata`, surfaced as the `universe` field; `''` when unset, also part of `_SERIES_BOOK_FIELDS`). Same payload shape as `/api/series` but keyed `{sagas:[{name, count, mediaTypes, cover, books:[…]}, …], absEnabled}`. Books with no universe are omitted. **Calibre-only**: ABS has no universe field, so audio-only items (no `universe`) are naturally excluded; dual-format works still appear via their Calibre side. Books within a saga are sorted by `_saga_sort_key` (by series name, then `series_index` with unnumbered first, then title) so a saga reads as its constituent series in order; seriesless books sort last. Sagas are sorted alphabetically. Used by the frontend Saga sort pill; the saga-detail overlay reuses the series overlay and renders plain `bookCardHTML` cards (no `#N` badge — a saga spans multiple series, so a bare index would be ambiguous).
+- **GreatReads tracker integration**
+  - `POST /api/greatreads/sync` — mirror in-progress percentages to GreatReads (respects format per reading). Idempotent, non-destructive. Supports `?dry_run=1`.
+  - `GET  /api/greatreads/format/<bookId>` — get the media format GreatReads is tracking for this book. Returns `{media: "Physical"|"Ebook"|"Audio"|null, readingId: int|null, status: str|null}`. Prioritizes in-progress readings, falls back to any reading with matching title. Used by the UI to pre-select the correct format when marking as finished.
+  - `POST /api/greatreads/finish` — mark a book as finished in GreatReads with rating and finish date. Body: `{bookId, title, author, media: "Physical"|"Ebook"|"Audio", finishDate: "YYYY-MM-DD", rating: 0-10 (calculated overall), ratings: {horror, spice, world_building, writing, characters, readability, enjoyment} (all required, 0-10 integers)}`. Returns `{success, readingId, message, nextBook: {...}|null}`. Clears local progress record on success. Finds or creates a GreatReads reading; if the book doesn't exist in GreatReads, returns 404 directing user to add it manually. The UI always shows all 7 rating sliders (0-10 integer steps); overall rating is computed as their average. Media format is auto-detected from GreatReads and hidden from the user.
 - **Feature requests / TODO list** (see "Requests Workflow" below)
   - `GET    /api/requests?status=` — list, newest-updated first; optional status filter
   - `POST   /api/requests` — create (`title` required; defaults to `Backlog`)
   - `PUT    /api/requests/<id>` — partial update; mutable: `title`, `body`, `status`, `sections`
   - `DELETE /api/requests/<id>`
   - `POST   /api/requests/<id>/comments` — append a comment `{text, author?}` (iteration thread)
+- **GreatReads Integration** (external reading tracker at `GREATREADS_URL`, default `http://100.69.184.113:8007`)
+  - **Overview**: GreatReads is a separate Django-based reading tracker application. Code lives at `../GreatReads/`. **CRITICAL**: When working with GreatReads integration, ALWAYS check the actual GreatReads codebase/database schema — never guess about field names, data structures, or API behavior.
+  - **Chain Structure**: GreatReads uses a **linked-list chain** per media format. Each `read` record has an `id_previous` field pointing to the previous reading in that format's chain. The NEXT book in the chain is the one whose `id_previous` points to the CURRENT reading. See `../GreatReads/CHAIN_SYSTEM_ANALYSIS.md` for full details.
+  - **Key GreatReads Fields** (from `../GreatReads/src/greatreads.db` schema):
+    - `id` — reading ID
+    - `id_previous` — FK to `read.id`, creates the chain structure (null = chain head)
+    - `book_id` — FK to the book
+    - `media` — format string: "Physical", "Ebook", "Audio"
+    - `status` — reading status (in GreatReads, typically "finished" or inferred from dates)
+    - `date_started` — actual start date
+    - `date_finished_actual` — actual finish date
+    - `date_est_start`, `date_est_end` — calculated by GreatReads' chain calculator
+    - `rating_overall`, `rating_horror`, `rating_spice`, `rating_world_building`, `rating_writing`, `rating_characters`, `rating_readability`, `rating_enjoyment` — all floats, 0-10 scale
+    - `rank` — separate ordering field (not used for chains)
+  - `GET  /api/greatreads/format/<bookId>` — auto-detect the media format GreatReads is tracking for a book (Physical/Ebook/Audio). Queries GreatReads readings filtered by title, prioritizes in-progress, returns `{media, readingId, status}` or nulls when not found.
+  - `POST /api/greatreads/finish` — mark a book as finished in GreatReads. Body: `{bookId, title, author, media, finishDate (YYYY-MM-DD), rating (0-10 overall), ratings: {horror, spice, world_building, writing, characters, readability, enjoyment (all 0-10)}, readingId: int | null (optional; the exact GreatReads reading to update — critical for re-reads)}`. Flow: (1) If `readingId` provided, fetch that reading directly; else search by title+media and prioritize in-progress. (2) **BEFORE marking current as finished**, find the next book in the chain by querying all readings for that media and finding the one whose `id_previous == current_reading_id`. (3) Update current reading to finished with ratings. (4) **START the next reading** by setting its `date_started` and `status` to `in_progress`. (5) Clear local progress for the finished book. (6) Return `{success, readingId, message, nextBook: {id, title, author, cover, mediaTypes}}` where nextBook is the one we just started in GreatReads.
 - **Meta**
   - `GET /api/health` — checks Calibre reachability, returns `version`
   - `GET /api/version` — reads `version.txt` live
@@ -201,7 +221,7 @@ The reader re-renders highlights every time it paginates; never trust `page` to 
 
 Progress records (`/api/progress/<bookId>`) use the same `anchor` field plus a `progress` float (0..1) and a `fontSize` so the next device opens at the same place at the same size. They also carry `recentPages` — a rolling buffer (max 30) of `{ms: int, words: int}` samples capturing how long the user spent on recent pages and the per-page word count at that moment. The reader uses this to compute WPM / WPP / time-remaining in the bottom-bar metrics row. Two-stage outlier filter: (1) at insert time, samples outside `[readingMinSec, readingMaxSec]` (default 10s..120s, settable in the main Settings overlay → keys `ereader.settings.readingMinSec` / `ereader.settings.readingMaxSec`) are dropped as accidental swipes / phone-down time; (2) at compute time, a MAD-based modified-z-score filter (Iglewicz & Hoaglin, `|0.6745·(x−median)/MAD| > 3.5`) drops contextual outliers (epigraph / chapter-end pages) — applied to ms-per-word when a word count is available, raw ms otherwise, gated by `outlierMinSamples` (5) so tiny buffers don't trigger it. EPUB only — PDFs don't populate this. The full algorithm is also documented in `web/about.js` (user-facing).
 
-Audiobook progress records use the same `/api/progress/<bookId>` endpoint with `bookId = "abs:<absId>"`. Extra fields: `mediaType` (`"audiobook"`), `absId` (raw ABS id without the `abs:` prefix), `position` (seconds, float), `duration` (seconds, float). The `progress` float is derived as `position / duration`. These records surface in the library "recently read" sort (`audioProgressByAbsId` map in `index.html`) and drive the cover progress bar for audio-only and dual-format rows.
+**Unified progress for dual-format books**: For books with both ebook and audiobook, ONE progress record is stored under the Calibre book ID. The record contains both ebook-specific fields (anchor, page, fontSize, recentPages) AND audiobook-specific fields (mediaType: "audiobook", absId, position, duration). Whichever format is used updates its fields while preserving the other format's fields. The `progress` float (0..1) reflects whichever format was updated most recently. Audio-only books (no Calibre ebook) use `bookId = "abs:<absId>"`. This ensures one progress record per book regardless of format, eliminating duplicate entries in "recently read".
 
 ## Calibre Integration
 
@@ -251,6 +271,56 @@ Debug builds are pulled over HTTP and installed in-place — never via `adb inst
 3. Android treats it as an upgrade (same debug keystore as the previous build) — no uninstall, no data loss.
 
 **Never run `./build-app.sh` or push a new APK without explicit user permission.** The user runs builds themselves so they control device install timing.
+
+## Agent Behavior Rules
+
+### DO NOT GUESS — RESEARCH FIRST
+
+When working with integrations or external systems:
+1. **NEVER guess about API schemas, field names, or data structures**
+2. **ALWAYS look at the actual code** in the external system's repository
+3. **ALWAYS check the database schema** if you're dealing with persistent data
+4. **NEVER assume** you know how something works based on naming conventions
+5. **ASK the user** for clarification if documentation is unclear or missing
+
+### Examples of Forbidden Guessing:
+- ❌ "The TBR queue is probably ordered by a `rank` field"
+- ❌ "Let me query for `status=in_progress` to find the next book"
+- ❌ "I'll assume the format is auto-detected correctly"
+
+### Required Research Steps:
+- ✅ "Let me check the GreatReads code at ../GreatReads/ to understand the chain structure"
+- ✅ "Let me look at the database schema to see what fields exist"
+- ✅ "Let me trace through the actual code flow to understand how this works"
+
+### GreatReads Integration Specifics
+
+When working with GreatReads integration:
+- **Primary reference**: `GREATREADS_INTEGRATION.md` in this repo (comprehensive integration guide)
+- **Source code**: `GREATREADS_SOURCE/` symlink or `../GreatReads/` directory
+- **Chain system docs**: `GREATREADS_CHAIN_REFERENCE.md` symlink or `../GreatReads/CHAIN_SYSTEM_ANALYSIS.md`
+- **ALWAYS verify** field names and data structures against the actual GreatReads schema before writing code
+- **Chain structure**: Uses `id_previous` linked lists, NOT status queries or rank ordering
+
+### Communication Style
+
+**DO:**
+- Be direct and factual
+- State what you found, what you changed, and what the result should be
+- Acknowledge when you made a mistake: "I was wrong about X. The actual behavior is Y."
+- Present information concisely without fluff
+
+**DO NOT:**
+- Use excessive enthusiasm or emoji (one emoji per response maximum, if relevant)
+- Say "Great question!", "Excellent catch!", "Perfect!", "Amazing!", etc.
+- Pad responses with pleasantries or reassurances
+- Act cheery when you've made an error — just fix it
+
+**Example of GOOD communication:**
+> "I was wrong. GreatReads uses a linked-list chain structure via `id_previous` fields. I've updated the code to find the next reading by looking for the one whose `id_previous` points to the current reading."
+
+**Example of BAD communication:**
+> "Great catch! 🎉 You're absolutely right! Let me fix that for you! This is going to be amazing when it works! ✨"
 
 ## Documentation Maintenance Protocol
 

@@ -644,6 +644,7 @@
     <div class="book-context-menu-backdrop" id="book-ctx-backdrop"></div>
     <div class="book-context-menu" id="book-ctx-menu">
         <div class="ctx-header" id="book-ctx-title"></div>
+        <button id="ctx-mark-finished">✓ Mark as Finished</button>
         <button id="ctx-clear-progress" class="danger">🗑️ Clear Reading Progress</button>
     </div>
 
@@ -667,6 +668,91 @@
         <div class="sheet">
             <div class="sheet-title" id="format-sheet-title"></div>
             <div id="format-sheet-btns"></div>
+        </div>
+    </div>
+
+    <!-- Mark as Finished dialog -->
+    <div class="overlay" id="finish-overlay">
+        <div class="overlay-header">
+            <div class="overlay-header-row">
+                <button class="icon-btn" onclick="closeFinishDialog()" title="Cancel">←</button>
+                <div class="overlay-title">Mark as Finished</div>
+            </div>
+        </div>
+        <div class="overlay-content" style="padding: 20px;">
+            <div id="finish-book-info" style="margin-bottom: 20px; padding: 12px; background: rgba(255,255,255,0.05); border-radius: 8px;">
+                <div id="finish-book-title" style="font-size: 16px; font-weight: 600; margin-bottom: 4px;"></div>
+                <div id="finish-book-author" style="font-size: 14px; opacity: 0.7;"></div>
+            </div>
+
+            <div class="setting-row" style="margin-bottom: 16px;">
+                <label class="setting-row-label" for="finish-date">Finish Date</label>
+                <input type="date" id="finish-date" style="background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); border-radius: 6px; padding: 8px; color: white; font-size: 14px; width: 100%;">
+            </div>
+
+            <!-- Hidden media field - auto-detected from GreatReads, not user-editable -->
+            <input type="hidden" id="finish-media" value="Ebook">
+
+            <div style="margin-bottom: 16px; padding: 12px 0;">
+                <div class="setting-row" style="margin-bottom: 12px;">
+                    <label class="setting-row-label" for="rating-enjoyment">Enjoyment *</label>
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                        <input type="range" id="rating-enjoyment" min="0" max="10" step="1" value="0" style="flex: 1;">
+                        <span id="rating-enjoyment-value" style="min-width: 32px; font-weight: 600;">0</span>
+                    </div>
+                </div>
+                <div class="setting-row" style="margin-bottom: 12px;">
+                    <label class="setting-row-label" for="rating-readability">Readability *</label>
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                        <input type="range" id="rating-readability" min="0" max="10" step="1" value="0" style="flex: 1;">
+                        <span id="rating-readability-value" style="min-width: 32px; font-weight: 600;">0</span>
+                    </div>
+                </div>
+                <div class="setting-row" style="margin-bottom: 12px;">
+                    <label class="setting-row-label" for="rating-characters">Characters *</label>
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                        <input type="range" id="rating-characters" min="0" max="10" step="1" value="0" style="flex: 1;">
+                        <span id="rating-characters-value" style="min-width: 32px; font-weight: 600;">0</span>
+                    </div>
+                </div>
+                <div class="setting-row" style="margin-bottom: 12px;">
+                    <label class="setting-row-label" for="rating-writing">Writing *</label>
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                        <input type="range" id="rating-writing" min="0" max="10" step="1" value="0" style="flex: 1;">
+                        <span id="rating-writing-value" style="min-width: 32px; font-weight: 600;">0</span>
+                    </div>
+                </div>
+                <div class="setting-row" style="margin-bottom: 12px;">
+                    <label class="setting-row-label" for="rating-world-building">World Building *</label>
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                        <input type="range" id="rating-world-building" min="0" max="10" step="1" value="0" style="flex: 1;">
+                        <span id="rating-world-building-value" style="min-width: 32px; font-weight: 600;">0</span>
+                    </div>
+                </div>
+                <div class="setting-row" style="margin-bottom: 12px;">
+                    <label class="setting-row-label" for="rating-spice">Spice *</label>
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                        <input type="range" id="rating-spice" min="0" max="10" step="1" value="0" style="flex: 1;">
+                        <span id="rating-spice-value" style="min-width: 32px; font-weight: 600;">0</span>
+                    </div>
+                </div>
+                <div class="setting-row" style="margin-bottom: 12px;">
+                    <label class="setting-row-label" for="rating-horror">Horror *</label>
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                        <input type="range" id="rating-horror" min="0" max="10" step="1" value="0" style="flex: 1;">
+                        <span id="rating-horror-value" style="min-width: 32px; font-weight: 600;">0</span>
+                    </div>
+                </div>
+            </div>
+
+            <div style="display: flex; gap: 12px; margin-top: 24px;">
+                <button onclick="closeFinishDialog()" style="flex: 1; padding: 12px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); border-radius: 8px; color: white; font-size: 16px; cursor: pointer;">
+                    Cancel
+                </button>
+                <button id="finish-submit-btn" onclick="submitFinishBook()" style="flex: 1; padding: 12px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border: none; border-radius: 8px; color: white; font-size: 16px; font-weight: 600; cursor: pointer;">
+                    Mark as Finished
+                </button>
+            </div>
         </div>
     </div>
 
@@ -1012,13 +1098,53 @@
         function applySort(list) {
             const arr = list.slice();
             if (sortMode === 'title') {
-                // Pure A→Z by title. "Author" sort already surfaces recently-read
-                // books at the top via ensureProgressBooksLoaded(); Title sort is
-                // intended to be a clean alphabetical view, so no timestamp floating.
+                // Pure A→Z by title. "Author" sort surfaces recently-read books at
+                // the top; Title sort is a clean alphabetical view with no floating.
                 arr.sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+            } else if (sortMode === 'author') {
+                // Author sort: in-progress books first (by newest update), then the
+                // rest by author last name → series → series_index → published.
+                // This matches the backend's sort_key() and keeps the list stable
+                // even after ensureProgressBooksLoaded() prepends books.
+                const inProgress = [];
+                const rest = [];
+                for (const b of arr) {
+                    const prog = progressMap.get(String(b.id));
+                    // Only float books with actual progress (0 < progress < 1).
+                    // progress===0 means opened but not read; progress===1 or >1
+                    // means finished (shouldn't float either).
+                    const p = prog?.progress ?? 0;
+                    const isActive = prog && p > 0 && p < 1;
+                    (isActive ? inProgress : rest).push(b);
+                }
+                // In-progress: newest update first
+                inProgress.sort((a, b) => {
+                    const aUpd = progressMap.get(String(a.id))?.updated || 0;
+                    const bUpd = progressMap.get(String(b.id))?.updated || 0;
+                    return bUpd - aUpd;
+                });
+                // Rest: author last name, series, series_index, published
+                rest.sort((a, b) => {
+                    const aAuthor = a.author || 'Unknown';
+                    const bAuthor = b.author || 'Unknown';
+                    const aLast = aAuthor.includes(',')
+                        ? aAuthor.split(',')[0]
+                        : (aAuthor.split(' ').pop() || 'Unknown');
+                    const bLast = bAuthor.includes(',')
+                        ? bAuthor.split(',')[0]
+                        : (bAuthor.split(' ').pop() || 'Unknown');
+                    const lastCmp = aLast.toLowerCase().localeCompare(bLast.toLowerCase());
+                    if (lastCmp !== 0) return lastCmp;
+                    const seriesCmp = (a.series || '').toLowerCase().localeCompare((b.series || '').toLowerCase());
+                    if (seriesCmp !== 0) return seriesCmp;
+                    const aIdx = a.series_index ?? 0;
+                    const bIdx = b.series_index ?? 0;
+                    if (aIdx !== bIdx) return aIdx - bIdx;
+                    return (a.published || '').localeCompare(b.published || '');
+                });
+                return inProgress.concat(rest);
             }
-            // 'author' is the backend's natural order + prepended progress books;
-            // leave as-is so the natural sort is preserved.
+            // Series/Saga modes don't use this sort path (they call renderSeriesGrid/renderSagaGrid directly)
             return arr;
         }
 
@@ -1879,6 +2005,200 @@
         // the (now in-app) confirmation. We use appConfirm() rather than the
         // native confirm() because the latter poisons synthesized click
         // delivery on the Android WebView, freezing taps until reload.
+
+        // Mark as Finished
+        let _finishBookId = null;
+        let _finishBookData = null;
+        let _finishReadingId = null;  // GreatReads reading ID (for re-reads)
+
+        document.getElementById('ctx-mark-finished').addEventListener('click', async (e) => {
+            e.stopPropagation();
+            if (!_ctxBookId) { hideBookCtxMenu(); return; }
+            const id = _ctxBookId;
+            const book = findBookById(id);
+            hideBookCtxMenu();
+            if (!book) {
+                alert('Could not find book data');
+                return;
+            }
+            await openFinishDialog(id, book);
+        });
+
+        async function openFinishDialog(bookId, book) {
+            _finishBookId = bookId;
+            _finishBookData = book;
+
+            // Populate book info
+            document.getElementById('finish-book-title').textContent = book.title || 'Unknown';
+            document.getElementById('finish-book-author').textContent = book.author || 'Unknown';
+
+            // Set default date to today
+            const today = new Date().toISOString().split('T')[0];
+            document.getElementById('finish-date').value = today;
+
+            // Fetch format from GreatReads if available
+            let defaultMedia = 'Ebook';
+            try {
+                const formatResp = await fetch(`${API_URL}/greatreads/format/${encodeURIComponent(bookId)}`);
+                if (formatResp.ok) {
+                    const formatData = await formatResp.json();
+                    if (formatData.media) {
+                        // GreatReads knows the format - use it
+                        defaultMedia = formatData.media;
+                        // Store the readingId so we can update the exact reading (handles re-reads)
+                        _finishReadingId = formatData.readingId;
+                    } else {
+                        // GreatReads doesn't have this book yet - infer from mediaTypes
+                        _finishReadingId = null;
+                        const mediaTypes = book.mediaTypes || [];
+                        if (mediaTypes.includes('audiobook') && !mediaTypes.includes('ebook')) {
+                            defaultMedia = 'Audio';
+                        } else if (mediaTypes.includes('ebook')) {
+                            defaultMedia = 'Ebook';
+                        }
+                    }
+                }
+            } catch (error) {
+                console.warn('Failed to fetch GreatReads format, using fallback:', error);
+                // Fallback to inferring from mediaTypes
+                _finishReadingId = null;
+                const mediaTypes = book.mediaTypes || [];
+                if (mediaTypes.includes('audiobook') && !mediaTypes.includes('ebook')) {
+                    defaultMedia = 'Audio';
+                } else if (mediaTypes.includes('ebook')) {
+                    defaultMedia = 'Ebook';
+                }
+            }
+            document.getElementById('finish-media').value = defaultMedia;
+
+            // Reset all detailed ratings to 0
+            ['enjoyment', 'readability', 'characters', 'writing', 'world-building', 'spice', 'horror'].forEach(key => {
+                document.getElementById(`rating-${key}`).value = '0';
+                document.getElementById(`rating-${key}-value`).textContent = '0';
+            });
+
+            document.getElementById('finish-overlay').classList.add('open');
+        }
+
+        function closeFinishDialog() {
+            document.getElementById('finish-overlay').classList.remove('open');
+            _finishBookId = null;
+            _finishBookData = null;
+            _finishReadingId = null;
+        }
+
+        async function submitFinishBook() {
+            if (!_finishBookId || !_finishBookData) return;
+
+            const submitBtn = document.getElementById('finish-submit-btn');
+            const originalText = submitBtn.textContent;
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Submitting...';
+
+            // Capture book data before we might close the dialog
+            const bookTitle = _finishBookData.title;
+            const bookAuthor = _finishBookData.author;
+
+            try {
+                const finishDate = document.getElementById('finish-date').value;
+                const media = document.getElementById('finish-media').value;
+
+                // Collect all detailed ratings (all are required, send all values)
+                const detailedRatings = {};
+                ['enjoyment', 'readability', 'characters', 'writing', 'world_building', 'spice', 'horror'].forEach(key => {
+                    const inputKey = key.replace('_', '-');
+                    const val = parseFloat(document.getElementById(`rating-${inputKey}`).value);
+                    detailedRatings[key] = val;
+                });
+
+                // Calculate overall rating as average of the detailed ratings
+                const ratingValues = Object.values(detailedRatings);
+                const overallRating = ratingValues.reduce((sum, val) => sum + val, 0) / ratingValues.length;
+
+                const response = await fetch(`${API_URL}/greatreads/finish`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        bookId: _finishBookId,
+                        title: bookTitle,
+                        author: bookAuthor,
+                        media: media,
+                        finishDate: finishDate,
+                        rating: overallRating,
+                        ratings: detailedRatings,
+                        readingId: _finishReadingId  // Exact GreatReads reading to update (handles re-reads)
+                    })
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.message || error.error || 'Failed to mark as finished');
+                }
+
+                const result = await response.json();
+
+                // Clear local state for the finished book
+                try {
+                    localStorage.removeItem('ereader.state.' + _finishBookId);
+                } catch (_) {}
+
+                // Remove from in-memory progress maps
+                progressMap.delete(String(_finishBookId));
+                mergedProgressIds.delete(String(_finishBookId));
+
+                // Also clear audiobook progress if this book has an absId
+                const finishedBook = homeBooks.find(b => String(b.id) === String(_finishBookId));
+                if (finishedBook && finishedBook.absId) {
+                    audioProgressByAbsId.delete(String(finishedBook.absId));
+                    try {
+                        localStorage.removeItem('ereader.state.abs:' + finishedBook.absId);
+                    } catch (_) {}
+                }
+
+                closeFinishDialog();
+
+                // Show success and offer to start next book
+                if (result.nextBook) {
+                    const nextTitle = result.nextBook.title;
+                    const ok = await appConfirm(
+                        `✓ Marked "${bookTitle}" as finished!\n\n` +
+                        `Start reading "${nextTitle}" (next in your GreatReads TBR)?`,
+                        'Start Reading'
+                    );
+                    if (ok) {
+                        // Open the next book
+                        const nextBookEl = document.querySelector(`[data-book-id="${result.nextBook.id}"]`);
+                        if (nextBookEl) {
+                            onBookOpen(nextBookEl);
+                        }
+                    }
+                } else {
+                    alert(`✓ Marked "${bookTitle}" as finished in GreatReads!`);
+                }
+
+                // Reload progress from server to reflect the cleared progress
+                await ensureProgressBooksLoaded();
+            } catch (error) {
+                console.error('Failed to mark as finished:', error);
+                alert(`Failed to mark as finished: ${error.message}`);
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = originalText;
+            }
+        }
+
+        // Wire up rating sliders to update their value displays
+        ['rating-enjoyment', 'rating-readability', 'rating-characters',
+         'rating-writing', 'rating-world-building', 'rating-spice', 'rating-horror'].forEach(id => {
+            const slider = document.getElementById(id);
+            const valueSpan = document.getElementById(`${id}-value`);
+            if (slider && valueSpan) {
+                slider.addEventListener('input', () => {
+                    valueSpan.textContent = slider.value;
+                });
+            }
+        });
+
         document.getElementById('ctx-clear-progress').addEventListener('click', async (e) => {
             e.stopPropagation();
             if (!_ctxBookId) { hideBookCtxMenu(); return; }

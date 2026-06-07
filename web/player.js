@@ -17,10 +17,12 @@ const EBOOK_ID = params.get('bookId') || '';
 const EBOOK_FORMAT = params.get('format') || 'epub';
 const HAS_EBOOK = params.get('hasEbook') === '1' && !!EBOOK_ID;
 
-// We persist resume position to our own backend (keyed by the ABS id) so it
-// survives sessions/devices and surfaces in the library "Continue reading"
-// list, exactly like ebook progress. Speed is a global user preference.
-const PROGRESS_KEY = ABS_ID ? ('abs:' + ABS_ID) : '';
+// We persist resume position to our own backend. For dual-format books
+// (has both ebook and audiobook), we key progress by the CALIBRE book ID
+// so ebook and audiobook share one unified progress record. For audio-only
+// books, we use "abs:<absId>". This ensures one progress record per book
+// regardless of which format you're using. Speed is a global user preference.
+const PROGRESS_KEY = HAS_EBOOK && EBOOK_ID ? EBOOK_ID : (ABS_ID ? ('abs:' + ABS_ID) : '');
 const SPEED_KEY = 'ereader.audio.speed';
 
 // Multi-part edition (e.g. a dramatized adaptation split across 2 ABS items, or
