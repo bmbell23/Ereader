@@ -39,21 +39,32 @@ curl -s http://localhost:8091/api/health
 
 ### 3. Restart Static Server if Down
 
+**The static server now has a watchdog (`web/keep-alive.sh`) that auto-restarts it on crash.**
+
+Check if watchdog is running:
 ```bash
-# Find and kill existing server on 8090
-ps aux | grep "python3 serve.py" | grep -v grep
-# Note the PID, then:
-kill <PID>
+ps aux | grep keep-alive | grep -v grep
+# Should show: /bin/bash ./keep-alive.sh
+```
 
-# Or kill all serve.py processes:
-ps aux | grep "python3 serve.py" | grep -v grep | awk '{print $2}' | xargs -r kill
-
-# Start fresh (MUST be in web/ directory!)
+If watchdog is NOT running, start it:
+```bash
 cd /home/brandon/projects/Ereader/web
-python3 serve.py &
+nohup ./keep-alive.sh > /tmp/ereader-watchdog.log 2>&1 &
 
-# Verify it's serving
-curl -s http://100.69.184.113:8090/ | head -20
+# Check logs
+tail -f /tmp/ereader-watchdog.log
+# Should show: "Server is UP on port 8090"
+```
+
+If watchdog IS running but server still down:
+```bash
+# Check watchdog logs for errors
+cat /tmp/ereader-watchdog.log
+
+# Manual restart (watchdog will take over after this)
+pkill -f "python3 serve.py"
+sleep 6
 ss -ltnp | grep :8090
 ```
 
@@ -127,22 +138,27 @@ cd /home/brandon/projects/Ereader
 # Revert all code changes
 git checkout .
 
-# Kill both services
+# Kill backend
 kill $(cat server.pid) 2>/dev/null || true
-ps aux | grep "python3 serve.py" | grep -v grep | awk '{print $2}' | xargs -r kill
+
+# Kill static server + watchdog
+pkill -f "keep-alive.sh"
+pkill -f "python3 serve.py"
+sleep 1
 
 # Restart backend
 cd backend && ./run.sh &
 sleep 2
 
-# Restart static server
-cd ../web && python3 serve.py &
-sleep 2
+# Start static server watchdog (auto-restarts on crash)
+cd ../web && nohup ./keep-alive.sh > /tmp/ereader-watchdog.log 2>&1 &
+sleep 3
 
 # Verify both are up
 echo "Checking services..."
 curl -s http://localhost:8091/api/health | jq -r '.status' && echo "✓ Backend OK" || echo "✗ Backend FAILED"
 curl -s http://100.69.184.113:8090/ | head -1 && echo "✓ Static server OK" || echo "✗ Static server FAILED"
+ps aux | grep keep-alive | grep -v grep && echo "✓ Watchdog running" || echo "✗ Watchdog NOT running"
 ```
 
 **Then on your phone:**
