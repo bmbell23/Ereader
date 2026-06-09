@@ -987,6 +987,9 @@
     <!-- Line-bookmark flag overlay — flags are positioned here by renderLineBookmarkFlags() -->
     <div id="line-bookmark-flags" aria-hidden="true"></div>
 
+    <!-- Backdrop for reader-controls menu — tap to dismiss -->
+    <div id="reader-controls-backdrop" style="display:none;position:fixed;inset:0;z-index:9999;background:transparent;" onclick="toggleMenu()"></div>
+
     <div class="reader-controls" id="reader-controls">
         <button class="menu-close" onclick="toggleMenu()">✕</button>
         <h3 style="color: #fff; margin: 0 0 10px 0;">Reading Options</h3>
@@ -1049,11 +1052,11 @@
         </div>
 
         <div class="setting-group">
-            <span class="setting-label">Hyphens</span>
+            <span class="setting-label">Flip 180°</span>
             <div class="setting-controls">
                 <div class="pill-toggle">
-                    <button id="hyphen-on"  onclick="setHyphenation(true)">On</button>
-                    <button id="hyphen-off" onclick="setHyphenation(false)">Off</button>
+                    <button id="flip-on"  onclick="setFlip180(true)">On</button>
+                    <button id="flip-off" onclick="setFlip180(false)">Off</button>
                 </div>
             </div>
         </div>
@@ -1345,6 +1348,8 @@
         if (isDualPage) document.body.classList.add('dual-page');
 
         function goBack() {
+            // Clear 180° flip before navigating away
+            document.body.style.transform = '';
             window.location.href = 'index.html';
         }
 
@@ -1634,7 +1639,7 @@
             epubContent.innerHTML = contentDiv.innerHTML;
             epubContent.style.fontSize = fontSize + 'px';
             // Re-apply persisted display prefs (alignment / font-family /
-            // hyphenation) now that the element actually has content.
+            // hyphenation / flip) now that the element actually has content.
             applyReaderPrefs();
 
             // Suppress double column-break: each .epub-spine-item wrapper
@@ -3606,6 +3611,7 @@
         const ALIGN_KEY  = 'ereader.textAlign';     // 'left' | 'center' | 'justify' | 'right'
         const FFAMILY_KEY = 'ereader.fontFamily';   // CSS font-family string (the VALUE we set)
         const HYPHEN_KEY = 'ereader.hyphenation';   // '1' | '0'
+        const FLIP180_KEY = 'ereader.flip180';      // '1' | '0'
         const GFONTS_KEY = 'ereader.fonts.google';  // JSON array of Google font names
 
         // Stack used when the user has not picked anything (matches body).
@@ -3623,6 +3629,7 @@
         let textAlignPref = 'left';
         let fontFamilyPref = DEFAULT_FFAMILY;
         let hyphenationPref = false;
+        let flip180Pref = false;
 
         function loadAlignPref() {
             try {
@@ -3640,6 +3647,10 @@
         }
         function loadHyphenationPref() {
             try { return localStorage.getItem(HYPHEN_KEY) === '1'; } catch (e) {}
+            return false;
+        }
+        function loadFlip180Pref() {
+            try { return localStorage.getItem(FLIP180_KEY) === '1'; } catch (e) {}
             return false;
         }
         function loadGoogleFonts() {
@@ -3670,7 +3681,7 @@
             document.head.appendChild(link);
         }
 
-        // Apply all three display prefs to the live #epub-content element.
+        // Apply all display prefs to the live #epub-content element.
         // Caller decides whether to also re-paginate (only needed when
         // glyph metrics change — font swap, hyphenation toggle).
         function applyReaderPrefs() {
@@ -3688,6 +3699,12 @@
                 c.style.hyphens = 'manual';
                 c.style.webkitHyphens = 'manual';
             }
+            // Apply 180° flip to entire body for upside-down reading
+            if (flip180Pref) {
+                document.body.style.transform = 'rotate(180deg)';
+            } else {
+                document.body.style.transform = '';
+            }
         }
 
         function updateAlignButtons() {
@@ -3701,6 +3718,12 @@
             const off = document.getElementById('hyphen-off');
             if (on)  on.classList.toggle('active',  hyphenationPref);
             if (off) off.classList.toggle('active', !hyphenationPref);
+        }
+        function updateFlip180Buttons() {
+            const on  = document.getElementById('flip-on');
+            const off = document.getElementById('flip-off');
+            if (on)  on.classList.toggle('active',  flip180Pref);
+            if (off) off.classList.toggle('active', !flip180Pref);
         }
         function updateFontSelectValue() {
             const sel = document.getElementById('font-select');
@@ -3722,6 +3745,12 @@
             if (fontChangeAnchor == null) fontChangeAnchor = captureFineAnchor() ?? captureFirstVisibleAnchor();
             applyReaderPrefs();
             scheduleFontReflow();
+        }
+        function setFlip180(on) {
+            flip180Pref = !!on;
+            try { localStorage.setItem(FLIP180_KEY, on ? '1' : '0'); } catch (e) {}
+            updateFlip180Buttons();
+            applyReaderPrefs();
         }
         function setReaderFont(value) {
             if (!value) return;
@@ -4914,6 +4943,7 @@
 
         function toggleMenu() {
             const controls = document.getElementById('reader-controls');
+            const backdrop = document.getElementById('reader-controls-backdrop');
             controls.classList.toggle('visible');
             // While the menu is open, also drop out of Android immersive
             // mode so the system gesture insets are reported again and the
@@ -4921,6 +4951,7 @@
             // menu is dismissed. `window.Android` is only defined inside the
             // native WebView, so this is a no-op in a regular browser.
             const open = controls.classList.contains('visible');
+            if (backdrop) backdrop.style.display = open ? 'block' : 'none';
             try {
                 if (window.Android && typeof window.Android.showSystemBars === 'function') {
                     if (open) window.Android.showSystemBars();
@@ -5668,14 +5699,20 @@
             let _lpStartX = 0, _lpStartY = 0;
 
             function _isMarginTouch(clientX) {
+                // When flipped 180°, transform the touch coordinate to match the visual layout
+                let x = clientX;
+                if (flip180Pref) {
+                    // Flip: physical left → visual right, physical right → visual left
+                    x = pageWidth - clientX;
+                }
                 // Left margin of left page (single or dual).
-                if (clientX < SIDE_PADDING) return true;
+                if (x < SIDE_PADDING) return true;
                 // Left margin of right page in dual-column layout.  We use
                 // currentColumnCount (live) instead of isDualPage because the
                 // layout can be 2-up either from the user preference OR auto-
                 // selected based on viewport width (see calculatePages).
                 if (currentColumnCount === 2 &&
-                    clientX >= pageWidth / 2 && clientX < pageWidth / 2 + SIDE_PADDING) return true;
+                    x >= pageWidth / 2 && x < pageWidth / 2 + SIDE_PADDING) return true;
                 return false;
             }
 
@@ -5690,8 +5727,13 @@
                 const t = e.changedTouches[0];
                 _lpStartX = t.clientX; _lpStartY = t.clientY;
                 if (_isMarginTouch(t.clientX)) {
-                    const cy = t.clientY;
-                    const cx = t.clientX;
+                    let cy = t.clientY;
+                    let cx = t.clientX;
+                    // Transform coordinates when flipped 180°
+                    if (flip180Pref) {
+                        cx = pageWidth - cx;
+                        cy = window.innerHeight - cy;
+                    }
                     _lpTimer = setTimeout(() => {
                         _lpFired = true;
                         if (navigator.vibrate) navigator.vibrate(30);
@@ -5752,33 +5794,38 @@
 
                 console.log('Touch detected:', diffX, diffY);
 
+                // When flipped 180°, invert the swipe and tap directions
+                const isFlipped = flip180Pref;
+
                 // Swipe for page navigation
                 if (Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > 50) {
                     if (diffX > 0) {
-                        // Swipe left - next page
-                        console.log('Next page (swipe)');
-                        nextPage();
+                        // Swipe left - next page (or prev when flipped)
+                        console.log(isFlipped ? 'Prev page (swipe left, flipped)' : 'Next page (swipe left)');
+                        isFlipped ? prevPage() : nextPage();
                     } else {
-                        // Swipe right - previous page
-                        console.log('Prev page (swipe)');
-                        prevPage();
+                        // Swipe right - previous page (or next when flipped)
+                        console.log(isFlipped ? 'Next page (swipe right, flipped)' : 'Prev page (swipe right)');
+                        isFlipped ? nextPage() : prevPage();
                     }
                 }
                 // Tap navigation like Kindle
                 else if (Math.abs(diffX) < 30 && Math.abs(diffY) < 30) {
                     const tapX = touchEndX;
                     const screenWidth = window.innerWidth;
-                    const leftZone = screenWidth * 0.25;  // Left 25% = previous
-                    const rightZone = screenWidth * 0.75; // Right 25% = next
+                    const leftZone = screenWidth * 0.25;  // Left 25%
+                    const rightZone = screenWidth * 0.75; // Right 25%
 
                     if (tapX < leftZone) {
-                        // Tap left side - previous page
-                        console.log('Prev page (tap left)');
-                        prevPage();
+                        // Physical left tap: prev in normal mode, next when flipped
+                        // (because physical left appears as visual right when flipped)
+                        console.log(isFlipped ? 'Next page (tap left, flipped)' : 'Prev page (tap left)');
+                        isFlipped ? nextPage() : prevPage();
                     } else if (tapX > rightZone) {
-                        // Tap right side - next page
-                        console.log('Next page (tap right)');
-                        nextPage();
+                        // Physical right tap: next in normal mode, prev when flipped
+                        // (because physical right appears as visual left when flipped)
+                        console.log(isFlipped ? 'Prev page (tap right, flipped)' : 'Next page (tap right)');
+                        isFlipped ? prevPage() : nextPage();
                     } else {
                         // Tap center - no action (use hamburger button for menu)
                     }
@@ -5868,19 +5915,21 @@
             if (lbl) lbl.textContent = fontSize;
         }
 
-        // Same for the display prefs (align / font / hyphenation). Loading
+        // Same for the display prefs (align / font / hyphenation / flip). Loading
         // these BEFORE renderEpubContent runs means the first paint matches
         // the user's last session — no visible re-layout flash.
         {
             textAlignPref   = loadAlignPref();
             fontFamilyPref  = loadFontFamilyPref();
             hyphenationPref = loadHyphenationPref();
+            flip180Pref     = loadFlip180Pref();
             // Re-inject stylesheet links for any previously-loaded Google
             // Fonts so the names resolve once the dropdown selects one.
             for (const name of loadGoogleFonts()) ensureGoogleFontLink(name);
             rebuildFontDropdown();
             updateAlignButtons();
             updateHyphenButtons();
+            updateFlip180Buttons();
         }
 
         // Load the book

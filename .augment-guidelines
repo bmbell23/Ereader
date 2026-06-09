@@ -105,36 +105,57 @@ All endpoints are JSON unless noted. CORS is permissive.
   - `GET  /api/series` — groups the full merged library (Calibre + ABS) into series. Reuses the full-library cache so grouping spans all Calibre pages and audio-only items. Returns `{series:[{name, count, mediaTypes, cover, books:[…]}, …], absEnabled}`. Books with no series are omitted; books within each group are sorted by `_series_sort_key` (unnumbered `series_index: null` first — ahead of 0/negatives — then numeric ascending, then title). Series cards are sorted alphabetically. Used by the frontend Series sort pill. The frontend series-detail overlay renders a `#N` badge (bottom-left of each card, lifted above any progress bars) via `bookCardHTML(book, {showSeriesNum:true})`; unnumbered books show no badge. **ABS bakes the sequence into the series name** (`"Dresden Files #10.4"`, `"A Song of Ice and Fire #3"`) with `series_index = 0`, which would split every audiobook into its own one-book group — `normalize_abs_item` calls `_split_abs_series` to peel the trailing `#N`/`#N.N` off into a clean base name + numeric `series_index`, so audio-only items group under the same series as their Calibre ebook counterparts (read-only against ABS; the fix lives entirely in our normalization).
 - **Saga** (Calibre `#universe` custom column, label "Universe", e.g. "The Cosmere")
   - `GET  /api/saga` — groups the library into sagas by the Calibre `#universe` custom column (read in `get_book_metadata`, surfaced as the `universe` field; `''` when unset, also part of `_SERIES_BOOK_FIELDS`). Same payload shape as `/api/series` but keyed `{sagas:[{name, count, mediaTypes, cover, books:[…]}, …], absEnabled}`. Books with no universe are omitted. **Calibre-only**: ABS has no universe field, so audio-only items (no `universe`) are naturally excluded; dual-format works still appear via their Calibre side. Books within a saga are sorted by `_saga_sort_key` (by series name, then `series_index` with unnumbered first, then title) so a saga reads as its constituent series in order; seriesless books sort last. Sagas are sorted alphabetically. Used by the frontend Saga sort pill; the saga-detail overlay reuses the series overlay and renders plain `bookCardHTML` cards (no `#N` badge — a saga spans multiple series, so a bare index would be ambiguous).
-- **GreatReads tracker integration**
+- **GreatReads tracker integration** (see "GreatReads Integration" section below for the full upstream API contract)
   - `POST /api/greatreads/sync` — mirror in-progress percentages to GreatReads (respects format per reading). Idempotent, non-destructive. Supports `?dry_run=1`.
-  - `GET  /api/greatreads/format/<bookId>` — get the media format GreatReads is tracking for this book. Returns `{media: "Physical"|"Ebook"|"Audio"|null, readingId: int|null, status: str|null}`. Prioritizes in-progress readings, falls back to any reading with matching title. Used by the UI to pre-select the correct format when marking as finished.
-  - `POST /api/greatreads/finish` — mark a book as finished in GreatReads with rating and finish date. Body: `{bookId, title, author, media: "Physical"|"Ebook"|"Audio", finishDate: "YYYY-MM-DD", rating: 0-10 (calculated overall), ratings: {horror, spice, world_building, writing, characters, readability, enjoyment} (all required, 0-10 integers)}`. Returns `{success, readingId, message, nextBook: {...}|null}`. Clears local progress record on success. Finds or creates a GreatReads reading; if the book doesn't exist in GreatReads, returns 404 directing user to add it manually. The UI always shows all 7 rating sliders (0-10 integer steps); overall rating is computed as their average. Media format is auto-detected from GreatReads and hidden from the user.
+  - `GET  /api/greatreads/format/<bookId>` — auto-detect which in-progress reading GreatReads has for this book. Returns `{media: "Physical"|"Ebook"|"Audio"|null, readingId: int|null, status: str|null}`. Pulls `?status=in_progress&limit=1000` and matches by normalized title locally (upstream has no title filter — see below). Returns nulls when no in-progress reading matches; the UI then falls back to inferring media from `mediaTypes`.
+  - `POST /api/greatreads/finish` — mark a book as finished in GreatReads. Body: `{bookId, title, author, media, finishDate: "YYYY-MM-DD", rating, ratings: {horror, spice, world_building, writing, characters, readability, enjoyment} (all 0-10 from our slider), readingId: int|null}`. Returns `{success, readingId, message, nextBook: {readingId, alreadyStarted, title, media, id, author, cover, mediaTypes}|null}`. Flow: (1) resolve the reading — use `readingId` if supplied, else search `?status=in_progress`; 404 if no in-progress reading matches (user must start it in GreatReads first). (2) `PUT /api/readings/{id}/` with `date_finished_actual=finishDate` + the seven `rating_*` ints (**halve our 0-10 slider value and round to nearest int 0-5** — GR's native UI is 5 emoji items / `parseInt`; raw 0-10 renders inconsistently because GR's read-side halves anything >5 for legacy compat, so values ≤5 like horror=2 stay 2 while writing=7 renders 4. Sending halved-and-rounded matches what the user sees in GR.). **Never send `rating_overall`** — it's a computed property server-side. (3) Pull `GET /api/readings/tbr`, pick the first item whose `media == finished_media` (excluding the one just finished) and return it as `nextBook`. **Does NOT start the next reading** — that's the caller's job via `/start-next` below, so a Cancel actually cancels. (4) Clear our local progress record(s).
+  - `POST /api/greatreads/start-next` — surface a not-yet-started TBR reading as in-progress in GreatReads. Body: `{readingId: int (required), startDate: "YYYY-MM-DD" (optional; defaults to today)}`. Forwards to upstream `POST /api/readings/{id}/start?start_date=…`. Returns `{success, readingId, startDate}` on 200 or 502 on upstream error. The frontend calls this only after the user confirms the "Start reading X next?" prompt from `/finish`.
 - **Feature requests / TODO list** (see "Requests Workflow" below)
   - `GET    /api/requests?status=` — list, newest-updated first; optional status filter
   - `POST   /api/requests` — create (`title` required; defaults to `Backlog`)
   - `PUT    /api/requests/<id>` — partial update; mutable: `title`, `body`, `status`, `sections`
   - `DELETE /api/requests/<id>`
   - `POST   /api/requests/<id>/comments` — append a comment `{text, author?}` (iteration thread)
-- **GreatReads Integration** (external reading tracker at `GREATREADS_URL`, default `http://100.69.184.113:8007`)
-  - **Overview**: GreatReads is a separate Django-based reading tracker application. Code lives at `../GreatReads/`. **CRITICAL**: When working with GreatReads integration, ALWAYS check the actual GreatReads codebase/database schema — never guess about field names, data structures, or API behavior.
-  - **Chain Structure**: GreatReads uses a **linked-list chain** per media format. Each `read` record has an `id_previous` field pointing to the previous reading in that format's chain. The NEXT book in the chain is the one whose `id_previous` points to the CURRENT reading. See `../GreatReads/CHAIN_SYSTEM_ANALYSIS.md` for full details.
-  - **Key GreatReads Fields** (from `../GreatReads/src/greatreads.db` schema):
-    - `id` — reading ID
-    - `id_previous` — FK to `read.id`, creates the chain structure (null = chain head)
-    - `book_id` — FK to the book
-    - `media` — format string: "Physical", "Ebook", "Audio"
-    - `status` — reading status (in GreatReads, typically "finished" or inferred from dates)
-    - `date_started` — actual start date
-    - `date_finished_actual` — actual finish date
-    - `date_est_start`, `date_est_end` — calculated by GreatReads' chain calculator
-    - `rating_overall`, `rating_horror`, `rating_spice`, `rating_world_building`, `rating_writing`, `rating_characters`, `rating_readability`, `rating_enjoyment` — all floats, 0-10 scale
-    - `rank` — separate ordering field (not used for chains)
-  - `GET  /api/greatreads/format/<bookId>` — auto-detect the media format GreatReads is tracking for a book (Physical/Ebook/Audio). Queries GreatReads readings filtered by title, prioritizes in-progress, returns `{media, readingId, status}` or nulls when not found.
-  - `POST /api/greatreads/finish` — mark a book as finished in GreatReads. Body: `{bookId, title, author, media, finishDate (YYYY-MM-DD), rating (0-10 overall), ratings: {horror, spice, world_building, writing, characters, readability, enjoyment (all 0-10)}, readingId: int | null (optional; the exact GreatReads reading to update — critical for re-reads)}`. Flow: (1) If `readingId` provided, fetch that reading directly; else search by title+media and prioritize in-progress. (2) **BEFORE marking current as finished**, find the next book in the chain by querying all readings for that media and finding the one whose `id_previous == current_reading_id`. (3) Update current reading to finished with ratings. (4) **START the next reading** by setting its `date_started` and `status` to `in_progress`. (5) Clear local progress for the finished book. (6) Return `{success, readingId, message, nextBook: {id, title, author, cover, mediaTypes}}` where nextBook is the one we just started in GreatReads.
 - **Meta**
   - `GET /api/health` — checks Calibre reachability, returns `version`
   - `GET /api/version` — reads `version.txt` live
   - `GET /api/build-stamp` — `YYMMDD-HH:MM` from the newest of `web/{index,reader}.html`. Drives the status-bar build pill so the user can tell at a glance whether the web code is fresh. Distinct from `/api/version` (which tracks the APK semver).
+
+## GreatReads Integration (upstream API contract)
+
+External reading tracker at `GREATREADS_URL` (default `http://100.69.184.113:8007`). FastAPI app, source at `../GreatReads/`. No auth — server auto-authenticates as the `brandon` user when no cookie is present; CORS is `*`. Always read-only from our side; **the only write surface we ever touch is `PUT /api/readings/{id}/` (ratings + finish date) and `POST /api/readings/{id}/start` (advance the next book)** — we never POST/DELETE readings or write to books.
+
+**Authoritative read endpoints (use these — do not paginate `/api/readings/` looking for things):**
+- `GET /api/readings/tbr` — every unfinished reading **already sorted in reading order** (in-progress first, then not-started by `date_est_start`). This is the canonical "what's next" source per format. Each item carries the joined `book` object. Use it for finding the next book of a given `media` after we mark something finished.
+- `GET /api/readings/?status=in_progress&limit=1000` — in-progress only (the common case for resolving a book we're about to finish). `limit` default is 100; bump for safety.
+- `GET /api/readings/{id}/` — single reading by id. Use this once we have a `readingId`.
+- `GET /api/books/?search=<text>` — book title fuzzy search. **Note:** `/api/books/` ignores any `title=` param; the real filter is `search=` (uses `ilike("%text%")`). Same trap on `/api/readings/`: it accepts only `skip`, `limit`, `status`, `media` — `?book_title=` is silently ignored and returns the first 100 readings, which is the bug that made "mark as finished" pick random books.
+
+**Reading fields we care about** (from `../GreatReads/src/greatreads/models/reading.py`):
+- `id`, `book_id`, `media` (`"Ebook"` | `"Audio"` | `"Physical"` — `"Kindle"` was migrated to `"Ebook"`; no other values)
+- `status` (`"in_progress"` | `"not_started"` | `"finished"` | `"paused"` — derived from dates)
+- `is_started`, `is_finished`, `is_paused`
+- `date_started`, `date_finished_actual`, `date_est_start`
+- `id_previous` — linked-list chain pointer per media. **Mostly `null` in the live DB**, so do NOT rely on `id_previous == current_reading_id` to find the next book; that's why our old chain-walk silently did nothing. Use `/api/readings/tbr` instead.
+- `rating_horror`, `rating_spice`, `rating_world_building`, `rating_writing`, `rating_characters`, `rating_readability`, `rating_enjoyment` — `Float` columns, but **GR's native UI is a 0-5 integer scale** (5 emoji items, `parseInt` throughout — see `../GreatReads/src/greatreads/static/js/app.js`). Send `int(round(slider/2))` clamped to 0-5. GR's read-side has legacy 0-10 backward compat: if it sees a stored value `>5` it divides by 2 and rounds, but values `≤5` are shown raw — so sending raw 0-10 produces inconsistent display (e.g. writing=7 → 4 stars, horror=2 → 2 stars; the "horror wasn't halved" symptom).
+- `rating_overall` — **computed `@property` server-side** (average of writing/characters/world_building/readability/enjoyment, on whatever scale those were stored). Read-only. Never send it on PUT.
+- `current_percent` — 0-100 float we push via `PUT /api/readings/{id}/progress?current_percent=<n>` from `/api/greatreads/sync`.
+
+**Write paths we use:**
+- `PUT /api/readings/{id}/` — partial update via Pydantic `ReadingUpdate`. To mark finished, send `{"date_finished_actual": "YYYY-MM-DD", "rating_*": <0-5 ints>}`. The server runs `ChainCalculator.recalculate_all_chains()` afterward.
+- `PUT /api/readings/{id}/progress?current_percent=<float>` — progress-only update used by `/api/greatreads/sync`.
+- `POST /api/readings/{id}/start?start_date=YYYY-MM-DD` — start a not-started reading (sets `date_started`, recalcs chains). Used to surface the next TBR book as "in progress" after we mark its predecessor finished, because `id_previous` is mostly null so GreatReads' own `finish_reading_and_start_next` no-ops.
+- We deliberately **do not** call `POST /api/readings/{id}/finish` (it hard-codes `date.today()` and rejects if `date_finished_actual` is set — useless when the user picks a custom finish date).
+
+**Anti-patterns (these will silently fail or corrupt data — search the codebase for these and remove on sight):**
+- `params={'book_title': title}` on `/api/readings/` — param doesn't exist, returns first 100 readings.
+- `params={'title': title}` on `/api/books/` — same trap; use `params={'search': title}`.
+- Sending raw 0-10 ratings — GR's UI is 0-5 ints; only values >5 get auto-halved on read, so values ≤5 display unscaled. Always `int(round(slider/2))`.
+- Sending `rating_overall` on PUT — ignored (read-only property).
+- Walking `id_previous` to find the next book — chain links are mostly null. Use `/api/readings/tbr` filtered by `media` instead.
+- Using `PATCH` on a reading — the route is `PUT`.
+
+**Reference files:** source at `../GreatReads/src/greatreads/routes/readings.py` and `.../models/reading.py`; chain math at `../GreatReads/src/greatreads/services/chain_calculator.py`. The `GREATREADS_INTEGRATION.md` and `GREATREADS_CHAIN_REFERENCE.md` files in this repo predate this section — trust this file when they disagree.
 
 ## Persisted Backend State
 

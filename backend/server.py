@@ -1787,11 +1787,13 @@ def delete_progress(book_id):
 def _gr_media_kind(media):
     """Bucket a GreatReads `media` string into the format whose progress we feed
     it: 'audio' or 'ebook'. Physical (and anything else) has no digital progress
-    source on our side, so it maps to None and is skipped."""
+    source on our side, so it maps to None and is skipped. GreatReads only emits
+    'Ebook' / 'Audio' / 'Physical' today (legacy 'Kindle' was migrated to
+    'Ebook'); we keep the lowercase fallback for forward-compatibility."""
     m = (media or '').strip().lower()
     if m in ('audio', 'audiobook'):
         return 'audio'
-    if m in ('ebook', 'kindle', 'e-book'):
+    if m in ('ebook', 'e-book'):
         return 'ebook'
     return None
 
@@ -1932,35 +1934,26 @@ def greatreads_get_format(book_id):
     title = book_meta.get('title', '')
     norm_title = _norm(_strip_edition(title))
 
+    # GreatReads' /api/readings/ does NOT support a title filter — only skip,
+    # limit, status, media. Pulling the in-progress slice (small N) and matching
+    # locally is both correct and cheap; this is the bug that made the old
+    # ?book_title= path silently return the first 100 readings.
     try:
-        # Check for existing reading (any status, but prioritize in_progress)
         r = requests.get(GREATREADS_URL + '/api/readings/',
-                        params={'book_title': title}, timeout=15)
+                        params={'status': 'in_progress', 'limit': 1000},
+                        timeout=15)
         r.raise_for_status()
         readings = r.json()
-
-        # Look for an existing reading that matches by title
-        # Prioritize in_progress, then any other status
-        in_progress = None
-        any_reading = None
 
         for rd in (readings or []):
             rd_title = (rd.get('book') or {}).get('title') or ''
             rd_norm = _norm(_strip_edition(rd_title))
             if rd_norm == norm_title:
-                if rd.get('status') == 'in_progress':
-                    in_progress = rd
-                    break
-                elif not any_reading:
-                    any_reading = rd
-
-        match = in_progress or any_reading
-        if match:
-            return jsonify({
-                'media': match.get('media'),
-                'readingId': match.get('id'),
-                'status': match.get('status')
-            })
+                return jsonify({
+                    'media': rd.get('media'),
+                    'readingId': rd.get('id'),
+                    'status': rd.get('status'),
+                })
     except Exception as e:
         print(f'Warning: Failed to fetch GreatReads format: {e}')
 
@@ -1968,33 +1961,24 @@ def greatreads_get_format(book_id):
 
 @app.route('/api/greatreads/finish', methods=['POST'])
 def greatreads_finish():
-    """Mark a book as finished in GreatReads with rating and finish date.
+    """Mark a book as finished in GreatReads, then surface the next TBR book.
 
     Body: {
         bookId: str (Calibre id or "abs:<id>"),
         title: str,
         author: str,
-        media: str ("Physical", "Ebook", "Audio"),
+        media: str ("Physical" | "Ebook" | "Audio"),
         finishDate: str (YYYY-MM-DD),
-        rating: float (0-10 overall rating),
-        ratings: {  # optional detailed ratings
-            horror: float (0-10),
-            spice: float (0-10),
-            world_building: float (0-10),
-            writing: float (0-10),
-            characters: float (0-10),
-            readability: float (0-10),
-            enjoyment: float (0-10)
+        ratings: {  # optional, all 0-10 floats (GreatReads' native scale)
+            horror, spice, world_building, writing,
+            characters, readability, enjoyment
         },
-        readingId: int | null  # optional; the exact GreatReads reading to update (for re-reads)
+        readingId: int | null  # optional; skips the title-match fallback
     }
 
-    Returns: {
-        success: bool,
-        readingId: int,
-        message: str,
-        nextBook: {...} | null  # next book in series if available
-    }
+    Returns 200: {success, readingId, message, nextBook: {...}|null}
+    Returns 404 when no in-progress GreatReads reading matches this title.
+    Returns 502 on any GreatReads API error.
     """
     body = request.get_json(silent=True) or {}
     book_id = str(body.get('bookId', ''))
@@ -2002,22 +1986,23 @@ def greatreads_finish():
     author = body.get('author', '')
     media = body.get('media', 'Ebook')
     finish_date = body.get('finishDate', '')
-    rating_overall = body.get('rating', 0)
     detailed_ratings = body.get('ratings', {})
-    reading_id = body.get('readingId')  # Optional; the exact reading to update
+    reading_id = body.get('readingId')  # Optional; resolves the exact reading
 
     if not all([book_id, title, finish_date]):
         return jsonify({'error': 'Missing required fields: bookId, title, finishDate'}), 400
 
-    # Normalize title for matching (same logic as sync)
     norm_title = _norm(_strip_edition(title))
 
-    # Find existing reading in GreatReads or prepare to create one
+    # Resolve the reading we're finishing. Preferred path: the frontend already
+    # passed `readingId` from /api/greatreads/format (which now correctly hits
+    # ?status=in_progress&limit=1000). Fallback: pull the same in-progress slice
+    # and match by normalized title here. We deliberately do NOT fall back to
+    # /api/books/?title= or /api/readings/?book_title= — both params are silently
+    # ignored upstream and return the first 100 records, which was the original
+    # "loopy shit" bug that finished the wrong book.
     try:
         existing = None
-
-        # If we already know the exact reading ID (from /api/greatreads/format),
-        # use it directly — this handles re-reads correctly.
         if reading_id:
             try:
                 r = requests.get(GREATREADS_URL + f'/api/readings/{reading_id}/', timeout=15)
@@ -2025,158 +2010,93 @@ def greatreads_finish():
                 existing = r.json()
             except Exception as e:
                 print(f'Warning: Failed to fetch reading #{reading_id}: {e}')
-                # Fall through to search by title+media
+                reading_id = None  # Force the title fallback below
 
-        # Otherwise, search by title and media
         if not existing:
             r = requests.get(GREATREADS_URL + '/api/readings/',
-                            params={'book_title': title}, timeout=15)
+                             params={'status': 'in_progress', 'limit': 1000},
+                             timeout=15)
             r.raise_for_status()
-            readings = r.json()
-
-            # Look for an existing reading that matches by title and media.
-            # Prioritize in-progress readings (the one being finished now), but
-            # fall back to any reading if only finished/abandoned ones exist.
-            any_match = None
-            for rd in (readings or []):
+            for rd in (r.json() or []):
                 rd_title = (rd.get('book') or {}).get('title') or ''
-                rd_media = rd.get('media') or ''
-                rd_norm = _norm(_strip_edition(rd_title))
-                if rd_norm == norm_title and rd_media == media:
-                    if rd.get('status') == 'in_progress':
-                        existing = rd
-                        break  # Found the in-progress one, use it
-                    elif not any_match:
-                        any_match = rd
+                if _norm(_strip_edition(rd_title)) == norm_title:
+                    existing = rd
+                    break
 
-            if not existing:
-                existing = any_match
+        if not existing:
+            return jsonify({
+                'error': 'No in-progress GreatReads reading for this book',
+                'message': f'Start "{title}" in GreatReads first, then mark it finished here.',
+                'nextBook': None,
+            }), 404
 
-        if existing:
-            # Update existing reading to finished
-            reading_id = existing['id']
-            update_data = {
-                'date_finished_actual': finish_date,
-                'status': 'finished',
-                'rating_overall': rating_overall,
-            }
-            # Add detailed ratings if provided
-            for key, value in detailed_ratings.items():
-                update_data[f'rating_{key}'] = value
-
-            ur = requests.put(GREATREADS_URL + f'/api/readings/{reading_id}/',
-                            json=update_data, timeout=15)
-            ur.raise_for_status()
-            message = f'Marked existing reading #{reading_id} as finished'
-        else:
-            # Create new finished reading
-            # First, try to find the book in GreatReads by title
-            br = requests.get(GREATREADS_URL + '/api/books/',
-                            params={'title': title}, timeout=15)
-            br.raise_for_status()
-            books = br.json()
-
-            greatreads_book_id = None
-            if books:
-                # Use first match (could be improved with fuzzy matching)
-                greatreads_book_id = books[0].get('id')
-
-            if not greatreads_book_id:
-                # Book doesn't exist in GreatReads - would need to create it
-                # For now, return an error directing user to add it manually
-                return jsonify({
-                    'error': 'Book not found in GreatReads',
-                    'message': f'Please add "{title}" by {author} to your GreatReads library first',
-                    'nextBook': None
-                }), 404
-
-            # Create new reading
-            create_data = {
-                'book_id': greatreads_book_id,
-                'media': media,
-                'date_started': finish_date,  # Use finish date as start if unknown
-                'date_finished_actual': finish_date,
-                'status': 'finished',
-                'rating_overall': rating_overall,
-            }
-            for key, value in detailed_ratings.items():
-                create_data[f'rating_{key}'] = value
-
-            cr = requests.post(GREATREADS_URL + '/api/readings/',
-                             json=create_data, timeout=15)
-            cr.raise_for_status()
-            created = cr.json()
-            reading_id = created.get('id')
-            message = f'Created new reading #{reading_id} and marked as finished'
-
+        reading_id = existing['id']
+        # PUT ratings + finish date in one shot. GreatReads' native UI is a
+        # 0-5 integer scale (5 emoji items, parseInt throughout — see
+        # ../GreatReads/src/greatreads/static/js/app.js). Values >5 trigger
+        # legacy 0-10 backward-compat on read (divides by 2, rounds), so
+        # sending raw 0-10 produced inconsistent display: writing=7 rendered
+        # as 4 stars, while horror=2 rendered as 2 stars (looked unscaled).
+        # Halve + round to int so every rating displays exactly as entered.
+        # `rating_overall` stays computed server-side, never sent. The PUT
+        # route runs ChainCalculator.recalculate_all_chains() for us.
+        update_data = {'date_finished_actual': finish_date}
+        for key, value in (detailed_ratings or {}).items():
+            try:
+                v = max(0, min(5, round(float(value) / 2)))
+            except (TypeError, ValueError):
+                continue
+            update_data[f'rating_{key}'] = v
+        ur = requests.put(GREATREADS_URL + f'/api/readings/{reading_id}/',
+                          json=update_data, timeout=15)
+        ur.raise_for_status()
+        message = f'Marked reading #{reading_id} as finished'
     except Exception as e:
         return jsonify({'error': 'GreatReads API error', 'detail': str(e)}), 502
 
-    # Find next book in the GreatReads chain for this media format.
-    # In GreatReads, each reading has an id_previous field that points to the
-    # previous reading in the chain. The NEXT reading is the one whose id_previous
-    # points to the CURRENT reading. We need to find it BEFORE marking current as
-    # finished, then START it when we finish the current one.
+    # Next book in reading order for this media. Use /api/readings/tbr — it's
+    # the canonical "what's next" source, already sorted (in-progress first,
+    # then not-started by date_est_start). The old id_previous chain walk is
+    # broken in practice: most readings in the live DB have id_previous=null,
+    # so "find rd where id_previous == reading_id" silently returned nothing.
+    # We only LOOK UP the next book here; surfacing it as in-progress is the
+    # caller's job (POST /api/greatreads/start-next) so a frontend "Cancel"
+    # actually cancels.
     next_book = None
-    next_reading_id = None
     try:
-        # Get ALL readings for this media (not just in-progress, because the next
-        # one hasn't been started yet)
-        all_resp = requests.get(GREATREADS_URL + '/api/readings/',
-                               params={'media': media}, timeout=15)
-        all_resp.raise_for_status()
-        all_readings = all_resp.json()
-
-        # Find the reading whose id_previous points to the reading we're finishing
-        for rd in (all_readings or []):
-            if rd.get('id_previous') == reading_id:
-                # Found it! This is the next book in the chain
-                next_reading_id = rd.get('id')
-                tbr_book = rd.get('book') or {}
-                tbr_title = tbr_book.get('title') or ''
-
-                if not tbr_title:
-                    continue
-
-                # Search our library for this book
+        tbr_resp = requests.get(GREATREADS_URL + '/api/readings/tbr', timeout=15)
+        tbr_resp.raise_for_status()
+        for rd in (tbr_resp.json() or []):
+            if rd.get('media') != media:
+                continue
+            if rd.get('id') == reading_id:
+                continue  # Skip the one we just finished (in case TBR is stale)
+            tbr_title = (rd.get('book') or {}).get('title') or ''
+            local_match = None
+            if tbr_title:
                 norm_tbr = _norm(_strip_edition(tbr_title))
-
-                # Check merged library
                 if ABS_ENABLED:
                     enrich_map, audio_only = _get_library_cache()
                     all_items = list(enrich_map.values()) + audio_only
                 else:
                     all_items, _ = get_calibre_books(limit=0, offset=0)
-
-                # Find best match by normalized title
                 for item in all_items:
-                    item_title = item.get('title') or ''
-                    norm_item = _norm(_strip_edition(item_title))
-                    if norm_tbr == norm_item:
-                        # Found it - return minimal book info
-                        next_book = {
-                            'id': item.get('id'),
-                            'title': item.get('title'),
-                            'author': item.get('author'),
-                            'cover': item.get('cover') or item.get('thumbnail'),
-                            'mediaTypes': item.get('mediaTypes', [])
-                        }
+                    if _norm(_strip_edition(item.get('title') or '')) == norm_tbr:
+                        local_match = item
                         break
-
-                break  # Found the next reading, stop searching
+            next_book = {
+                'readingId': rd.get('id'),
+                'alreadyStarted': bool(rd.get('date_started')),
+                'title': tbr_title,
+                'media': rd.get('media'),
+                'id': (local_match or {}).get('id'),
+                'author': (local_match or {}).get('author'),
+                'cover': (local_match or {}).get('cover') or (local_match or {}).get('thumbnail'),
+                'mediaTypes': (local_match or {}).get('mediaTypes', []),
+            }
+            break
     except Exception as e:
-        print(f'Warning: Failed to find next GreatReads chain book: {e}')
-
-    # Start the next reading in the GreatReads chain (if we found one)
-    if next_reading_id:
-        try:
-            start_resp = requests.patch(GREATREADS_URL + f'/api/readings/{next_reading_id}/',
-                                       json={'date_started': finish_date, 'status': 'in_progress'},
-                                       timeout=15)
-            start_resp.raise_for_status()
-            print(f'Started next reading #{next_reading_id} in GreatReads chain')
-        except Exception as e:
-            print(f'Warning: Failed to start next reading #{next_reading_id}: {e}')
+        print(f'Warning: Failed to find next TBR book for media={media}: {e}')
 
     # Clear our progress record since book is finished.
     # For dual-format books, we use unified progress (Calibre ID), but we also
@@ -2218,6 +2138,39 @@ def greatreads_finish():
         'message': message,
         'nextBook': next_book
     })
+
+
+@app.route('/api/greatreads/start-next', methods=['POST'])
+def greatreads_start_next():
+    """Surface a not-yet-started TBR reading as in-progress in GreatReads.
+
+    Split out of /finish so the frontend's Cancel button actually cancels —
+    /finish returns the next book's info, the user confirms, then we call
+    this. GreatReads' own finish-and-start-next logic only fires when
+    id_previous chains are populated; most readings have id_previous=null,
+    so we have to start it explicitly via POST /api/readings/{id}/start.
+
+    Body: { readingId: int (required), startDate: "YYYY-MM-DD" (optional;
+            defaults to today) }
+    Returns 200 {success:true, readingId} on success, 502 on upstream error.
+    """
+    body = request.get_json(silent=True) or {}
+    reading_id = body.get('readingId')
+    start_date = body.get('startDate') or ''
+    if not reading_id:
+        return jsonify({'error': 'Missing required field: readingId'}), 400
+    if not start_date:
+        from datetime import date
+        start_date = date.today().isoformat()
+    try:
+        r = requests.post(
+            GREATREADS_URL + f'/api/readings/{reading_id}/start',
+            params={'start_date': start_date}, timeout=15)
+        r.raise_for_status()
+    except Exception as e:
+        return jsonify({'error': 'GreatReads API error', 'detail': str(e)}), 502
+    return jsonify({'success': True, 'readingId': reading_id, 'startDate': start_date})
+
 
 # ---------- Feature requests / TODO list ----------
 # Backing store for the in-app "Requests" page (web/requests.html). One JSON

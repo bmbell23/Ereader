@@ -2157,7 +2157,10 @@
 
                 closeFinishDialog();
 
-                // Show success and offer to start next book
+                // Show success and offer to start next book. The backend
+                // /finish endpoint deliberately does NOT auto-start the next
+                // reading — that's our job here, only on user confirm, via
+                // POST /api/greatreads/start-next. On Cancel we touch nothing.
                 if (result.nextBook) {
                     const nextTitle = result.nextBook.title;
                     const ok = await appConfirm(
@@ -2166,10 +2169,33 @@
                         'Start Reading'
                     );
                     if (ok) {
-                        // Open the next book
-                        const nextBookEl = document.querySelector(`[data-book-id="${result.nextBook.id}"]`);
-                        if (nextBookEl) {
-                            onBookOpen(nextBookEl);
+                        if (result.nextBook.readingId && !result.nextBook.alreadyStarted) {
+                            try {
+                                // Day after the finish date keeps the chronology sane.
+                                let startDate = finishDate;
+                                try {
+                                    const d = new Date(finishDate + 'T00:00:00');
+                                    d.setDate(d.getDate() + 1);
+                                    startDate = d.toISOString().slice(0, 10);
+                                } catch (_) {}
+                                await fetch(`${API_URL}/greatreads/start-next`, {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({
+                                        readingId: result.nextBook.readingId,
+                                        startDate
+                                    })
+                                });
+                            } catch (e) {
+                                console.warn('Failed to start next GreatReads reading:', e);
+                            }
+                        }
+                        // Open the next book in the local library (if we matched one)
+                        if (result.nextBook.id) {
+                            const nextBookEl = document.querySelector(`[data-book-id="${result.nextBook.id}"]`);
+                            if (nextBookEl) {
+                                onBookOpen(nextBookEl);
+                            }
                         }
                     }
                 } else {
