@@ -1152,6 +1152,28 @@
             cursor: pointer;
         }
         .summary-scene-link:active { color: #b066e0; }
+
+        /* ---------- Selection hardening ---------- */
+        /* UI chrome (status bar, clock, build stamp, progress bar, bookmark
+           ribbon, floating buttons, menus) must never be text-selectable.
+           Long-pressing any of them used to start a stray text selection that
+           grabbed the nearest book text; user-select:none stops that. */
+        .status-bar, #status-clock, #build-stamp,
+        #page-progress, #bookmark-corner,
+        #menu-btn, #search-btn, .reader-controls, .header,
+        #chapter-end-summary {
+            -webkit-user-select: none;
+            user-select: none;
+        }
+        /* While any full-screen overlay is open, the book underneath must be
+           inert: no text selection bleeding through the overlay, and no taps
+           reaching the page-turn / long-press handlers behind it. The overlay's
+           own content stays selectable because it lives outside #epub-content. */
+        body.overlay-open #epub-content {
+            -webkit-user-select: none;
+            user-select: none;
+            pointer-events: none;
+        }
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
@@ -5026,6 +5048,10 @@
             const badge   = document.getElementById('reader-kind-badge');
             const content = document.getElementById('reader-overlay-content');
             const scroll  = document.getElementById('reader-overlay-scroll');
+            // Clear the originating text selection + custom handles right away so
+            // their leading/trailing cursors don't linger through this overlay.
+            try { window.getSelection().removeAllRanges(); } catch (_) {}
+            _hideHLHandles();
             badge.textContent = kind === 'dict' ? '📖' : '🌐';
             titleEl.textContent = text;
             content.innerHTML = '<div class="cr-loading">Loading…</div>';
@@ -6677,6 +6703,28 @@
             if (search) search.style.display = 'none';
         }
 
+        // ===================== Overlay inertness (book underneath) =====================
+        // While any full-screen overlay is open the book underneath must be inert:
+        // CSS rule `body.overlay-open #epub-content` drops selection + taps so they
+        // can't bleed through the overlay. The back-button/history trapping itself
+        // is handled by armOverlayBack()/consumeOverlayBack()/_topOpenOverlay()
+        // above — we only mirror the open/closed state onto a body class here.
+        // A MutationObserver watches every overlay's style/class so we don't have
+        // to call into each open/close path; _topOpenOverlay() is the single
+        // source of truth for "is an overlay up".
+        const OVERLAY_IDS = ['toc-overlay', 'summary-overlay', 'search-overlay',
+                             'navlist-overlay', 'reader-overlay', 'hl-settings'];
+        function syncOverlayInert() {
+            document.body.classList.toggle('overlay-open', !!_topOpenOverlay());
+        }
+        (function _watchOverlays() {
+            const obs = new MutationObserver(syncOverlayInert);
+            OVERLAY_IDS.forEach(id => {
+                const el = document.getElementById(id);
+                if (el) obs.observe(el, { attributes: true, attributeFilter: ['style', 'class'] });
+            });
+        })();
+
         // ===================== Chapter summaries =====================
         // Overlay that surfaces the pre-written chapter summaries shipped in a
         // "summary set" (e.g. the Malazan compendium). The backend matches this
@@ -7013,6 +7061,8 @@
             }, { passive: true });
 
             viewport.addEventListener('touchend', (e) => {
+                // Don't let taps/swipes behind an open overlay turn the page.
+                if (_topOpenOverlay()) return;
                 touchEndX = e.changedTouches[0].screenX;
                 touchEndY = e.changedTouches[0].screenY;
                 // If there's a live text selection, suppress page-turn and
@@ -7089,6 +7139,8 @@
                 // typing in the search box (or any text field).
                 const tag = e.target && e.target.tagName;
                 if (e.target && (e.target.id === 'search-input' || tag === 'INPUT' || tag === 'TEXTAREA')) return;
+                // Don't turn pages behind an open overlay.
+                if (_topOpenOverlay()) return;
                 console.log('Key pressed:', e.key);
                 if (e.key === 'ArrowUp' || e.key === 'VolumeUp') {
                     e.preventDefault();
