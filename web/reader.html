@@ -780,6 +780,65 @@
         }
         .hl-popup button:hover { background: #333; }
         .hl-popup button.danger:hover { background: #5a1e1e; }
+        /* Hidden popup buttons (lookup mode hides delete/share). */
+        .hl-popup button.hidden { display: none; }
+
+        /* Clean reader (wiki / dictionary). Bare-bones, readable typography in
+           OUR scroll container — images never overflow (no horizontal scroll),
+           and there's no site chrome/ads. */
+        .clean-reader-content {
+            max-width: 720px;
+            margin: 0 auto;
+            padding: 18px 20px calc(env(safe-area-inset-bottom,0px) + 40px) 20px;
+            color: #e6e6e6;
+            font-size: 18px;
+            line-height: 1.65;
+            font-family: Georgia, 'Times New Roman', serif;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+        }
+        .clean-reader-content h1, .clean-reader-content h2,
+        .clean-reader-content h3, .clean-reader-content h4 {
+            color: #fff; line-height: 1.25; margin: 1.4em 0 0.5em;
+            font-family: -apple-system, system-ui, sans-serif;
+        }
+        .clean-reader-content h1 { font-size: 1.5em; }
+        .clean-reader-content h2 { font-size: 1.3em; border-bottom: 1px solid #333; padding-bottom: 4px; }
+        .clean-reader-content h3 { font-size: 1.12em; }
+        .clean-reader-content p { margin: 0 0 0.9em; }
+        .clean-reader-content a { color: #7aa2f7; text-decoration: none; }
+        .clean-reader-content img {
+            max-width: 100%; height: auto; border-radius: 6px; display: block;
+            margin: 10px auto;
+        }
+        .clean-reader-content figure { margin: 12px 0; }
+        .clean-reader-content figcaption,
+        .clean-reader-content .lead-caption { font-size: 13px; color: #9a9a9a; text-align: center; }
+        .clean-reader-content ul, .clean-reader-content ol { padding-left: 1.4em; margin: 0 0 0.9em; }
+        .clean-reader-content li { margin: 0.2em 0; }
+        .clean-reader-content table {
+            display: block; max-width: 100%; overflow-x: auto;
+            border-collapse: collapse; font-size: 14px; margin: 12px 0;
+        }
+        .clean-reader-content td, .clean-reader-content th {
+            border: 1px solid #333; padding: 5px 8px; vertical-align: top;
+        }
+        /* Fandom/portable infobox — keep it but tame the width + colors. */
+        .clean-reader-content .portable-infobox,
+        .clean-reader-content .infobox {
+            float: none; width: 100% !important; max-width: 100%;
+            background: #202020; border: 1px solid #333; border-radius: 8px;
+            padding: 10px; margin: 0 0 16px; font-size: 14px;
+        }
+        .clean-reader-content blockquote {
+            margin: 0 0 0.9em; padding-left: 14px; border-left: 3px solid #444; color: #bdbdbd;
+        }
+        /* Dictionary rendering */
+        .cr-dict-word { font-size: 26px; color:#fff; font-family: -apple-system, system-ui, sans-serif; }
+        .cr-dict-phon { color:#9a9a9a; font-size: 15px; margin: 2px 0 14px; }
+        .cr-dict-pos  { color:#C940B0; font-weight:600; margin: 16px 0 6px; font-family: -apple-system, system-ui, sans-serif; }
+        .cr-dict-ex   { color:#9a9a9a; font-style: italic; }
+        .cr-loading, .cr-empty { color:#9a9a9a; text-align:center; padding: 40px 20px; font-family: -apple-system, system-ui, sans-serif; }
 
         /* Custom drag handles for adjusting highlight bounds.
            Positioned by JS at the visual start / end of the active
@@ -1068,6 +1127,9 @@
             <button class="icon-btn" title="Table of contents" onclick="toggleTOC()">
                 <img src="assets/toc.png" alt="">
             </button>
+            <!-- Chapter summary — hidden by setSummaryButtonVisible() until a
+                 matching summary set is found for this book. -->
+            <button class="icon-btn" id="btn-summary" title="Chapter summary" style="display:none;font-size:22px;line-height:1;color:#fff;" onclick="openSummary()">📖</button>
             <button class="icon-btn" title="Highlights" onclick="openHighlightsList()">
                 <img src="assets/highlighter.png" alt="">
             </button>
@@ -1082,6 +1144,15 @@
         <button id="prev-btn" onclick="prevPage()">◄ Previous</button>
         <button id="next-btn" onclick="nextPage()">Next ►</button>
     </div>
+
+    <!-- End-of-chapter summary nudge. Shown by updateChapterEndAffordance()
+         only on the last page of a chapter that has a matching summary; tapping
+         opens that chapter's summary. Sits just above the bottom progress bar. -->
+    <button id="chapter-end-summary" onclick="openSummary()" style="display:none;position:fixed;left:50%;transform:translateX(-50%);bottom:34px;z-index:9100;
+         padding:9px 16px;border:none;border-radius:20px;cursor:pointer;font-size:14px;font-weight:600;color:#fff;
+         background:linear-gradient(90deg,#4067EF,#8640C0,#C940B0);box-shadow:0 2px 10px rgba(0,0,0,0.35);">
+        📖 Chapter summary
+    </button>
 
     <!-- Transparent page progress bar at bottom — two stacked rows.
          Row 1 (metrics, top):  chapter time left | time on current page |
@@ -1120,6 +1191,38 @@
         </div>
     </div>
 
+    <!-- Full-screen chapter-summary overlay. Opened from the Reading Options
+         menu (📖) and from the floating end-of-chapter button. Shows the summary
+         for a single reached chapter, with prev/next within reached chapters and
+         a "Story so far" mode that concatenates every chapter up to the current
+         one. Content + navigation are built by openSummary() / renderSummary(). -->
+    <div id="summary-overlay" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.96); z-index: 10000; overflow-y: auto; padding: calc(env(safe-area-inset-top, 0px) + 20px) 20px calc(env(safe-area-inset-bottom, 0px) + 24px) 20px;">
+        <div style="max-width: 760px; margin: 0 auto;">
+            <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 8px;">
+                <div style="min-width:0;">
+                    <div id="summary-set" style="color:#8a8a8a;font-size:12px;letter-spacing:.04em;text-transform:uppercase;"></div>
+                    <h2 id="summary-heading" style="color:#fff;margin:2px 0 0 0;font-size:22px;line-height:1.2;overflow:hidden;text-overflow:ellipsis;"></h2>
+                </div>
+                <button onclick="closeSummary()" style="flex:0 0 auto;background:#333;color:#fff;border:none;padding:10px 16px;border-radius:8px;font-size:16px;cursor:pointer;">✕</button>
+            </div>
+            <!-- Mode toggle: single chapter vs cumulative recap -->
+            <div style="display:flex;gap:8px;margin:10px 0 16px 0;">
+                <button id="summary-mode-chapter" onclick="setSummaryMode('chapter')"
+                        style="flex:1;padding:9px;border:none;border-radius:8px;cursor:pointer;font-size:14px;background:#2196F3;color:#fff;">This chapter</button>
+                <button id="summary-mode-recap" onclick="setSummaryMode('recap')"
+                        style="flex:1;padding:9px;border:none;border-radius:8px;cursor:pointer;font-size:14px;background:#2a2a2a;color:#ccc;">Story so far</button>
+            </div>
+            <div id="summary-body" style="background:#1c1c1c;border-radius:12px;padding:20px 22px;color:#e6e6e6;font-size:17px;line-height:1.6;"></div>
+            <!-- Prev/next within reached chapters (chapter mode only) -->
+            <div id="summary-nav" style="display:flex;justify-content:space-between;gap:10px;margin-top:16px;">
+                <button id="summary-prev" onclick="summaryStep(-1)"
+                        style="padding:11px 16px;border:none;border-radius:8px;cursor:pointer;font-size:15px;background:#2a2a2a;color:#fff;">◄ Prev</button>
+                <button id="summary-next" onclick="summaryStep(1)"
+                        style="padding:11px 16px;border:none;border-radius:8px;cursor:pointer;font-size:15px;background:#2a2a2a;color:#fff;">Next ►</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Full-screen in-book search overlay. Opened by #search-btn. Shows the
          recent-search history until a query is run, then exact + similar
          (fuzzy) results, each tappable to jump to that spot in the book. -->
@@ -1148,11 +1251,11 @@
 
     <!-- Highlight-action popup. JS positions it next to the tapped highlight. -->
     <div id="hl-popup" class="hl-popup" style="display:none;">
-        <button title="Copy text"             onclick="copyHL()">📋</button>
-        <button title="Share as image"        onclick="shareHL()">📤</button>
-        <button title="Look up in dictionary" onclick="lookupHL('dict')">📖</button>
-        <button title="Look up in wiki"       onclick="lookupHL('wiki')">🌐</button>
-        <button class="danger" title="Delete highlight" onclick="deleteHL()">🗑️</button>
+        <button id="hlb-copy"   title="Copy text"             onclick="copyHL()">📋</button>
+        <button id="hlb-share"  title="Share as image"        onclick="shareHL()">📤</button>
+        <button id="hlb-dict"   title="Look up in dictionary" onclick="lookupHL('dict')">📖</button>
+        <button id="hlb-wiki"   title="Look up in wiki"       onclick="lookupHL('wiki')">🌐</button>
+        <button id="hlb-delete" class="danger" title="Delete highlight" onclick="deleteHL()">🗑️</button>
     </div>
 
     <!-- Custom drag handles for adjusting highlight start/end.
@@ -1170,6 +1273,21 @@
         <div id="hl-magnifier-clone"></div>
         <div id="hl-magnifier-overlay"></div>
         <div id="hl-magnifier-crosshair"></div>
+    </div>
+
+    <!-- Clean in-app reader for wiki / dictionary lookups. Content is fetched
+         via the backend proxy (MediaWiki API / dictionaryapi.dev), stripped of
+         ads/nav/cruft, and rendered here in OUR scroll container (so no site
+         scroll jank). Built by openCleanReader() / renderWiki() / renderDict(). -->
+    <div id="reader-overlay" style="display:none;position:fixed;inset:0;z-index:10001;background:#181818;flex-direction:column;">
+        <div style="flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:calc(env(safe-area-inset-top,0px) + 12px) 14px 12px 14px;background:#101010;border-bottom:1px solid #2a2a2a;">
+            <span id="reader-kind-badge" style="flex:0 0 auto;font-size:18px;">🌐</span>
+            <div id="reader-overlay-title" style="flex:1;min-width:0;color:#fff;font-size:17px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Loading…</div>
+            <button onclick="closeCleanReader()" style="flex:0 0 auto;background:#333;color:#fff;border:none;padding:9px 15px;border-radius:8px;font-size:16px;cursor:pointer;">✕</button>
+        </div>
+        <div id="reader-overlay-scroll" style="flex:1 1 auto;overflow-y:auto;-webkit-overflow-scrolling:touch;">
+            <div id="reader-overlay-content" class="clean-reader-content"></div>
+        </div>
     </div>
 
     <!-- Lookup-URL settings modal -->
@@ -1308,6 +1426,13 @@
         // EPUB pagination state
         let epubPages = [];
         let currentEpubPage = 0;
+        // Chapter-summary set for this book, fetched from /api/summaries/<bookId>.
+        // null until loaded / when the book has no matching set. Shape:
+        // { available, setTitle, bookTitle, chapters:[{title, html}] }. Chapters
+        // are matched to the reader's chapters by normalized title (see
+        // _summaryNorm / buildReachedSummaryChapters). Spoiler-safe: the overlay
+        // only ever exposes chapters the reader has already reached.
+        let bookSummaries = null;
         // fontSize is initialised from localStorage further down (after
         // loadFontSizePref is declared); 18 is the fallback default.
         let fontSize = 18;
@@ -1777,7 +1902,8 @@
                 loadHighlightsForBook(),
                 loadBookmarksForBook(),
                 syncReadingStateFromServer(),
-                loadBookWordCount()
+                loadBookWordCount(),
+                loadBookSummaries()
             ]).finally(() => {
                 setTimeout(calculatePages, 100);
             });
@@ -2515,6 +2641,10 @@
                 const chPage  = currentEpubPage - chStart + 1;
                 const chPct   = (chPage / chTotal * 100).toFixed(1);
                 chText = `${chPage}/${chTotal} ${chPct}%`;
+                // End-of-chapter summary nudge: last page of this chapter.
+                updateChapterEndAffordance(chTitle, currentEpubPage >= chEnd - 1);
+            } else {
+                updateChapterEndAffordance('', false);
             }
             const chEl = document.getElementById('progress-chapter');
             if (chEl) chEl.textContent = chText;
@@ -4305,7 +4435,18 @@
         // after their finger lifts. The timer is reset on every
         // selectionchange (initial drag AND post-release handle moves), so
         // it only fires once the user has stopped moving for SETTLE_MS.
-        const SETTLE_MS = 1800;
+        // Debounce after the last selectionchange. Kept short so the action
+        // popup feels instant; the highlight-adjust drag still works because a
+        // re-grabbed handle fires selectionchange and re-arms this timer, and
+        // handleSelectionMaybe's overlap check replaces rather than duplicates.
+        const SETTLE_MS = 450;
+        // Selections of fewer than this many words are treated as a LOOKUP
+        // (wiki/dictionary search), not a highlight — so quick name/term
+        // searches don't litter the highlight list. (User: "3 words or less".)
+        const HL_MIN_WORDS = 4;
+        function _wordCount(s) {
+            return (s || '').trim().split(/\s+/).filter(Boolean).length;
+        }
         let _selSettleTimer = null;
         let _selSaveInFlight = false;
         function scheduleSelectionSettleSave() {
@@ -4315,7 +4456,15 @@
                 _selSettleTimer = null;
                 const sel = window.getSelection();
                 if (!sel || sel.isCollapsed || !sel.rangeCount) return;
-                if (!sel.toString().trim()) return;
+                const text = sel.toString().trim();
+                if (!text) return;
+                // Short selection (and not adjusting an existing highlight) →
+                // show the lookup popup instantly; do NOT save a highlight.
+                if (_wordCount(text) < HL_MIN_WORDS && !_editingHLId) {
+                    const range = getEpubSelectionRange();
+                    if (range) showLookupPopup(range, text);
+                    return;
+                }
                 _selSaveInFlight = true;
                 try { await handleSelectionMaybe(); }
                 finally { _selSaveInFlight = false; }
@@ -4341,16 +4490,18 @@
                 }, 420);
             }, 2000);
         }
-        function showHLPopup(hlId) {
-            if (!_hlRanges.has(hlId)) return;
-            _activeHLId   = hlId;
-            _activeHLText = getHighlightText(hlId);
+        // Show/hide popup buttons per mode. 'lookup' = a short, unsaved
+        // selection (no highlight to share/delete); 'highlight' = full actions.
+        function _setPopupMode(mode) {
+            const lookup = (mode === 'lookup');
+            const share  = document.getElementById('hlb-share');
+            const del    = document.getElementById('hlb-delete');
+            if (share) share.classList.toggle('hidden', lookup);
+            if (del)   del.classList.toggle('hidden', lookup);
+        }
+        // Position #hl-popup above (or below) a viewport rect, clamped on-screen.
+        function _placePopup(rect) {
             const popup = document.getElementById('hl-popup');
-            popup.style.opacity = '1';
-            popup.style.display = 'flex';
-            // Measure after display.
-            const rect = getHighlightRect(hlId);
-            if (!rect) return;
             const popW = popup.offsetWidth  || 280;
             const popH = popup.offsetHeight || 52;
             let left = rect.left + rect.width / 2 - popW / 2;
@@ -4360,6 +4511,36 @@
             top  = Math.max(8, Math.min(top,  window.innerHeight - popH - 8));
             popup.style.left = left + 'px';
             popup.style.top  = top + 'px';
+        }
+        // Popup for a short, unsaved selection: lookup actions only, anchored to
+        // the live selection. No highlight is created and it does not auto-fade
+        // (dismissed by tapping away).
+        function showLookupPopup(range, text) {
+            _activeHLId = null;
+            _activeHLText = text;
+            _editingHLId = null;
+            if (_hlPopupTimer) { clearTimeout(_hlPopupTimer); _hlPopupTimer = null; }
+            const popup = document.getElementById('hl-popup');
+            _setPopupMode('lookup');
+            popup.style.opacity = '1';
+            popup.style.display = 'flex';
+            let rect;
+            try { rect = range.getBoundingClientRect(); } catch (_) { return; }
+            if (!rect || (!rect.width && !rect.height)) return;
+            _placePopup(rect);
+        }
+        function showHLPopup(hlId) {
+            if (!_hlRanges.has(hlId)) return;
+            _activeHLId   = hlId;
+            _activeHLText = getHighlightText(hlId);
+            const popup = document.getElementById('hl-popup');
+            _setPopupMode('highlight');
+            popup.style.opacity = '1';
+            popup.style.display = 'flex';
+            // Measure after display.
+            const rect = getHighlightRect(hlId);
+            if (!rect) return;
+            _placePopup(rect);
             _scheduleHLFade();
             // Arm replace-on-reselect. To ADJUST the bounds the user
             // long-presses the highlighted text again: Android then shows
@@ -4614,10 +4795,170 @@
         }
         function lookupHL(kind) {
             if (!_activeHLText) return;
-            const url = getLookupURL(kind);
-            const target = url.replace('{word}', encodeURIComponent(_activeHLText));
+            const text = _activeHLText;
             hideHLPopup();
-            window.open(target, '_blank');
+            openCleanReader(kind, text);
+        }
+
+        // ===================== Clean in-app lookup reader =====================
+        // Opens wiki / dictionary results in our own ad-free, own-scroll overlay
+        // instead of navigating the WebView to the live (ad-laden, jank-scrolling)
+        // page. Content comes through the backend /api/fetch proxy:
+        //   wiki → MediaWiki action API (search → parse) → cleaned article HTML
+        //   dict → dictionaryapi.dev JSON → simple definition list
+        // Any failure falls back to opening the configured URL in the WebView
+        // (the old behaviour), so we never strand a lookup.
+
+        function _proxied(url) {
+            return `${API_URL}/fetch?url=${encodeURIComponent(url)}`;
+        }
+
+        // Derive the MediaWiki action-API endpoint from the configured wiki URL.
+        // Wikimedia sites serve it at /w/api.php; Fandom and most others at
+        // /api.php. Returns null if the configured URL isn't usable.
+        function _wikiApiBase() {
+            try {
+                const u = new URL(getLookupURL('wiki'));
+                const host = u.hostname.toLowerCase();
+                const path = (host.endsWith('wikipedia.org') || host.endsWith('wikimedia.org')
+                              || host.endsWith('wiktionary.org')) ? '/w/api.php' : '/api.php';
+                return u.origin + path;
+            } catch (_) { return null; }
+        }
+
+        let _cleanReaderToken = 0;  // guards against overlapping lookups
+        function openCleanReader(kind, text) {
+            const overlay = document.getElementById('reader-overlay');
+            const titleEl = document.getElementById('reader-overlay-title');
+            const badge   = document.getElementById('reader-kind-badge');
+            const content = document.getElementById('reader-overlay-content');
+            const scroll  = document.getElementById('reader-overlay-scroll');
+            badge.textContent = kind === 'dict' ? '📖' : '🌐';
+            titleEl.textContent = text;
+            content.innerHTML = '<div class="cr-loading">Loading…</div>';
+            scroll.scrollTop = 0;
+            overlay.style.display = 'flex';
+            const token = ++_cleanReaderToken;
+            const job = (kind === 'dict') ? loadDictInto(text, token)
+                                          : loadWikiInto(text, token);
+            job.catch(err => {
+                if (token !== _cleanReaderToken) return;
+                console.warn('clean reader failed, falling back to browser:', err);
+                // Fall back to the live page in the WebView.
+                const url = getLookupURL(kind).replace('{word}', encodeURIComponent(text));
+                closeCleanReader();
+                window.open(url, '_blank');
+            });
+        }
+
+        function closeCleanReader() {
+            _cleanReaderToken++;  // cancel any in-flight render
+            document.getElementById('reader-overlay').style.display = 'none';
+            document.getElementById('reader-overlay-content').innerHTML = '';
+        }
+
+        async function _proxyJSON(url) {
+            const r = await fetch(_proxied(url));
+            if (!r.ok) throw new Error('proxy HTTP ' + r.status);
+            return r.json();
+        }
+
+        async function loadWikiInto(text, token) {
+            const api = _wikiApiBase();
+            if (!api) throw new Error('no wiki API base');
+            // 1) Resolve the best-matching page title.
+            const sUrl = api + '?action=query&format=json&redirects=1&list=search'
+                       + '&srlimit=1&srsearch=' + encodeURIComponent(text);
+            const sData = await _proxyJSON(sUrl);
+            const hits = (sData.query && sData.query.search) || [];
+            if (token !== _cleanReaderToken) return;
+            if (!hits.length) { _renderEmpty('No wiki article found for “' + text + '”.'); return; }
+            const pageTitle = hits[0].title;
+            // 2) Fetch the parsed (ad-free) article HTML.
+            const pUrl = api + '?action=parse&format=json&redirects=1&disabletoc=1'
+                       + '&disableeditsection=1&prop=text%7Cdisplaytitle&page='
+                       + encodeURIComponent(pageTitle);
+            const pData = await _proxyJSON(pUrl);
+            if (token !== _cleanReaderToken) return;
+            const parse = pData.parse || {};
+            const rawHtml = (parse.text && parse.text['*']) || '';
+            if (!rawHtml) { _renderEmpty('Could not load “' + pageTitle + '”.'); return; }
+            const origin = (() => { try { return new URL(api).origin; } catch (_) { return ''; } })();
+            const cleaned = cleanWikiHTML(rawHtml, origin);
+            const dispTitle = stripTags(parse.displaytitle || pageTitle) || pageTitle;
+            document.getElementById('reader-overlay-title').textContent = dispTitle;
+            const content = document.getElementById('reader-overlay-content');
+            content.innerHTML = '<h1>' + escHtml(dispTitle) + '</h1>';
+            content.appendChild(cleaned);
+        }
+
+        function _renderEmpty(msg) {
+            document.getElementById('reader-overlay-content').innerHTML =
+                '<div class="cr-empty">' + escHtml(msg) + '</div>';
+        }
+
+        function stripTags(s) {
+            const d = document.createElement('div');
+            d.innerHTML = s || '';
+            return (d.textContent || '').trim();
+        }
+
+        // Turn MediaWiki parsed HTML into a clean fragment: drop nav/cruft,
+        // neutralize links, and make image URLs absolute. Returns a DOM node.
+        function cleanWikiHTML(html, origin) {
+            const doc = new DOMParser().parseFromString(html, 'text/html');
+            const root = doc.body;
+            // Remove obvious non-content / interactive / citation cruft.
+            const KILL = [
+                'script', 'style', 'noscript', 'link', 'meta',
+                '.mw-editsection', '.editsection', '.toc', '#toc', '.navbox',
+                '.noprint', '.mw-empty-elt', '.reference', '.references',
+                '.reflist', 'ol.references', '.mw-references-wrap', '.error',
+                '.mw-jump-link', '.printfooter', '.catlinks', '.navigation-not-searchable',
+                '.hatnote', '.ambox', '.metadata', '.mbox-small', 'sup.reference',
+                '.wds-tabber__tabs', '.gallery .gallerytext', '.mw-collapsible-toggle',
+                '[role="navigation"]', 'table.navbox', 'table.vertical-navbox',
+            ];
+            KILL.forEach(sel => { try { root.querySelectorAll(sel).forEach(n => n.remove()); } catch (_) {} });
+            // Neutralize links (no navigating away → no ads/jank); keep text.
+            root.querySelectorAll('a').forEach(a => { a.removeAttribute('href'); a.removeAttribute('target'); });
+            // Absolutize images; drop tracking/lazy noise.
+            root.querySelectorAll('img').forEach(img => {
+                let src = img.getAttribute('data-src') || img.getAttribute('src') || '';
+                if (src.startsWith('//')) src = 'https:' + src;
+                else if (src.startsWith('/') && origin) src = origin + src;
+                img.setAttribute('src', src);
+                img.removeAttribute('srcset'); img.removeAttribute('data-src');
+                img.removeAttribute('loading'); img.removeAttribute('width'); img.removeAttribute('height');
+            });
+            // Strip inline styles/classes that fight our theme (keep infobox class).
+            root.querySelectorAll('[style]').forEach(n => n.removeAttribute('style'));
+            return root;
+        }
+
+        async function loadDictInto(text, token) {
+            const word = text.trim().split(/\s+/)[0];  // dictionaries want one word
+            const url = 'https://api.dictionaryapi.dev/api/v2/entries/en/' + encodeURIComponent(word);
+            let data;
+            try { data = await _proxyJSON(url); }
+            catch (e) { if (token !== _cleanReaderToken) return; _renderEmpty('No dictionary entry for “' + word + '”.'); return; }
+            if (token !== _cleanReaderToken) return;
+            if (!Array.isArray(data) || !data.length) { _renderEmpty('No dictionary entry for “' + word + '”.'); return; }
+            const entry = data[0];
+            const phon = (entry.phonetics || []).map(p => p.text).filter(Boolean)[0] || entry.phonetic || '';
+            let html = '<div class="cr-dict-word">' + escHtml(entry.word || word) + '</div>';
+            if (phon) html += '<div class="cr-dict-phon">' + escHtml(phon) + '</div>';
+            (entry.meanings || []).forEach(m => {
+                html += '<div class="cr-dict-pos">' + escHtml(m.partOfSpeech || '') + '</div><ol>';
+                (m.definitions || []).forEach(def => {
+                    html += '<li>' + escHtml(def.definition || '');
+                    if (def.example) html += '<div class="cr-dict-ex">“' + escHtml(def.example) + '”</div>';
+                    html += '</li>';
+                });
+                html += '</ol>';
+            });
+            document.getElementById('reader-overlay-title').textContent = entry.word || word;
+            document.getElementById('reader-overlay-content').innerHTML = html;
         }
 
         // Hand the existing highlight back to the user as a live selection
@@ -4749,11 +5090,43 @@
             const sel = window.getSelection();
             if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
                 if (_selSettleTimer) { clearTimeout(_selSettleTimer); _selSettleTimer = null; }
+                if (_overlaySelTimer) { clearTimeout(_overlaySelTimer); _overlaySelTimer = null; }
                 return;
             }
+            const range = sel.getRangeAt(0);
             const content = document.getElementById('epub-content');
-            if (!content || !content.contains(sel.getRangeAt(0).endContainer)) return;
-            scheduleSelectionSettleSave();
+            if (content && content.contains(range.endContainer)) {
+                scheduleSelectionSettleSave();
+                return;
+            }
+            // Selection inside the summary / wiki overlays → lookup only
+            // (no highlight is ever saved there; those belong to the book).
+            if (_selectionLookupContainer(range)) scheduleOverlayLookup();
+        }
+
+        // Containers (besides #epub-content) where selecting text offers a
+        // wiki/dictionary lookup: the chapter-summary body and the clean-reader
+        // article. Returns the matching element or null.
+        const _LOOKUP_CONTAINER_IDS = ['summary-body', 'reader-overlay-content'];
+        function _selectionLookupContainer(range) {
+            for (const id of _LOOKUP_CONTAINER_IDS) {
+                const el = document.getElementById(id);
+                if (el && el.contains(range.startContainer) && el.contains(range.endContainer)) return el;
+            }
+            return null;
+        }
+        let _overlaySelTimer = null;
+        function scheduleOverlayLookup() {
+            if (_overlaySelTimer) clearTimeout(_overlaySelTimer);
+            _overlaySelTimer = setTimeout(() => {
+                _overlaySelTimer = null;
+                const sel = window.getSelection();
+                if (!sel || sel.isCollapsed || !sel.rangeCount) return;
+                const range = sel.getRangeAt(0);
+                if (!_selectionLookupContainer(range)) return;
+                const text = sel.toString().trim();
+                if (text) showLookupPopup(range, text);
+            }, 350);
         }
 
         // Wire selection + popup once per page load. The popup closes on
@@ -5653,6 +6026,165 @@
             if (toc) toc.style.display = 'none';
             const search = document.getElementById('search-overlay');
             if (search) search.style.display = 'none';
+        }
+
+        // ===================== Chapter summaries =====================
+        // Overlay that surfaces the pre-written chapter summaries shipped in a
+        // "summary set" (e.g. the Malazan compendium). The backend matches this
+        // book to a set + book section by title; here we match the user's CURRENT
+        // chapter to a summary chapter by normalized title, and never expose a
+        // chapter the reader hasn't reached yet (spoiler-safe).
+
+        // Mirror of the backend _summary_norm(): lowercase, drop a leading
+        // article, non-alphanumerics → space, collapse. Keeps "CHAPTER TWENTY-ONE"
+        // (reader) ≡ "Chapter Twenty-One" (summary) ≡ "chapter twenty one".
+        function _summaryNorm(s) {
+            return (s || '').toString().toLowerCase()
+                .replace(/^(the|a|an)\s+/, '')
+                .replace(/[^a-z0-9]+/g, ' ')
+                .trim();
+        }
+
+        // Fetch this book's summary set. Always resolves (never throws) — on any
+        // failure or no-match we just leave the feature hidden.
+        async function loadBookSummaries() {
+            bookSummaries = null;
+            if (!bookId) return;
+            try {
+                const r = await fetch(`${API_URL}/summaries/${encodeURIComponent(bookId)}`);
+                if (!r.ok) return;
+                const d = await r.json();
+                if (d && d.available && Array.isArray(d.chapters) && d.chapters.length) {
+                    bookSummaries = d;
+                    // Index by normalized chapter title for O(1) lookup.
+                    bookSummaries._byTitle = {};
+                    d.chapters.forEach(c => {
+                        const k = _summaryNorm(c.title);
+                        if (k && !(k in bookSummaries._byTitle)) bookSummaries._byTitle[k] = c;
+                    });
+                }
+            } catch (e) {
+                console.warn('summaries load skipped:', e.message);
+            }
+            setSummaryButtonVisible(!!bookSummaries);
+        }
+
+        function setSummaryButtonVisible(show) {
+            const b = document.getElementById('btn-summary');
+            if (b) b.style.display = show ? '' : 'none';
+        }
+
+        // The summary chapter matching a reader chapter title, or null.
+        function _summaryForTitle(title) {
+            if (!bookSummaries || !bookSummaries._byTitle) return null;
+            return bookSummaries._byTitle[_summaryNorm(title)] || null;
+        }
+
+        // Ordered list of {title, html} for every chapter the reader has reached
+        // (chapterStarts entry starting on or before the current page) that also
+        // has a matching summary. This is the ONLY data the overlay navigates, so
+        // future chapters can never be revealed.
+        function buildReachedSummaryChapters() {
+            const out = [];
+            if (!bookSummaries || !chapterStarts || !chapterStarts.length) return out;
+            for (const cs of chapterStarts) {
+                if (cs.page > currentEpubPage) break;
+                const sum = _summaryForTitle(cs.title);
+                if (sum) out.push({ title: cs.title, html: sum.html });
+            }
+            return out;
+        }
+
+        // ---- Overlay state ----
+        let _summaryChapters = [];   // reached, matched chapters (built on open)
+        let _summaryIndex = 0;       // which one we're viewing (chapter mode)
+        let _summaryMode = 'chapter';
+
+        // Open the summary overlay. Defaults to the current chapter; pass a title
+        // to jump to a specific reached chapter.
+        function openSummary(forTitle) {
+            if (!bookSummaries) return;
+            _summaryChapters = buildReachedSummaryChapters();
+            if (!_summaryChapters.length) {
+                // Reached a point with no matching summary yet (e.g. front matter).
+                alert('No chapter summary available here yet.');
+                return;
+            }
+            let idx = _summaryChapters.length - 1; // default: current/last reached
+            if (forTitle) {
+                const k = _summaryNorm(forTitle);
+                const found = _summaryChapters.findIndex(c => _summaryNorm(c.title) === k);
+                if (found >= 0) idx = found;
+            }
+            _summaryIndex = idx;
+            _summaryMode = 'chapter';
+            document.getElementById('summary-set').textContent = bookSummaries.setTitle || '';
+            document.getElementById('summary-overlay').style.display = 'block';
+            renderSummary();
+        }
+
+        function closeSummary() {
+            document.getElementById('summary-overlay').style.display = 'none';
+        }
+
+        function setSummaryMode(mode) {
+            _summaryMode = mode;
+            const chBtn = document.getElementById('summary-mode-chapter');
+            const rcBtn = document.getElementById('summary-mode-recap');
+            const on = '#2196F3', onText = '#fff', off = '#2a2a2a', offText = '#ccc';
+            chBtn.style.background = mode === 'chapter' ? on : off;
+            chBtn.style.color      = mode === 'chapter' ? onText : offText;
+            rcBtn.style.background = mode === 'recap' ? on : off;
+            rcBtn.style.color      = mode === 'recap' ? onText : offText;
+            renderSummary();
+        }
+
+        function summaryStep(delta) {
+            const n = _summaryChapters.length;
+            _summaryIndex = Math.max(0, Math.min(n - 1, _summaryIndex + delta));
+            renderSummary();
+        }
+
+        function renderSummary() {
+            const heading = document.getElementById('summary-heading');
+            const body    = document.getElementById('summary-body');
+            const nav      = document.getElementById('summary-nav');
+            const recap   = (_summaryMode === 'recap');
+            nav.style.display = recap ? 'none' : 'flex';
+
+            if (recap) {
+                // Concatenate every reached chapter, oldest → current.
+                heading.textContent = 'Story so far — through ' +
+                    _summaryChapters[_summaryChapters.length - 1].title;
+                body.innerHTML = _summaryChapters.map(c =>
+                    `<h3 style="color:#fff;margin:18px 0 8px 0;font-size:17px;border-bottom:1px solid #333;padding-bottom:6px;">${escHtml(c.title)}</h3>${c.html}`
+                ).join('');
+                body.firstElementChild && (body.firstElementChild.style.marginTop = '0');
+            } else {
+                const cur = _summaryChapters[_summaryIndex];
+                heading.textContent = cur.title;
+                body.innerHTML = cur.html;
+                const prev = document.getElementById('summary-prev');
+                const next = document.getElementById('summary-next');
+                prev.style.visibility = _summaryIndex > 0 ? 'visible' : 'hidden';
+                next.style.visibility = _summaryIndex < _summaryChapters.length - 1 ? 'visible' : 'hidden';
+            }
+            document.getElementById('summary-overlay').scrollTop = 0;
+        }
+
+        // Minimal HTML escaper for chapter titles injected into recap headings.
+        function escHtml(s) {
+            return (s || '').replace(/[&<>"]/g, c =>
+                ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+        }
+
+        // Show/hide the floating end-of-chapter nudge. Called from updateProgress
+        // with the current chapter title and whether we're on its last page.
+        function updateChapterEndAffordance(chapterTitle, isLastPage) {
+            const btn = document.getElementById('chapter-end-summary');
+            if (!btn) return;
+            const show = !!bookSummaries && isLastPage && !!_summaryForTitle(chapterTitle);
+            btn.style.display = show ? 'block' : 'none';
         }
 
         function toggleTOC() {

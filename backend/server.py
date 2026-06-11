@@ -115,6 +115,22 @@ UNIVERSE_OVERRIDES_FILE = os.path.join(DATA_DIR, 'universe_overrides.json')
 _universe_overrides_lock = threading.Lock()
 _universe_overrides_cache = {'mtime': None, 'data': {}}
 
+# Chapter-summary sets (e.g. the Malazan compendium). These are committed
+# reference assets, NOT runtime state, so they live in backend/summaries/ (a
+# tracked dir) rather than DATA_DIR. Each <id>.json is produced by
+# build_summaries.py and shaped {id, title, source, books:[{title, chapters:
+# [{title, html}]}]}. Loaded once, indexed by normalized book title so the
+# reader can resolve a Calibre book → its summary book section. See
+# /api/summaries/<bookId>.
+SUMMARIES_DIR = os.path.join(os.path.dirname(__file__), 'summaries')
+# Optional manual book→summary overrides for titles that don't match by name.
+# Keyed by Calibre bookId (str). Value: {"set": "<setId>", "book": "<bookTitle>"}.
+SUMMARY_LINKS_FILE = os.path.join(DATA_DIR, 'summary_links.json')
+_summaries_lock = threading.Lock()
+# Cache: signature (sorted (file, mtime) tuples) → built index, so editing or
+# adding a set JSON is picked up without a restart.
+_summaries_cache = {'sig': None, 'sets': {}, 'book_index': {}}
+
 def _normalize_sections(raw):
     """Coerce a client-supplied `sections` value into the on-disk shape:
     list of {id, title, body}. Drops malformed entries silently rather than
@@ -1374,6 +1390,172 @@ def api_saga():
         })
     out.sort(key=lambda s: s['name'].lower())
     return jsonify({'sagas': out, 'absEnabled': ABS_ENABLED})
+
+# ---------------------------------------------------------------------------
+# Chapter summaries (overlay shown at chapter-end / from reading settings).
+# Source sets are parsed from a compendium EPUB/MHT by build_summaries.py into
+# backend/summaries/<id>.json. We match a Calibre book to a set's book section
+# by normalized title (with an optional manual override file), and return that
+# book's ordered chapter summaries. The reader picks the chapter matching the
+# user's current position and gates future chapters to avoid spoilers.
+# ---------------------------------------------------------------------------
+
+def _summary_norm(s):
+    """Normalize a title for matching: lowercase, drop a leading article,
+    strip punctuation, collapse whitespace."""
+    s = (s or '').strip().lower()
+    s = re.sub(r'^(the|a|an)\s+', '', s)
+    s = re.sub(r'[^a-z0-9]+', ' ', s)
+    return s.strip()
+
+
+def _load_summary_sets():
+    """Load + index all backend/summaries/*.json, cached by (file, mtime)
+    signature so hand-edits / new sets are picked up without a restart.
+    Returns (sets_by_id, book_index) where book_index maps a normalized book
+    title to (set_id, book_obj)."""
+    try:
+        files = sorted(f for f in os.listdir(SUMMARIES_DIR) if f.endswith('.json'))
+    except OSError:
+        files = []
+    sig = tuple((f, os.stat(os.path.join(SUMMARIES_DIR, f)).st_mtime) for f in files)
+    with _summaries_lock:
+        if _summaries_cache['sig'] == sig:
+            return _summaries_cache['sets'], _summaries_cache['book_index']
+        sets, book_index = {}, {}
+        for f in files:
+            try:
+                with open(os.path.join(SUMMARIES_DIR, f), encoding='utf-8') as fh:
+                    data = json.load(fh)
+            except (OSError, ValueError) as e:
+                print(f"Skipping summary set {f}: {e}")
+                continue
+            sid = data.get('id') or f[:-5]
+            sets[sid] = data
+            for book in data.get('books', []):
+                key = _summary_norm(book.get('title'))
+                if key and key not in book_index:
+                    book_index[key] = (sid, book)
+        _summaries_cache.update({'sig': sig, 'sets': sets, 'book_index': book_index})
+        return sets, book_index
+
+
+def _load_summary_links():
+    """Optional manual {bookId: {set, book}} overrides. {} when absent."""
+    try:
+        with open(SUMMARY_LINKS_FILE, encoding='utf-8') as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+@app.route('/api/summaries/<book_id>', methods=['GET'])
+def get_summaries(book_id):
+    """Resolve a book to its chapter-summary set and return the ordered
+    chapter summaries for that book. {available: false} when no set matches —
+    never an error, so the reader can quietly hide the feature."""
+    sets, book_index = _load_summary_sets()
+    if not sets:
+        return jsonify({'available': False, 'reason': 'no summary sets'})
+
+    matched = None       # (set_id, book_obj)
+    matched_by = None
+
+    # 1) Manual override by bookId.
+    link = _load_summary_links().get(str(book_id))
+    if isinstance(link, dict) and link.get('set') in sets:
+        for b in sets[link['set']].get('books', []):
+            if _summary_norm(b.get('title')) == _summary_norm(link.get('book')):
+                matched, matched_by = (link['set'], b), 'override'
+                break
+
+    # 2) Match by normalized book title (audio-only "abs:" ids skip Calibre).
+    title = ''
+    if matched is None and not str(book_id).startswith('abs:'):
+        meta = get_book_metadata(book_id)
+        if meta:
+            title = meta.get('title') or ''
+            hit = book_index.get(_summary_norm(title))
+            if hit:
+                matched, matched_by = hit, 'title'
+
+    if matched is None:
+        return jsonify({'available': False, 'bookTitle': title})
+
+    set_id, book = matched
+    return jsonify({
+        'available': True,
+        'setId': set_id,
+        'setTitle': sets[set_id].get('title') or set_id,
+        'source': sets[set_id].get('source') or '',
+        'bookTitle': book.get('title') or '',
+        'matchedBy': matched_by,
+        'chapters': book.get('chapters', []),
+    })
+
+# ---------------------------------------------------------------------------
+# Generic fetch proxy — powers the reader's clean in-app lookup view (wiki /
+# dictionary). The reader fetches the MediaWiki action API (ad-free article
+# HTML) and dictionaryapi.dev through here so it never hits CORS and we keep a
+# single egress point. NOT a general open proxy: http/https only, and private
+# / loopback / link-local hosts are refused (basic SSRF guard) since the only
+# legitimate targets are public reference sites.
+# ---------------------------------------------------------------------------
+
+def _fetch_host_blocked(host):
+    """True if `host` is loopback/private/link-local (or unparseable)."""
+    import ipaddress
+    import socket
+    if not host:
+        return True
+    h = host.split(':')[0].strip('[]').lower()
+    if h in ('localhost', '0.0.0.0'):
+        return True
+    # Resolve to IP(s) and reject any that are private/loopback/link-local.
+    try:
+        infos = socket.getaddrinfo(h, None)
+    except OSError:
+        return True
+    for info in infos:
+        ip = info[4][0]
+        try:
+            addr = ipaddress.ip_address(ip)
+        except ValueError:
+            continue
+        if (addr.is_private or addr.is_loopback or addr.is_link_local
+                or addr.is_reserved or addr.is_multicast):
+            return True
+    return False
+
+
+@app.route('/api/fetch', methods=['GET'])
+def fetch_proxy():
+    from urllib.parse import urlparse
+    url = request.args.get('url', '')
+    parsed = urlparse(url)
+    if parsed.scheme not in ('http', 'https'):
+        return jsonify({'error': 'only http/https'}), 400
+    if _fetch_host_blocked(parsed.hostname):
+        return jsonify({'error': 'host not allowed'}), 403
+    try:
+        upstream = requests.get(url, timeout=12, headers={
+            # A real UA — some wikis/CDNs 403 the python-requests default.
+            'User-Agent': 'Mozilla/5.0 (GreatReads reader; +ereader) '
+                          'AppleWebKit/537.36 Chrome/120 Safari/537.36',
+            'Accept': '*/*',
+        }, stream=True)
+    except requests.RequestException as e:
+        return jsonify({'error': 'fetch failed', 'detail': str(e)}), 502
+    # Cap body size (reader pages, not downloads) and pass content-type through.
+    MAX = 4 * 1024 * 1024
+    body = upstream.raw.read(MAX + 1, decode_content=True)
+    if len(body) > MAX:
+        body = body[:MAX]
+    ctype = upstream.headers.get('Content-Type', 'application/octet-stream')
+    resp = Response(body, status=upstream.status_code)
+    resp.headers['Content-Type'] = ctype
+    return resp
 
 @app.route('/api/audiobooks/<abs_id>/cover', methods=['GET'])
 def get_audiobook_cover(abs_id):
