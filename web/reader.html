@@ -5020,12 +5020,29 @@
         }
 
         let _cleanReaderToken = 0;  // guards against overlapping lookups
+        let _lastLookup = null;     // { kind, text } for the Retry button
         // Wiki-internal navigation history. Following a link inside a wiki
         // article pushes the current page here; the in-overlay ‹ Back button
         // and the device back gesture step through it before closing.
         let _wikiKind = 'wiki';     // 'wiki' | 'dict' — what the overlay is showing
         let _wikiCurrent = null;    // current title/word
         let _wikiHistory = [];      // previously-viewed titles (oldest → newest)
+
+        // Collapse any live text selection and dismiss Android's native
+        // selection handles (the leading/trailing "cursors"). removeAllRanges()
+        // alone sometimes leaves the OS-drawn handles on screen, so we also
+        // steal focus to a non-text element, which reliably tears them down.
+        function _clearTextSelection() {
+            try {
+                const sel = window.getSelection();
+                if (sel) { if (sel.removeAllRanges) sel.removeAllRanges(); else if (sel.empty) sel.empty(); }
+            } catch (_) {}
+            try { _hideHLHandles(); } catch (_) {}
+            try {
+                const a = document.activeElement;
+                if (a && a.blur && a !== document.body) a.blur();
+            } catch (_) {}
+        }
 
         function openCleanReader(kind, text) {
             // A full-screen overlay is taking over the view — tear down any
@@ -5036,8 +5053,18 @@
             _wikiKind = kind;
             _wikiCurrent = text;
             _wikiHistory = [];
-            document.getElementById('reader-overlay').style.display = 'flex';
+            const overlay = document.getElementById('reader-overlay');
+            overlay.style.display = 'flex';
             armOverlayBack();
+            // Clear the originating selection + handles now, then again after the
+            // overlay paints — focusing the overlay tears down the native handles
+            // that would otherwise float above this layer (removeAllRanges() alone
+            // sometimes leaves the OS-drawn handles on screen).
+            _clearTextSelection();
+            overlay.setAttribute('tabindex', '-1');
+            try { overlay.focus({ preventScroll: true }); } catch (_) { try { overlay.focus(); } catch (_) {} }
+            requestAnimationFrame(_clearTextSelection);
+            setTimeout(_clearTextSelection, 60);
             _renderCleanReader(kind, text);
         }
 
@@ -5048,10 +5075,7 @@
             const badge   = document.getElementById('reader-kind-badge');
             const content = document.getElementById('reader-overlay-content');
             const scroll  = document.getElementById('reader-overlay-scroll');
-            // Clear the originating text selection + custom handles right away so
-            // their leading/trailing cursors don't linger through this overlay.
-            try { window.getSelection().removeAllRanges(); } catch (_) {}
-            _hideHLHandles();
+            _lastLookup = { kind, text };
             badge.textContent = kind === 'dict' ? '📖' : '🌐';
             titleEl.textContent = text;
             content.innerHTML = '<div class="cr-loading">Loading…</div>';
@@ -5062,18 +5086,34 @@
                                           : loadWikiInto(text, token);
             job.catch(err => {
                 if (token !== _cleanReaderToken) return;
-                console.warn('clean reader failed:', err);
-                // Do NOT navigate the WebView away to the live page — that's
-                // what made the overlay vanish with no way back. Stay in our
-                // overlay (✕/back still work) and show an inline error with an
-                // explicit, user-initiated link to the live page as a fallback.
-                const url = getLookupURL(kind).replace('{word}', encodeURIComponent(text));
-                document.getElementById('reader-overlay-content').innerHTML =
-                    '<div class="cr-empty">Couldn’t load this ' +
-                    (kind === 'dict' ? 'definition' : 'article') + '.<br><br>' +
-                    '<a href="' + url.replace(/"/g, '&quot;') + '" target="_blank" rel="noopener" ' +
-                    'style="color:#4067EF;">Open in browser ↗</a></div>';
+                console.warn('clean reader lookup failed:', err);
+                // Stay in the overlay — never navigate the WebView away from the
+                // book (that strands the user on the live page with no way back).
+                // Show an inline error with a one-tap Retry plus an explicit,
+                // user-initiated link to the live page as a fallback.
+                _renderError(kind, text, err);
             });
+        }
+
+        // In-overlay failure state. Keeps the overlay (and its ✕/back) up so the
+        // user can close/back out normally, and offers a one-tap retry plus an
+        // explicit link to the live page (never auto-navigates the WebView away).
+        function _renderError(kind, text, err) {
+            const detail = (err && err.message) ? err.message : 'network error';
+            const url = getLookupURL(kind).replace('{word}', encodeURIComponent(text));
+            document.getElementById('reader-overlay-content').innerHTML =
+                '<div class="cr-empty">Couldn’t load ' +
+                (kind === 'dict' ? 'the definition' : 'the article') +
+                ' for “' + escHtml(text) + '”.' +
+                '<div style="font-size:13px;color:#777;margin-top:6px;">' + escHtml(detail) + '</div>' +
+                '<button onclick="retryCleanReader()" style="margin-top:18px;background:#2196F3;color:#fff;' +
+                'border:none;padding:10px 20px;border-radius:8px;font-size:15px;cursor:pointer;">Retry</button>' +
+                '<div style="margin-top:14px;"><a href="' + url.replace(/"/g, '&quot;') + '" target="_blank" ' +
+                'rel="noopener" style="color:#4067EF;">Open in browser ↗</a></div>' +
+                '</div>';
+        }
+        function retryCleanReader() {
+            if (_lastLookup) openCleanReader(_lastLookup.kind, _lastLookup.text);
         }
 
         // Follow an internal wiki link: remember where we were, then load the
@@ -5276,6 +5316,9 @@
                 let src = img.getAttribute('data-src') || img.getAttribute('src') || '';
                 if (src.startsWith('//')) src = 'https:' + src;
                 else if (src.startsWith('/') && origin) src = origin + src;
+                // Route through the backend proxy so images load even when the
+                // device has no direct route to the image CDN (only the backend
+                // is guaranteed to reach the public internet).
                 if (/^https?:\/\//i.test(src)) src = _proxied(src);
                 img.setAttribute('src', src);
                 img.removeAttribute('srcset'); img.removeAttribute('data-src');
