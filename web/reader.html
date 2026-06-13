@@ -137,6 +137,17 @@
             margin-left: 0;
             margin-right: 0;
         }
+        /* Scene / POV break spacer (tagged in renderEpubContent). The EPUB
+           marks a scene change with a content-empty paragraph; on its own that
+           collapses to nothing here. Give it a real line of height — and a
+           top margin so it can't fully margin-collapse into its neighbours —
+           so the blank-line break from the print edition is preserved. */
+        #epub-content p.epub-scene-break,
+        #epub-content div.epub-scene-break {
+            min-height: 1em;
+            margin-top: 0.6em;
+            margin-bottom: 1em;
+        }
         #epub-content h1, #epub-content h2, #epub-content h3 {
             margin-top: 1.5em;
             margin-bottom: 0.5em;
@@ -1862,6 +1873,34 @@
                         el.style.pageBreakAfter = 'auto';
                     }
                 }
+            });
+
+            // Scene / POV break preservation.
+            //
+            // Print editions separate a scene or POV change with a blank line.
+            // In the EPUB source that blank line is carried as a content-empty
+            // paragraph — <p></p>, <p>&nbsp;</p>, <p><br/></p> and friends. In
+            // a continuous-flow reader those empty paragraphs have no intrinsic
+            // height, so their top/bottom margins collapse straight through
+            // into the surrounding paragraph margins and the gap vanishes
+            // entirely. The result: two unrelated scenes run together with no
+            // separation, reading as one continuous (and very confusing) scene
+            // — reported in e.g. Malazan Book 5, Ch.4 ("Very well, Finadd." →
+            // "'Try these on.'"). Tag each such empty spacer so CSS can give it
+            // real height and the break the author intended survives.
+            //
+            // We deliberately leave alone: anything with real text (visible
+            // ornaments like "* * *" already show), anything carrying media
+            // (image-only paragraphs), and our own injected layout sentinels.
+            const SCENE_BREAK_SKIP = /\b(epub-chapter-sep|dual-page-chapter-spacer|epub-spine-item)\b/;
+            epubContent.querySelectorAll('p, div').forEach(el => {
+                if (SCENE_BREAK_SKIP.test(el.className || '')) return;
+                if ((el.textContent || '').trim() !== '') return;
+                if (el.querySelector('img, svg, image, picture, video, audio, table, figure, hr')) return;
+                // Only true leaf spacers: no element children, or <br> only.
+                const hasNonBrChild = Array.from(el.children).some(c => c.tagName !== 'BR');
+                if (hasNonBrChild) return;
+                el.classList.add('epub-scene-break');
             });
 
             // Tag every leaf block element with a stable data-anchor="N".
