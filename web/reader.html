@@ -674,6 +674,10 @@
             background: transparent;
             pointer-events: none;
             letter-spacing: 0.3px;
+            /* Chrome text (clock, brand, build stamp) must never be swept into
+               a text selection started in the reading content. */
+            -webkit-user-select: none;
+            user-select: none;
         }
         #status-clock {
             position: absolute;
@@ -708,6 +712,8 @@
             padding-top: 0;
             -webkit-tap-highlight-color: transparent;
             pointer-events: auto;
+            -webkit-user-select: none;
+            user-select: none;
         }
         #bookmark-corner .bm-svg {
             width: 18px;
@@ -732,38 +738,6 @@
             filter: drop-shadow(0 1px 2px rgba(0,0,0,0.25));
         }
         #bookmark-corner:active { opacity: 0.75; }
-        /* Line-specific bookmark flag overlay --------------------------------
-           A fixed-position transparent layer covers the whole viewport.
-           Each flag is placed absolutely inside it at the Y of the target
-           anchor element. pointer-events:none on the container lets touches
-           fall through to the text; pointer-events:all on each flag lets it
-           be tapped to delete. */
-        #line-bookmark-flags {
-            position: fixed;
-            top: 0; left: 0;
-            width: 100%; height: 100%;
-            pointer-events: none;
-            z-index: 50;            /* above content, below menus */
-        }
-        .line-bm-flag {
-            position: absolute;
-            pointer-events: all;
-            cursor: pointer;
-            display: flex;
-            align-items: flex-start;
-            justify-content: flex-end;   /* flag sits at the right edge of the margin zone */
-            width: 40px;                 /* matches SIDE_PADDING */
-            min-height: 20px;
-        }
-        .line-bm-flag svg {
-            fill: #d04040;
-            stroke: #8a2424;
-            stroke-width: 0.5;
-            opacity: 0.85;
-            filter: drop-shadow(0 1px 2px rgba(0,0,0,0.3));
-            flex: 0 0 auto;
-        }
-        .line-bm-flag:active { opacity: 0.6; }
         .brand {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             font-weight: 700;
@@ -1245,9 +1219,6 @@
         </svg>
     </div>
 
-    <!-- Line-bookmark flag overlay — flags are positioned here by renderLineBookmarkFlags() -->
-    <div id="line-bookmark-flags" aria-hidden="true"></div>
-
     <!-- Backdrop for reader-controls menu — tap to dismiss -->
     <div id="reader-controls-backdrop" style="display:none;position:fixed;inset:0;z-index:9999;background:transparent;" onclick="toggleMenu()"></div>
 
@@ -1347,7 +1318,7 @@
     <!-- End-of-chapter summary nudge. Shown by updateChapterEndAffordance()
          only on the last page of a chapter that has a matching summary; tapping
          opens that chapter's summary. Sits just above the bottom progress bar. -->
-    <button id="chapter-end-summary" onclick="openSummary()" style="display:none;position:fixed;left:50%;transform:translateX(-50%);bottom:34px;z-index:9100;
+    <button id="chapter-end-summary" onclick="openSummary()" style="display:none;position:fixed;left:50%;transform:translateX(-50%);bottom:34px;z-index:9100;-webkit-user-select:none;user-select:none;
          padding:9px 16px;border:none;border-radius:20px;cursor:pointer;font-size:14px;font-weight:600;color:#fff;
          background:linear-gradient(90deg,#4067EF,#8640C0,#C940B0);box-shadow:0 2px 10px rgba(0,0,0,0.35);">
         📖 Chapter summary
@@ -1360,6 +1331,7 @@
          Row 1 is hidden until we have ≥3 valid page samples to avoid
          flashing meaningless "—" values before the reader settles. -->
     <div id="page-progress" style="position:fixed;bottom:-3px;left:0;right:0;pointer-events:none;z-index:9000;
+         -webkit-user-select:none;user-select:none;
          flex-direction:column;padding:4px 44px;display:none;
          font-size:11px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
          color:rgba(0,0,0,0.55);background:transparent;">
@@ -2892,7 +2864,6 @@
             updateProgress();
             updateBookmarkIndicator();
             resetAutoBookmarkTimer();
-            renderLineBookmarkFlags();
             // Track the first-visible anchor every time we successfully
             // render a page. This is the only moment columnStride,
             // currentEpubPage, and the live DOM are guaranteed to agree —
@@ -3542,10 +3513,8 @@
         // right = manual (red). Both can be visible simultaneously.
         let bookmarks     = [];              // [{id, anchor, type:'bookmark', ...}]
         let autoBookmarks = [];              // [{id, anchor, type:'auto-bookmark', ...}]
-        let lineBookmarks = [];              // [{id, anchor, type:'line-bookmark', ...}]
         let bookmarkPageIds     = new Map(); // pageNum -> [manual bookmark id, ...]
         let autoBookmarkPageIds = new Map(); // pageNum -> [auto-bookmark id, ...]
-        let lineBookmarkByAnchor = new Map(); // anchorIdx -> bookmark id
 
         // Keep auto-bookmarks bounded — they're an auto-save, not a history.
         // Mirrors AUTO_BOOKMARK_LIMIT_PER_BOOK in the backend; the server is
@@ -3586,10 +3555,9 @@
         async function loadBookmarksForBook() {
             if (!bookId) return;
             try {
-                const [rM, rA, rL] = await Promise.all([
+                const [rM, rA] = await Promise.all([
                     fetch(`${API_URL}/highlights?bookId=${encodeURIComponent(bookId)}&type=bookmark`),
                     fetch(`${API_URL}/highlights?bookId=${encodeURIComponent(bookId)}&type=auto-bookmark`),
-                    fetch(`${API_URL}/highlights?bookId=${encodeURIComponent(bookId)}&type=line-bookmark`),
                 ]);
                 if (rM.ok) {
                     const data = await rM.json();
@@ -3598,11 +3566,6 @@
                 if (rA.ok) {
                     const data = await rA.json();
                     autoBookmarks = (data.items || []).filter(b => typeof b.anchor === 'number');
-                }
-                if (rL.ok) {
-                    const data = await rL.json();
-                    lineBookmarks = (data.items || []).filter(b => typeof b.anchor === 'number');
-                    lineBookmarkByAnchor = new Map(lineBookmarks.map(b => [b.anchor, b.id]));
                 }
             } catch (e) { console.warn('loadBookmarksForBook', e); }
         }
@@ -3747,164 +3710,6 @@
                 flashToast('🔖 Bookmarked');
             } catch (e) {
                 flashToast('⚠️ Bookmark failed: ' + e.message);
-            }
-        }
-
-        // ---------- Line-specific bookmarks (margin long-press) ----------
-        // Find the data-anchor index of the element whose rendered rect on the
-        // CURRENT page contains (or is closest to) the given viewport (clientX, clientY).
-        // clientX is required in dual-column layout: at any given Y there are
-        // two anchors visible (one per column) and we have to pick the one in
-        // the column the user actually touched, otherwise long-pressing the
-        // right page's gutter would always pick the left-column anchor (first
-        // in DOM order) and the flag would render on the wrong page.
-        function findAnchorAtY(clientY, clientX) {
-            const content = document.getElementById('epub-content');
-            if (!content || !columnStride) return null;
-            const contentRect = content.getBoundingClientRect();
-            const pageStart = currentEpubPage * columnStride;
-            const pageEnd   = pageStart + pageWidth;
-            // Which column did the touch land in?  Only meaningful in 2-col mode.
-            // Right column when clientX is past pageWidth/2; left otherwise.
-            const wantRightCol = currentColumnCount === 2 &&
-                                 clientX != null &&
-                                 clientX >= pageWidth / 2;
-            const anchors   = content.querySelectorAll('[data-anchor]');
-            let bestAnchor = null;
-            let bestDist   = Infinity;
-            for (const el of anchors) {
-                const rects = el.getClientRects();
-                for (let i = 0; i < rects.length; i++) {
-                    const r = rects[i];
-                    const rawLeft = r.left - contentRect.left;
-                    if (rawLeft < pageStart - 2 || rawLeft >= pageEnd) continue;
-                    // In dual-column: skip rects in the OTHER column.  Compare
-                    // viewport X (already transformed) against pageWidth/2.
-                    if (currentColumnCount === 2 && clientX != null) {
-                        const rectIsRight = r.left >= pageWidth / 2;
-                        if (rectIsRight !== wantRightCol) continue;
-                    }
-                    // Direct hit — clientY is inside this rect
-                    if (clientY >= r.top && clientY <= r.bottom) {
-                        return parseInt(el.dataset.anchor, 10);
-                    }
-                    // Track nearest by distance to centre of the rect
-                    const dist = Math.abs(clientY - (r.top + r.bottom) / 2);
-                    if (dist < bestDist) {
-                        bestDist  = dist;
-                        bestAnchor = parseInt(el.dataset.anchor, 10);
-                    }
-                }
-            }
-            return bestAnchor;
-        }
-
-        // Toggle a line-bookmark for the given anchor index.
-        // Creates one if absent; deletes it if already present.
-        async function toggleLineBookmark(anchor) {
-            // In-line (line) bookmarks are disabled — hard guard so no stray
-            // code path (or stale event handler) can ever create one or fire
-            // its toast/vibration. See touchstart handler + renderLineBookmarkFlags.
-            return;
-            const existingId = lineBookmarkByAnchor.get(anchor);
-            if (existingId) {
-                try {
-                    const r = await fetch(`${API_URL}/highlights/${existingId}`, { method: 'DELETE' });
-                    if (!r.ok && r.status !== 404) { flashToast('⚠️ Could not remove bookmark'); return; }
-                    lineBookmarks = lineBookmarks.filter(b => b.id !== existingId);
-                    lineBookmarkByAnchor.delete(anchor);
-                    renderLineBookmarkFlags();
-                    flashToast('🔖 Line bookmark removed');
-                } catch (e) { flashToast('⚠️ Error: ' + e.message); }
-                return;
-            }
-            const body = {
-                type: 'line-bookmark',
-                bookId, bookTitle: title, bookAuthor,
-                anchor,
-                page: currentEpubPage, total: totalPages,
-                // Snippet = the bookmarked line's text (start of the anchor
-                // block).  Chapter at creation time, like the other types.
-                text: snippetForAnchor(anchor),
-                chapter: _activeChapterTitle(),
-                note: ''
-            };
-            try {
-                const r = await fetch(`${API_URL}/highlights`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(body)
-                });
-                if (!r.ok) throw new Error('HTTP ' + r.status);
-                const item = await r.json();
-                lineBookmarks.push(item);
-                lineBookmarkByAnchor.set(anchor, item.id);
-                renderLineBookmarkFlags();
-                flashToast('🔖 Line bookmarked');
-            } catch (e) { flashToast('⚠️ Bookmark failed: ' + e.message); }
-        }
-
-        // Render (or refresh) the small flag icons in the left margin for every
-        // line-bookmark whose anchor element is visible on the current page.
-        // Called from renderEpubPage() so flags stay in sync after every page turn,
-        // re-pagination, font-size change, or fold/unfold.
-        function renderLineBookmarkFlags() {
-            const container = document.getElementById('line-bookmark-flags');
-            if (!container) return;
-            container.innerHTML = '';
-            // In-line (line) bookmarks are disabled — never paint flags, even
-            // for any that were saved by older builds. See touchstart handler.
-            return;
-            if (!columnStride || !pageWidth) return;
-            const content = document.getElementById('epub-content');
-            if (!content) return;
-            const contentRect = content.getBoundingClientRect();
-            const pageStart   = currentEpubPage * columnStride;
-            const pageEnd     = pageStart + pageWidth;
-
-            for (const bm of lineBookmarks) {
-                const el = content.querySelector(`[data-anchor="${bm.anchor}"]`);
-                if (!el) continue;
-                const rects = el.getClientRects();
-                // Find the first fragment of this element that lands on the current page.
-                let targetRect = null;
-                for (let i = 0; i < rects.length; i++) {
-                    const rawLeft = rects[i].left - contentRect.left;
-                    if (rawLeft >= pageStart - 2 && rawLeft < pageEnd) {
-                        targetRect = rects[i]; break;
-                    }
-                }
-                if (!targetRect) continue;
-
-                // Determine left margin X.  getClientRects() returns VIEWPORT
-                // coordinates (after the translateX page-scroll transform), so
-                // elements on the current page always appear at their visual
-                // screen X — left-column elements near 0, right-column near
-                // pageWidth/2 — regardless of which page we're on.  Compare
-                // directly against pageWidth/2; no pageStart subtraction needed.
-                const isRightCol = currentColumnCount === 2 &&
-                    targetRect.left >= pageWidth / 2;
-                const flagX = isRightCol ? Math.round(pageWidth / 2) : 0;
-                const flagY = Math.round(targetRect.top);
-                // Flag height = one CSS line height (approx fontSize * 1.5),
-                // but capped to the element's first-line rect height if smaller.
-                const lineH = Math.max(16, Math.min(Math.round(targetRect.height), Math.round(fontSize * 1.6)));
-
-                const flag = document.createElement('div');
-                flag.className = 'line-bm-flag';
-                flag.title = 'Tap to remove line bookmark';
-                flag.style.cssText = `left:${flagX}px;top:${flagY}px;height:${lineH}px;`;
-                // Small downward-pointing ribbon SVG, scaled to the line height.
-                const notch = Math.round(lineH * 0.28);
-                flag.innerHTML =
-                    `<svg width="14" height="${lineH}" viewBox="0 0 14 ${lineH}" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">` +
-                    `<path d="M1 0 L13 0 L13 ${lineH - notch} L7 ${lineH} L1 ${lineH - notch} Z"/>` +
-                    `</svg>`;
-                flag.addEventListener('click', ev => {
-                    ev.stopPropagation();
-                    toggleLineBookmark(bm.anchor);
-                });
-                container.appendChild(flag);
             }
         }
 
@@ -5180,6 +4985,18 @@
             } catch (_) { return null; }
         }
 
+        // Tear down all highlight-editing chrome (popup, drag handles,
+        // magnifier) and drop the live selection. The handles/popup/magnifier
+        // live at a higher z-index than the lookup/summary overlays, so unless
+        // they're dismissed they paint *through* an open overlay. Called
+        // whenever a full-screen overlay takes over the view.
+        function dismissHighlightUI() {
+            hideHLPopup();        // also calls _hideHLHandles()
+            _hideMagnifier();
+            const sel = window.getSelection();
+            if (sel && !sel.isCollapsed) sel.removeAllRanges();
+        }
+
         let _cleanReaderToken = 0;  // guards against overlapping lookups
         // Wiki-internal navigation history. Following a link inside a wiki
         // article pushes the current page here; the in-overlay ‹ Back button
@@ -5189,6 +5006,10 @@
         let _wikiHistory = [];      // previously-viewed titles (oldest → newest)
 
         function openCleanReader(kind, text) {
+            // A full-screen overlay is taking over the view — tear down any
+            // highlight popup/handles/magnifier and drop the live selection so
+            // they don't paint through the overlay.
+            dismissHighlightUI();
             // Fresh open from a book selection — reset internal navigation.
             _wikiKind = kind;
             _wikiCurrent = text;
@@ -6945,6 +6766,7 @@
         // to jump to a specific reached chapter.
         function openSummary(forTitle) {
             if (!bookSummaries) return;
+            dismissHighlightUI();
             _summaryChapters = buildReachedSummaryChapters();
             if (!_summaryChapters.length) {
                 // Reached a point with no matching summary yet (e.g. front matter).
@@ -7148,6 +6970,7 @@
             const tocList = document.getElementById('toc-list');
 
             if (tocOverlay.style.display === 'none') {
+                dismissHighlightUI();
                 tocList.innerHTML = '';
                 _tocRows = [];
                 if (!tocTree || tocTree.length === 0) {
@@ -7182,74 +7005,14 @@
 
             const viewport = document.getElementById('epub-viewport') || document.getElementById('reader-container');
 
-            // Long-press detection for margin bookmarks.
-            // A touch that stays in the left margin zone (< SIDE_PADDING px from the
-            // left edge of the current page) for LONG_PRESS_MS ms WITHOUT moving more
-            // than LP_MOVE_TOLERANCE px is interpreted as a line-bookmark gesture,
-            // NOT a page-turn tap.  Movement tolerance matters because a still finger
-            // on a capacitive screen still generates a stream of touchmove events
-            // with sub-pixel jitter — cancelling on any movement kills the timer
-            // before it can fire.
-            const LONG_PRESS_MS = 500;
-            const LP_MOVE_TOLERANCE = 12;   // CSS px
-            let _lpTimer = null;      // setTimeout handle
-            let _lpFired = false;     // true once the long-press fires; suppresses touchend
-            let _lpStartX = 0, _lpStartY = 0;
-
-            function _isMarginTouch(clientX) {
-                // When flipped 180°, transform the touch coordinate to match the visual layout
-                let x = clientX;
-                if (flip180Pref) {
-                    // Flip: physical left → visual right, physical right → visual left
-                    x = pageWidth - clientX;
-                }
-                // Left margin of left page (single or dual).
-                if (x < SIDE_PADDING) return true;
-                // Left margin of right page in dual-column layout.  We use
-                // currentColumnCount (live) instead of isDualPage because the
-                // layout can be 2-up either from the user preference OR auto-
-                // selected based on viewport width (see calculatePages).
-                if (currentColumnCount === 2 &&
-                    x >= pageWidth / 2 && x < pageWidth / 2 + SIDE_PADDING) return true;
-                return false;
-            }
-
             // Listen on the document, not the viewport — guarantees we catch
             // the touch no matter which child element owns the event target.
             document.addEventListener('touchstart', (e) => {
                 touchStartX = e.changedTouches[0].screenX;
                 touchStartY = e.changedTouches[0].screenY;
-                _lpFired = false;
-                clearTimeout(_lpTimer);
-                _lpTimer = null;
-                const t = e.changedTouches[0];
-                _lpStartX = t.clientX; _lpStartY = t.clientY;
-                // In-line (margin long-press) bookmarks are intentionally
-                // disabled — they were too easy to trigger and too finicky.
-                // The long-press machinery below is left inert; the top-right
-                // corner ribbon remains the only way to bookmark a page.
-                void _isMarginTouch;  // kept to avoid an unused-fn warning
-            }, { passive: true });
-
-            // Cancel the long-press timer only if the finger moves more than the
-            // tolerance — capacitive jitter on a still finger is normal and should
-            // not abort the gesture.
-            viewport.addEventListener('touchmove', (e) => {
-                if (!_lpTimer) return;
-                const t = e.changedTouches[0];
-                const dx = Math.abs(t.clientX - _lpStartX);
-                const dy = Math.abs(t.clientY - _lpStartY);
-                if (dx > LP_MOVE_TOLERANCE || dy > LP_MOVE_TOLERANCE) {
-                    clearTimeout(_lpTimer);
-                    _lpTimer = null;
-                }
             }, { passive: true });
 
             viewport.addEventListener('touchend', (e) => {
-                clearTimeout(_lpTimer);
-                _lpTimer = null;
-                // Long-press already handled the gesture — skip normal tap/swipe logic.
-                if (_lpFired) { _lpFired = false; return; }
                 touchEndX = e.changedTouches[0].screenX;
                 touchEndY = e.changedTouches[0].screenY;
                 // If there's a live text selection, suppress page-turn and
