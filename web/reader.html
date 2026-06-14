@@ -837,6 +837,11 @@
         .clean-reader-content h3 { font-size: 1.12em; }
         .clean-reader-content p { margin: 0 0 0.9em; }
         .clean-reader-content a { color: #7aa2f7; text-decoration: none; }
+        /* Tappable internal wiki links (loaded in-overlay). Dead links
+           (external / namespaced) lose their link colour so they don't look
+           clickable when they aren't. */
+        .clean-reader-content a.cr-wikilink { cursor: pointer; text-decoration: underline; text-decoration-color: rgba(122,162,247,0.5); }
+        .clean-reader-content a.cr-deadlink { color: inherit; text-decoration: none; }
         .clean-reader-content img {
             max-width: 100%; height: auto; border-radius: 6px; display: block;
             margin: 10px auto;
@@ -1311,11 +1316,12 @@
          scroll jank). Built by openCleanReader() / renderWiki() / renderDict(). -->
     <div id="reader-overlay" style="display:none;position:fixed;inset:0;z-index:10001;background:#181818;flex-direction:column;">
         <div style="flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:calc(env(safe-area-inset-top,0px) + 12px) 14px 12px 14px;background:#101010;border-bottom:1px solid #2a2a2a;">
+            <button id="reader-overlay-back" onclick="wikiBack()" title="Back" style="display:none;flex:0 0 auto;align-items:center;justify-content:center;background:#333;color:#fff;border:none;padding:9px 13px;border-radius:8px;font-size:16px;cursor:pointer;">‹</button>
             <span id="reader-kind-badge" style="flex:0 0 auto;font-size:18px;">🌐</span>
             <div id="reader-overlay-title" style="flex:1;min-width:0;color:#fff;font-size:17px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Loading…</div>
-            <button onclick="closeCleanReader()" style="flex:0 0 auto;background:#333;color:#fff;border:none;padding:9px 15px;border-radius:8px;font-size:16px;cursor:pointer;">✕</button>
+            <button onclick="closeCleanReader()" title="Close" style="flex:0 0 auto;background:#333;color:#fff;border:none;padding:9px 15px;border-radius:8px;font-size:16px;cursor:pointer;">✕</button>
         </div>
-        <div id="reader-overlay-scroll" style="flex:1 1 auto;overflow-y:auto;-webkit-overflow-scrolling:touch;">
+        <div id="reader-overlay-scroll" style="flex:1 1 auto;overflow-x:hidden;overflow-y:auto;-webkit-overflow-scrolling:touch;">
             <div id="reader-overlay-content" class="clean-reader-content"></div>
         </div>
     </div>
@@ -3513,6 +3519,10 @@
         // Toggle a line-bookmark for the given anchor index.
         // Creates one if absent; deletes it if already present.
         async function toggleLineBookmark(anchor) {
+            // In-line (line) bookmarks are disabled — hard guard so no stray
+            // code path (or stale event handler) can ever create one or fire
+            // its toast/vibration. See touchstart handler + renderLineBookmarkFlags.
+            return;
             const existingId = lineBookmarkByAnchor.get(anchor);
             if (existingId) {
                 try {
@@ -4888,8 +4898,26 @@
         }
 
         let _cleanReaderToken = 0;  // guards against overlapping lookups
+        // Wiki-internal navigation history. Following a link inside a wiki
+        // article pushes the current page here; the in-overlay ‹ Back button
+        // and the device back gesture step through it before closing.
+        let _wikiKind = 'wiki';     // 'wiki' | 'dict' — what the overlay is showing
+        let _wikiCurrent = null;    // current title/word
+        let _wikiHistory = [];      // previously-viewed titles (oldest → newest)
+
         function openCleanReader(kind, text) {
-            const overlay = document.getElementById('reader-overlay');
+            // Fresh open from a book selection — reset internal navigation.
+            _wikiKind = kind;
+            _wikiCurrent = text;
+            _wikiHistory = [];
+            document.getElementById('reader-overlay').style.display = 'flex';
+            armOverlayBack();
+            _renderCleanReader(kind, text);
+        }
+
+        // Load `text` (a word for dict, a page title/query for wiki) into the
+        // already-open overlay. Does NOT touch history — callers manage that.
+        function _renderCleanReader(kind, text) {
             const titleEl = document.getElementById('reader-overlay-title');
             const badge   = document.getElementById('reader-kind-badge');
             const content = document.getElementById('reader-overlay-content');
@@ -4897,9 +4925,8 @@
             badge.textContent = kind === 'dict' ? '📖' : '🌐';
             titleEl.textContent = text;
             content.innerHTML = '<div class="cr-loading">Loading…</div>';
-            scroll.scrollTop = 0;
-            overlay.style.display = 'flex';
-            armOverlayBack();
+            if (scroll) scroll.scrollTop = 0;
+            _updateWikiBackButton();
             const token = ++_cleanReaderToken;
             const job = (kind === 'dict') ? loadDictInto(text, token)
                                           : loadWikiInto(text, token);
@@ -4919,10 +4946,37 @@
             });
         }
 
+        // Follow an internal wiki link: remember where we were, then load the
+        // target into the same overlay.
+        function navigateWikiTo(title) {
+            if (!title) return;
+            if (_wikiCurrent) _wikiHistory.push(_wikiCurrent);
+            _wikiCurrent = title;
+            _renderCleanReader('wiki', title);
+        }
+
+        // Step back one page within the wiki overlay. Returns true if it
+        // navigated (stayed open), false if there was nothing to go back to.
+        function wikiBack() {
+            if (!_wikiHistory.length) return false;
+            _wikiCurrent = _wikiHistory.pop();
+            _renderCleanReader(_wikiKind, _wikiCurrent);
+            return true;
+        }
+
+        // Show/hide + label the in-overlay ‹ Back button based on history depth.
+        function _updateWikiBackButton() {
+            const btn = document.getElementById('reader-overlay-back');
+            if (btn) btn.style.display = _wikiHistory.length ? 'flex' : 'none';
+        }
+
         function closeCleanReader() {
             _cleanReaderToken++;  // cancel any in-flight render
             document.getElementById('reader-overlay').style.display = 'none';
             document.getElementById('reader-overlay-content').innerHTML = '';
+            _wikiCurrent = null;
+            _wikiHistory = [];
+            _updateWikiBackButton();
             consumeOverlayBack();
         }
 
@@ -4938,7 +4992,7 @@
         // balanced. Overlays are listed top-of-stack first.
         const _OVERLAY_BACK_ORDER = [
             { id: 'hl-settings',     open: el => el.classList.contains('open'),       close: () => closeLookupSettings() },
-            { id: 'reader-overlay',  open: el => el.style.display === 'flex',          close: () => closeCleanReader() },
+            { id: 'reader-overlay',  open: el => el.style.display === 'flex',          close: () => { if (!wikiBack()) closeCleanReader(); } },
             { id: 'search-overlay',  open: el => el.style.display === 'block',         close: () => closeSearch() },
             { id: 'summary-overlay', open: el => el.style.display === 'block',         close: () => closeSummary() },
             { id: 'navlist-overlay', open: el => el.style.display === 'block',         close: () => closeNavList() },
@@ -5054,8 +5108,32 @@
                 '[role="navigation"]', 'table.navbox', 'table.vertical-navbox',
             ];
             KILL.forEach(sel => { try { root.querySelectorAll(sel).forEach(n => n.remove()); } catch (_) {} });
-            // Neutralize links (no navigating away → no ads/jank); keep text.
-            root.querySelectorAll('a').forEach(a => { a.removeAttribute('href'); a.removeAttribute('target'); });
+            // Rewrite links. Internal article links (/wiki/Article — both
+            // Wikipedia and Fandom use this) become in-overlay navigation:
+            // we stash the title on data-wiki-title and a delegated click
+            // handler loads it into this same clean reader. Namespaced links
+            // (File:/Category:/Help:/Special:/…) and external links are just
+            // neutralized so they never navigate the WebView away.
+            const _WIKI_NS_SKIP = /^(File|Image|Category|Help|Special|Template|Portal|Wikipedia|Wikt|Talk|User|Module|MediaWiki|Draft):/i;
+            root.querySelectorAll('a').forEach(a => {
+                const href = a.getAttribute('href') || '';
+                a.removeAttribute('target');
+                let title = null;
+                const m = href.match(/\/wiki\/([^#?]+)/);
+                if (m) {
+                    try {
+                        const decoded = decodeURIComponent(m[1]).replace(/_/g, ' ');
+                        if (decoded && !_WIKI_NS_SKIP.test(decoded)) title = decoded;
+                    } catch (_) {}
+                }
+                a.removeAttribute('href');
+                if (title) {
+                    a.classList.add('cr-wikilink');
+                    a.setAttribute('data-wiki-title', title);
+                } else {
+                    a.classList.add('cr-deadlink');
+                }
+            });
             // Absolutize images, then route them through OUR proxy. Loading the
             // live CDN directly fails a lot: Fandom/wikia hotlink-protect images,
             // and the app is served over http so https-only CDNs can trip mixed
@@ -5280,6 +5358,17 @@
             _hlInited = true;
             _ensureCSSHL();
             document.addEventListener('selectionchange', onSelectionChangeForSave);
+            // Delegated handler for in-overlay wiki links (cleanWikiHTML tags
+            // internal article links with .cr-wikilink + data-wiki-title).
+            const _crContent = document.getElementById('reader-overlay-content');
+            if (_crContent) {
+                _crContent.addEventListener('click', (e) => {
+                    const a = e.target.closest && e.target.closest('a.cr-wikilink');
+                    if (!a) return;
+                    e.preventDefault();
+                    navigateWikiTo(a.getAttribute('data-wiki-title'));
+                });
+            }
             document.addEventListener('click', (e) => {
                 const inPopup = e.target.closest && e.target.closest('#hl-popup');
                 if (inPopup) return;
