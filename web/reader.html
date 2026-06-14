@@ -164,8 +164,24 @@
         #epub-content p.epub-scene-break,
         #epub-content div.epub-scene-break {
             min-height: 1em;
-            margin-top: 0.6em;
-            margin-bottom: 1em;
+            margin-top: 1.1em;
+            margin-bottom: 1.1em;
+            text-align: center;
+        }
+        /* Centered asterism (⁂) — the standard scene/POV-break "dinkus".
+           Rendered for both soft-break kinds: the empty-spacer paragraph
+           (this rule) and the flush-left opener (below). opacity (not a fixed
+           colour) so it tracks the active theme's text colour in light/dark/
+           sepia. */
+        #epub-content p.epub-scene-break::before,
+        #epub-content div.epub-scene-break::before {
+            content: "\2042";
+            display: block;
+            text-align: center;
+            text-indent: 0;
+            opacity: 0.5;
+            font-size: 1.15em;
+            line-height: 1;
         }
         /* Scene / POV break where the EPUB carries NO empty spacer at all —
            the new scene's first paragraph is simply given a flush-left
@@ -178,8 +194,21 @@
         #epub-content p.epub-scene-break-before,
         #epub-content blockquote.epub-scene-break-before,
         #epub-content div.epub-scene-break-before {
-            padding-top: 1em;
-            margin-top: 0.8em;
+            /* padding-top blocks margin-collapse so the ornament's gap above
+               can't be swallowed by the preceding paragraph's bottom margin. */
+            padding-top: 0.6em;
+        }
+        #epub-content p.epub-scene-break-before::before,
+        #epub-content blockquote.epub-scene-break-before::before,
+        #epub-content div.epub-scene-break-before::before {
+            content: "\2042";
+            display: block;
+            text-align: center;
+            text-indent: 0;
+            opacity: 0.5;
+            font-size: 1.15em;
+            line-height: 1;
+            margin: 0 0 1em;
         }
         #epub-content h1, #epub-content h2, #epub-content h3 {
             margin-top: 1.5em;
@@ -1034,6 +1063,30 @@
         .toc-label.depth-1 { font-size: 15px; font-weight: 400; color: #e0e0e0; }
         .toc-label.depth-2 { font-size: 14px; font-weight: 400; color: #b0b0b0; }
         .toc-children.collapsed { display: none; }
+        /* "(N scenes)" count badge on a collapsed chapter row. */
+        .toc-scene-count {
+            flex-shrink: 0;
+            margin-left: 10px;
+            font-size: 12px;
+            color: #777;
+            font-weight: 400;
+            white-space: nowrap;
+        }
+        /* Opening words shown after a "Scene N" label. */
+        .toc-scene-preview {
+            color: #777;
+            font-weight: 400;
+            font-style: italic;
+        }
+        .toc-scene-preview::before { content: " — "; }
+        /* The chapter / scene the reader is currently in. */
+        .toc-row.toc-current {
+            background: #1f3147;
+            box-shadow: inset 3px 0 0 #4a90d9;
+        }
+        .toc-row.toc-current .toc-label { color: #fff; font-weight: 600; }
+        .toc-row.toc-current .toc-scene-count,
+        .toc-row.toc-current .toc-scene-preview { color: #9bc2e6; }
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
@@ -2047,6 +2100,9 @@
             } else {
                 tocTree = buildTreeFromFlatItems(tocItems);
             }
+            // Attach detected scene/POV breaks as collapsible scene lists under
+            // each leaf chapter so the TOC can expose intra-chapter scenes.
+            attachScenesToTocTree(epubContent);
 
             // Load + visually apply server-side highlights AND pull the
             // latest reading position from the backend BEFORE pagination.
@@ -5833,7 +5889,109 @@
             return root;
         }
 
+        // Attach intra-chapter scenes (detected scene / POV breaks) to the
+        // tocTree. Scenes are stored on each leaf chapter node as `node.scenes`
+        // — a separate field from `node.children`, so every other tocTree
+        // walker (buildChapterStarts, chapterTitleForAnchor, progress display)
+        // stays oblivious to them; only the TOC overlay renders them, collapsed.
+        //
+        // A chapter's "Scene 1" is the chapter start itself; each subsequent
+        // scene begins at a tagged break. We only add the list when a chapter
+        // actually contains at least one break (i.e. has 2+ scenes).
+        function attachScenesToTocTree(epubContent) {
+            if (!epubContent || !tocTree || !tocTree.length) return;
+
+            // Anchored leaf blocks in document order (skip wrappers that
+            // themselves contain an anchored descendant).
+            const leaves = Array.from(epubContent.querySelectorAll('[data-anchor]'))
+                .filter(el => !el.querySelector('[data-anchor]'));
+            const leafIndex = new Map();
+            leaves.forEach((el, i) => leafIndex.set(el, i));
+            const leafText = el => (el.textContent || '').replace(/\s+/g, ' ').trim();
+
+            // Resolve any element to its index in the ordered leaf list: itself,
+            // a nested anchored descendant, or the first leaf following it.
+            function indexFor(el) {
+                if (leafIndex.has(el)) return leafIndex.get(el);
+                const desc = el.querySelector('[data-anchor]');
+                if (desc && leafIndex.has(desc)) return leafIndex.get(desc);
+                for (let k = 0; k < leaves.length; k++) {
+                    if (el.compareDocumentPosition(leaves[k]) & Node.DOCUMENT_POSITION_FOLLOWING) return k;
+                }
+                return null;
+            }
+
+            // Collect scene-start {anchor, preview} pairs in reading order.
+            const sceneStarts = [];
+            const seen = new Set();
+            epubContent.querySelectorAll('.epub-scene-break, .epub-scene-break-before').forEach(el => {
+                let startLeaf = null;
+                if (el.classList.contains('epub-scene-break-before')) {
+                    // The flush-left opener IS the new scene's first paragraph.
+                    startLeaf = leafIndex.has(el) ? el : el.querySelector('[data-anchor]');
+                } else {
+                    // Empty spacer: the scene starts at the next paragraph with text.
+                    const idx = indexFor(el);
+                    if (idx == null) return;
+                    for (let k = idx; k < leaves.length; k++) {
+                        if (leafText(leaves[k])) { startLeaf = leaves[k]; break; }
+                    }
+                }
+                if (!startLeaf || startLeaf.dataset.anchor == null) return;
+                const anchor = parseInt(startLeaf.dataset.anchor, 10);
+                if (isNaN(anchor) || seen.has(anchor)) return;
+                seen.add(anchor);
+                sceneStarts.push({ anchor, preview: leafText(startLeaf).slice(0, 60) });
+            });
+            if (!sceneStarts.length) return;
+            sceneStarts.sort((a, b) => a.anchor - b.anchor);
+
+            // Preview for a chapter start: first non-heading paragraph with text
+            // at/after the chapter anchor (the heading itself would just repeat
+            // the chapter title).
+            function previewAt(anchor) {
+                let start = leaves.findIndex(el => parseInt(el.dataset.anchor, 10) === anchor);
+                if (start < 0) start = 0;
+                for (let k = start; k < leaves.length; k++) {
+                    if (/^H[1-6]$/.test(leaves[k].tagName)) continue;
+                    const t = leafText(leaves[k]);
+                    if (t) return t.slice(0, 60);
+                }
+                return '';
+            }
+
+            // Ordered leaf chapter nodes — scenes belong to the deepest TOC
+            // entry, and each chapter's range runs up to the next chapter start.
+            const leafNodes = [];
+            (function walk(nodes) {
+                for (const n of nodes) {
+                    if (n.children && n.children.length) walk(n.children);
+                    else if (typeof n.anchor === 'number') leafNodes.push(n);
+                }
+            })(tocTree);
+            leafNodes.sort((a, b) => a.anchor - b.anchor);
+
+            for (let i = 0; i < leafNodes.length; i++) {
+                const node = leafNodes[i];
+                const start = node.anchor;
+                const end = (i + 1 < leafNodes.length) ? leafNodes[i + 1].anchor : Infinity;
+                const within = sceneStarts.filter(s => s.anchor > start && s.anchor < end);
+                if (!within.length) continue;
+                const seq = [{ anchor: start, preview: previewAt(start) }].concat(within);
+                node.scenes = seq.map((s, idx) => ({
+                    title: 'Scene ' + (idx + 1),
+                    anchor: s.anchor,
+                    preview: s.preview,
+                    _scene: true,
+                }));
+            }
+        }
+
         // ---- TOC tree UI -------------------------------------------------------
+
+        // Flat record of every rendered TOC row + its anchor/depth, rebuilt on
+        // each open so highlightCurrentTocRow() can find + reveal where we are.
+        let _tocRows = [];
 
         function navigateToTocItem(item) {
             let page = null;
@@ -5854,22 +6012,30 @@
         // `container`. `depth` drives the left indent and label font size.
         function renderTocTree(tree, container, depth) {
             for (const item of tree) {
-                const hasKids = item.children && item.children.length > 0;
+                const hasKids   = item.children && item.children.length > 0;
+                // Scene lists only ever hang off leaf chapters (no nav children),
+                // and start COLLAPSED, unlike the part/chapter hierarchy.
+                const hasScenes = !hasKids && item.scenes && item.scenes.length > 0;
 
                 const row = document.createElement('div');
                 row.className = 'toc-row';
                 row.style.paddingLeft = (8 + depth * 22) + 'px';
 
-                // Caret (for items with children) or spacer (leaf items).
+                // Caret (for collapsible items) or spacer (true leaves).
                 let childBox = null;
-                if (hasKids) {
+                if (hasKids || hasScenes) {
                     const caret = document.createElement('span');
-                    caret.className = 'toc-caret'; // ▾ by default
+                    caret.className = 'toc-caret';
                     caret.textContent = '▾';
-                    row.appendChild(caret);
 
                     childBox = document.createElement('div');
-                    childBox.className = 'toc-children'; // expanded by default
+                    childBox.className = 'toc-children';
+                    if (hasScenes) {
+                        // Collapsed by default.
+                        childBox.classList.add('collapsed');
+                        caret.classList.add('collapsed');
+                    }
+                    row.appendChild(caret);
 
                     caret.addEventListener('click', e => {
                         e.stopPropagation();
@@ -5885,16 +6051,75 @@
                 const label = document.createElement('span');
                 label.className = `toc-label depth-${Math.min(depth, 2)}`;
                 label.textContent = item.title;
+                // Scene rows show their opening words as a muted preview.
+                if (item._scene && item.preview) {
+                    const prev = document.createElement('span');
+                    prev.className = 'toc-scene-preview';
+                    prev.textContent = item.preview;
+                    label.appendChild(prev);
+                }
                 row.appendChild(label);
+
+                // "(N scenes)" count badge on the collapsed chapter row.
+                if (hasScenes) {
+                    const badge = document.createElement('span');
+                    badge.className = 'toc-scene-count';
+                    badge.textContent = item.scenes.length + ' scenes';
+                    row.appendChild(badge);
+                }
 
                 row.addEventListener('click', () => navigateToTocItem(item));
                 container.appendChild(row);
 
+                _tocRows.push({
+                    row,
+                    anchor: (typeof item.anchor === 'number') ? item.anchor : null,
+                    depth: item._scene ? depth + 100 : depth,  // scene wins ties vs its chapter
+                });
+
                 if (childBox) {
                     container.appendChild(childBox);
-                    renderTocTree(item.children, childBox, depth + 1);
+                    if (hasScenes) renderTocTree(item.scenes, childBox, depth + 1);
+                    else           renderTocTree(item.children, childBox, depth + 1);
                 }
             }
+        }
+
+        // Find the deepest rendered TOC row at/before the current reading
+        // position, highlight it, reveal it (expanding its scene list if
+        // collapsed) and scroll it into view.
+        function highlightCurrentTocRow() {
+            if (!_tocRows.length) return;
+            let cur = (typeof _lastRenderedAnchor === 'number') ? _lastRenderedAnchor : null;
+            if (cur == null) {
+                const fine = captureFineAnchor && captureFineAnchor();
+                cur = (fine && typeof fine.anchor === 'number') ? fine.anchor
+                    : captureFirstVisibleAnchor();
+            }
+            if (cur == null) return;
+
+            let best = null;
+            for (const r of _tocRows) {
+                if (r.anchor == null || r.anchor > cur) continue;
+                if (!best || r.anchor > best.anchor ||
+                    (r.anchor === best.anchor && r.depth > best.depth)) best = r;
+            }
+            if (!best) return;
+
+            best.row.classList.add('toc-current');
+            // Walk up, un-collapsing every ancestor scene/section group so the
+            // current row is actually visible.
+            let node = best.row.parentElement;
+            while (node) {
+                if (node.classList && node.classList.contains('toc-children')) {
+                    node.classList.remove('collapsed');
+                    const ownerRow = node.previousElementSibling;
+                    const caret = ownerRow && ownerRow.querySelector('.toc-caret');
+                    if (caret) caret.classList.remove('collapsed');
+                }
+                node = node.parentElement;
+            }
+            best.row.scrollIntoView({ block: 'center' });
         }
 
         // ---- Bookmarks / Highlights navigation overlay -----------------
@@ -6526,12 +6751,16 @@
 
             if (tocOverlay.style.display === 'none') {
                 tocList.innerHTML = '';
+                _tocRows = [];
                 if (!tocTree || tocTree.length === 0) {
                     tocList.innerHTML = '<div style="color:#aaa;padding:20px;text-align:center;font-size:16px;">No table of contents available</div>';
                 } else {
                     renderTocTree(tocTree, tocList, 0);
                 }
                 tocOverlay.style.display = 'block';
+                // Reveal + center the chapter/scene we're currently reading.
+                // Must run after display:block so scrollIntoView can measure.
+                highlightCurrentTocRow();
                 armOverlayBack();
             } else {
                 tocOverlay.style.display = 'none';
