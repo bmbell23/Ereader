@@ -632,6 +632,7 @@
     </div>
 
     <div class="menu-popup" id="menu-popup">
+        <button id="menu-greatreads">📚 GreatReads</button>
         <button id="menu-highlights">✏️ Highlights</button>
         <button id="menu-bookmarks">🔖 Bookmarks</button>
         <button id="menu-requests">📋 Requests</button>
@@ -2254,6 +2255,12 @@
             if (!menuPopup.contains(e.target) && e.target !== menuBtn) {
                 menuPopup.classList.remove('open');
             }
+        });
+
+        // ---------- GreatReads (vendored library/TBR app, served same-origin) ----------
+        document.getElementById('menu-greatreads').addEventListener('click', () => {
+            menuPopup.classList.remove('open');
+            window.location.href = '/greatreads/';
         });
 
         // ---------- Highlights & Bookmarks overlay ----------

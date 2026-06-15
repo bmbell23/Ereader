@@ -140,6 +140,21 @@ docker ps --format '{{.Names}} {{.Ports}}' | grep greatreads   # both app + erea
 
 ## Story 1 — "GreatReads" button (reverse-proxy + menu entry)
 
+> **STATUS: ✅ DONE (2026-06-14).** `web/serve.py` reverse-proxies `/greatreads/*` → `:8092`
+> (prefix-strip + `X-Forwarded-Prefix`, forwards original `Host` so `url_for()` links resolve
+> to the client origin, streams responses). Button added at `index.html` `#menu-popup`
+> (`📚 GreatReads` → `/greatreads/`). Auth needs nothing — GreatReads auto-logs-in as `brandon`,
+> and the client is already prefix-aware (`window.APP_BASE_PATH`). Verified live on :8090:
+> home/css/api 200, `/greatreads`→301, no `:8092` leak, reader/player/api intact.
+> Restart model: `:8090` serve.py is bounced by `keep-alive.sh`; `:8091` Flask hot-reloads
+> (`debug=True`) — do **not** kill it (`run.sh` won't relaunch it).
+>
+> **Also (Story 2 brought forward per request): progress dual-write.** `backend/server.py`
+> mirrors every GreatReads write (sync %, finish ratings, start-next) to a best-effort
+> `GREATREADS_MIRROR_URLS` (default `http://127.0.0.1:8092`) while the primary `GREATREADS_URL`
+> stays prod `:8007`. → progress now reaches BOTH. To go local-only later: set
+> `GREATREADS_URL=http://127.0.0.1:8092` + `GREATREADS_MIRROR_URLS=""`.
+
 ### 1a. Reverse proxy in `web/serve.py`
 `serve.py` is a 95-line `ThreadingHTTPServer` + `SimpleHTTPRequestHandler` (no proxy today).
 Its `end_headers()` force-injects `no-store` + CORS + APK headers on **every** response — we
