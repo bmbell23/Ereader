@@ -42,6 +42,10 @@
             text-overflow: ellipsis; white-space: nowrap; flex: 1; }
         .stage { flex: 1; display: flex; flex-direction: column; align-items: center;
             justify-content: center; padding: 8px 24px 4px; gap: 16px; min-height: 0; }
+        /* Portrait: the wrapper is transparent so meta/bars/controls remain
+           direct flex children of .stage (unchanged layout). Landscape (below)
+           turns it into a real column beside the cover. */
+        .stage-main { display: contents; }
         .cover {
             width: min(78vw, 340px); max-height: 46vh; aspect-ratio: 1/1; border-radius: 16px;
             object-fit: cover; box-shadow: 0 12px 40px rgba(0,0,0,0.55),
@@ -175,6 +179,49 @@
             font-size: 15px; background: var(--bg); z-index: 80;
         }
         .overlay-msg.hidden { display: none; }
+
+        /* ---- Landscape on a phone-height viewport ----
+           A short, wide viewport can't fit the portrait stack (cover + meta +
+           two bars + controls) — it overflows and, with body{overflow:hidden},
+           the lower controls get clipped and the middle squishes. Lay the cover
+           beside the controls instead so everything fits without scrolling.
+           Gated on max-height so tablets / large landscape (where the portrait
+           stack fits fine) are unaffected. */
+        @media (orientation: landscape) and (max-height: 600px) {
+            .stage {
+                flex-direction: row;
+                align-items: center;
+                justify-content: center;
+                gap: 28px;
+                padding: 6px 28px;
+            }
+            .cover {
+                /* Size to the available height instead of width; aspect-ratio
+                   keeps it square. Overrides the portrait width/max-height. */
+                width: auto;
+                height: 100%;
+                max-height: min(82vh, 300px);
+                max-width: 42vw;
+            }
+            .stage-main {
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                gap: 10px;
+                flex: 1 1 auto;
+                min-width: 0;
+                max-width: 560px;
+            }
+            .meta .title { font-size: 17px; }
+            .bars { gap: 8px; }
+            /* Drop the reserved portrait nav-bar gap so the speed bar isn't
+               pushed off the short viewport. */
+            .bottom-bar {
+                padding: 6px 20px;
+                margin-bottom: calc(6px + env(safe-area-inset-bottom, 0px));
+            }
+        }
     </style>
 </head>
 <body>
@@ -187,6 +234,10 @@
 
     <div class="stage">
         <img class="cover" id="cover" alt="">
+        <!-- Wrapper is display:contents in portrait (transparent — meta/bars/
+             controls stay direct flex children of .stage). In landscape it
+             becomes a real flex column so the cover can sit beside it. -->
+        <div class="stage-main">
         <div class="meta">
             <div class="title" id="title"></div>
             <div class="author" id="author"></div>
@@ -222,6 +273,7 @@
                 </span>
             </button>
         </div>
+        </div><!-- /.stage-main -->
     </div>
 
     <div class="bottom-bar">

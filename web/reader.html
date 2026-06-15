@@ -5692,6 +5692,16 @@
         // (posture change + final size) so we wait for things to settle.
         let _resizeTimer = null;
         function scheduleRepaginate() {
+            // Dismiss the highlight popup + selection handles immediately. They
+            // are positioned with absolute viewport pixel coords (see
+            // _placePopup / _positionHLHandles) captured before the rotation, so
+            // after the reflow they'd point at where the text used to be. The
+            // user re-taps the highlight to bring them back at the new spot.
+            try {
+                const popup = document.getElementById('hl-popup');
+                if (popup && popup.style.display !== 'none') hideHLPopup();
+                else _hideHLHandles();
+            } catch (_) {}
             // Hide content immediately so the user doesn't see it sitting at
             // translateX(-oldPage * oldStride) inside the already-reflowed
             // viewport during the 200 ms debounce + 50 ms calculatePages
