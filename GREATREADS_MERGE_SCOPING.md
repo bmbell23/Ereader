@@ -289,7 +289,25 @@ audiobookshelf}` and `external_id` is the Calibre int / ABS uuid. Used for deep 
 
 ---
 
-## Story 3 — Unify data (JSON → SQLite)  *(lighter scope — revisit at execution)*
+## Story 3 — Unify data (JSON → SQLite)
+
+> **STATUS: ✅ progress slice DONE (2026-06-14).** Reading progress moved off
+> `progress.json` into the GreatReads SQLite DB. `backend/server.py`:
+> `_load_progress`/`_save_progress` now read/write an `ereader_progress` table in
+> `greatreads/data/greatreads.db` (full record as a JSON blob; `progress.json` kept as a
+> best-effort backup + fallback so the reader can't lose position). Legacy `progress.json`
+> auto-migrates on first load (12 records migrated). New `_gr_set_current_percent()` writes
+> `read.current_percent` (+ `current_percent_manual_override`, `date_progress_set`) for the
+> precisely-resolved in-progress reading (via `external_imports` — **no title matching**) on
+> every `PUT /api/progress`. The title-matching batch **sync is retired** (`/api/greatreads/sync`
+> is now a no-op; the progress mirror is gone). Verified end-to-end: a page-turn PUT moved
+> GreatReads' `current_percent` 28→50→28 and the reader's position data round-tripped intact.
+> **Still TODO for the rest of Story 3:** highlights → SQLite; days_estimate/chain recalc on
+> progress write (only affects projected dates, not the displayed %); eventually drop the JSON
+> backup once proven. Finish/start-next still go via the API (primary prod :8007 + :8092 mirror)
+> — that flips in Story 2.
+
+### (original lighter scope, for the remaining pieces)
 
 - **Models/migrations** (match `GreatReads/migrations/*.sql` style): add `progress`,
   `highlights`, optional `requests` tables to the vendored schema. Key rows to `books.id`,

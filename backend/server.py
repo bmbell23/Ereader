@@ -9,6 +9,7 @@ from flask_cors import CORS
 import requests
 import os
 import json
+import sqlite3
 import uuid
 import threading
 import time
@@ -219,7 +220,35 @@ def _save_highlights(items):
         json.dump(items, f, indent=2)
     os.replace(tmp, HIGHLIGHTS_FILE)
 
-def _load_progress():
+# ── Progress store (GreatReads SQLite DB, with JSON backup) ───────────────
+# Reading progress now lives in the GreatReads SQLite DB — one source of truth,
+# co-located with the data GreatReads serves. We keep writing progress.json too,
+# as a best-effort backup/fallback, so the reader can never lose position if the
+# DB is briefly unavailable. NOTE: GreatReads does NOT read the ereader_progress
+# table — it reads read.current_percent, which we set directly at save time via
+# _gr_set_current_percent(). That is what makes the old title-matching "sync" job
+# obsolete: progress is written straight to where GreatReads reads it.
+GREATREADS_DB = os.environ.get('GREATREADS_DB', os.path.normpath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                 '..', 'greatreads', 'data', 'greatreads.db')))
+
+def _gr_db():
+    """Open the GreatReads SQLite DB (shared read/write). WAL + busy_timeout so we
+    coexist cleanly with the GreatReads container's own connections."""
+    conn = sqlite3.connect(GREATREADS_DB, timeout=5.0)
+    conn.row_factory = sqlite3.Row
+    conn.execute('PRAGMA busy_timeout=5000')
+    return conn
+
+def _ensure_progress_table(conn):
+    conn.execute(
+        'CREATE TABLE IF NOT EXISTS ereader_progress ('
+        ' book_key TEXT PRIMARY KEY,'
+        ' data     TEXT NOT NULL,'   # full JSON progress record (reader/player contract)
+        ' progress REAL,'            # 0..1 fraction (denormalized for quick queries)
+        ' updated  INTEGER)')        # epoch ms (denormalized for ORDER BY)
+
+def _load_progress_json():
     if not os.path.exists(PROGRESS_FILE):
         return {}
     try:
@@ -227,14 +256,117 @@ def _load_progress():
             data = json.load(f)
             return data if isinstance(data, dict) else {}
     except Exception as e:
-        print(f"⚠️  Could not load progress: {e}")
+        print(f"⚠️  Could not load progress JSON: {e}")
         return {}
 
+def _load_progress():
+    """Return {book_key: record}. Reads the DB; lazily migrates a legacy
+    progress.json into the table; falls back to JSON if the DB is unavailable."""
+    try:
+        conn = _gr_db()
+        try:
+            _ensure_progress_table(conn)
+            rows = conn.execute('SELECT book_key, data FROM ereader_progress').fetchall()
+        finally:
+            conn.close()
+        out = {}
+        for r in rows:
+            try:
+                out[r['book_key']] = json.loads(r['data'])
+            except Exception:
+                pass
+        if out:
+            return out
+        # Table empty → one-time migration from the legacy JSON file (if any).
+        legacy = _load_progress_json()
+        if legacy:
+            print(f"Migrating {len(legacy)} progress record(s) from JSON into the DB…")
+            _save_progress(legacy)
+        return legacy
+    except Exception as e:
+        print(f"⚠️  Progress DB unavailable, using JSON fallback: {e}")
+        return _load_progress_json()
+
 def _save_progress(data):
-    tmp = PROGRESS_FILE + '.tmp'
-    with open(tmp, 'w') as f:
-        json.dump(data, f, indent=2)
-    os.replace(tmp, PROGRESS_FILE)
+    """Persist the full {book_key: record} map. The DB is the primary store; the
+    JSON file is also written as a best-effort backup so the reader can't lose
+    position even if the DB write fails."""
+    # Primary: sync the table to match `data` in one transaction.
+    try:
+        conn = _gr_db()
+        try:
+            _ensure_progress_table(conn)
+            with conn:
+                keys = [str(k) for k in data.keys()]
+                if keys:
+                    ph = ','.join('?' * len(keys))
+                    conn.execute(
+                        f'DELETE FROM ereader_progress WHERE book_key NOT IN ({ph})', keys)
+                else:
+                    conn.execute('DELETE FROM ereader_progress')
+                for k, rec in data.items():
+                    frac = rec.get('progress')
+                    conn.execute(
+                        'INSERT INTO ereader_progress(book_key,data,progress,updated) '
+                        'VALUES(?,?,?,?) ON CONFLICT(book_key) DO UPDATE SET '
+                        'data=excluded.data, progress=excluded.progress, updated=excluded.updated',
+                        (str(k), json.dumps(rec),
+                         frac if isinstance(frac, (int, float)) else None,
+                         rec.get('updated') or 0))
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"⚠️  Progress DB write failed (JSON backup still written): {e}")
+    # Backup: keep the legacy JSON file current as a fallback store.
+    try:
+        tmp = PROGRESS_FILE + '.tmp'
+        with open(tmp, 'w') as f:
+            json.dump(data, f, indent=2)
+        os.replace(tmp, PROGRESS_FILE)
+    except Exception as e:
+        print(f"⚠️  Progress JSON backup write failed: {e}")
+
+def _gr_set_current_percent(book_key, record):
+    """Write a book's reading % straight into GreatReads (read.current_percent) for
+    the matching in-progress reading, resolved precisely via external_imports — no
+    title matching, no batch sync. Replicates GreatReads' own progress-write fields
+    (current_percent + manual_override + date_progress_set). Best-effort; never
+    raises, so a progress save is never blocked by GreatReads being unavailable."""
+    try:
+        frac = record.get('progress')
+        if not isinstance(frac, (int, float)) or frac <= 0 or frac >= 1:
+            return  # only meaningful for an in-progress 0<pct<100
+        pct = round(frac * 100, 1)
+        bk = str(book_key)
+        if bk.startswith('abs:'):
+            source, ext_id, media = 'audiobookshelf', bk[4:], 'Audio'
+        else:
+            source, ext_id = 'calibre', bk
+            media = 'Audio' if record.get('mediaType') == 'audiobook' else 'Ebook'
+        conn = _gr_db()
+        try:
+            row = conn.execute(
+                'SELECT r.id, r.current_percent FROM read r '
+                'JOIN external_imports ei ON ei.book_id = r.book_id '
+                'WHERE ei.source=? AND ei.external_id=? AND r.media=? '
+                '  AND r.date_started IS NOT NULL AND r.date_finished_actual IS NULL '
+                'ORDER BY r.date_started DESC LIMIT 1',
+                (source, ext_id, media)).fetchone()
+            if not row:
+                return  # GreatReads has no in-progress reading for this book+format
+            cur = row['current_percent']
+            if cur is not None and abs(float(cur) - pct) < 0.5:
+                return  # already there — skip the write
+            from datetime import datetime
+            with conn:
+                conn.execute(
+                    'UPDATE read SET current_percent=?, current_percent_manual_override=1, '
+                    'date_progress_set=? WHERE id=?',
+                    (pct, datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f'), row['id']))
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f'GreatReads current_percent update failed for {book_key}: {e}')
 
 def _seed_requests():
     """Materialise REQUESTS_SEED into the requests list. Called only when
@@ -1970,6 +2102,8 @@ def put_progress(book_id):
         data = _load_progress()
         data[str(book_id)] = item
         _save_progress(data)
+    # Reflect the % straight into GreatReads (read.current_percent) — no sync job.
+    _gr_set_current_percent(book_id, item)
     return jsonify(item)
 
 @app.route('/api/progress/<book_id>', methods=['DELETE'])
@@ -1982,127 +2116,19 @@ def delete_progress(book_id):
         _save_progress(data)
     return jsonify({'deleted': str(book_id)})
 
-# ---------- GreatReads tracker push ----------
-# Mirror our in-progress reading percentages into the external GreatReads
-# reading tracker (see GREATREADS_URL). We match our progress records to
-# GreatReads readings by normalized title AND format: a GreatReads "Audio"
-# reading is fed our audiobook percentage; an "Ebook" reading is fed our ebook
-# percentage. Only the percentage of an already-in-progress reading is updated
-# (via GreatReads' own PUT /api/readings/{id}/progress) — we never create,
-# finish, or re-format a reading. POST-only; pass {"dryRun": true} (or
-# ?dry_run=1) to preview the matches without writing.
-
-def _gr_media_kind(media):
-    """Bucket a GreatReads `media` string into the format whose progress we feed
-    it: 'audio' or 'ebook'. Physical (and anything else) has no digital progress
-    source on our side, so it maps to None and is skipped. GreatReads only emits
-    'Ebook' / 'Audio' / 'Physical' today (legacy 'Kindle' was migrated to
-    'Ebook'); we keep the lowercase fallback for forward-compatibility."""
-    m = (media or '').strip().lower()
-    if m in ('audio', 'audiobook'):
-        return 'audio'
-    if m in ('ebook', 'e-book'):
-        return 'ebook'
-    return None
-
-def _our_progress_by_title():
-    """Index our in-progress percentages by (normalized title, kind), where kind
-    is 'audio' for audiobook records (mediaType == 'audiobook') and 'ebook'
-    otherwise. Keeps the newest-updated record per key. Returns
-    { (norm_title, kind): {title, percent, updated} }."""
-    with _progress_lock:
-        data = _load_progress()
-    out = {}
-    for rec in data.values():
-        try:
-            frac = float(rec.get('progress') or 0)
-        except (TypeError, ValueError):
-            frac = 0.0
-        if frac <= 0:
-            continue
-        title = rec.get('bookTitle') or ''
-        norm = _norm(_strip_edition(title))
-        if not norm:
-            continue
-        kind = 'audio' if rec.get('mediaType') == 'audiobook' else 'ebook'
-        key = (norm, kind)
-        upd = rec.get('updated') or 0
-        prev = out.get(key)
-        if not prev or upd > prev['updated']:
-            out[key] = {'title': title, 'percent': round(frac * 100, 1), 'updated': upd}
-    return out
+# ---------- GreatReads progress (now written directly) ----------
+# The old title-matching batch "sync" is retired. Reading progress is written
+# straight into the GreatReads DB at save time: PUT /api/progress updates the
+# ereader_progress table AND read.current_percent for the precisely-resolved
+# in-progress reading (see _gr_set_current_percent). The endpoint below is kept
+# only so the reader's existing fire-and-forget call doesn't 404.
 
 @app.route('/api/greatreads/sync', methods=['POST'])
 def greatreads_sync():
-    """Push our in-progress percentages to the GreatReads tracker, respecting
-    the format GreatReads tracks per book. Idempotent and non-destructive."""
-    body = request.get_json(silent=True) or {}
-    dry_run = (bool(body.get('dryRun'))
-               or request.args.get('dry_run') in ('1', 'true', 'yes'))
-
-    # GreatReads tells us which book + which format it's tracking for each
-    # in-progress reading.
-    try:
-        r = requests.get(GREATREADS_URL + '/api/readings/',
-                         params={'status': 'in_progress'}, timeout=15)
-        r.raise_for_status()
-        readings = r.json()
-    except Exception as e:
-        return jsonify({'error': 'greatreads unreachable', 'detail': str(e)}), 502
-
-    ours = _our_progress_by_title()
-    synced, skipped = [], []
-
-    for rd in (readings or []):
-        rid = rd.get('id')
-        title = (rd.get('book') or {}).get('title') or ''
-        media = rd.get('media')
-        kind = _gr_media_kind(media)
-        norm = _norm(_strip_edition(title))
-        if kind is None:
-            skipped.append({'readingId': rid, 'title': title, 'media': media,
-                            'reason': 'no progress source for this format'})
-            continue
-        match = ours.get((norm, kind))
-        if not match:
-            skipped.append({'readingId': rid, 'title': title, 'media': media,
-                            'reason': 'no matching %s progress on our side' % kind})
-            continue
-        pct = match['percent']
-        if pct <= 0 or pct >= 100:
-            skipped.append({'readingId': rid, 'title': title, 'media': media,
-                            'reason': 'percent out of range (%.1f)' % pct})
-            continue
-        # No-op guard: GreatReads already at (about) this percentage.
-        try:
-            cur = rd.get('current_percent')
-            cur = float(cur) if cur is not None else None
-        except (TypeError, ValueError):
-            cur = None
-        if cur is not None and abs(cur - pct) < 0.5:
-            skipped.append({'readingId': rid, 'title': title, 'media': media,
-                            'reason': 'already at %.1f%%' % cur})
-            continue
-
-        entry = {'readingId': rid, 'title': title, 'media': media,
-                 'percent': pct, 'previous': cur}
-        if dry_run:
-            synced.append({**entry, 'dryRun': True})
-            continue
-        try:
-            pr = requests.put(GREATREADS_URL + '/api/readings/%s/progress' % rid,
-                             params={'current_percent': pct}, timeout=15)
-            pr.raise_for_status()
-            _gr_mirror('PUT', '/api/readings/%s/progress' % rid,
-                       params={'current_percent': pct})
-            synced.append(entry)
-        except Exception as e:
-            skipped.append({'readingId': rid, 'title': title, 'media': media,
-                            'reason': 'push failed: %s' % e})
-
-    return jsonify({'dryRun': dry_run, 'greatReadsUrl': GREATREADS_URL,
-                    'synced': synced, 'syncedCount': len(synced),
-                    'skipped': skipped})
+    """Deprecated no-op. Progress is now written directly to GreatReads at save
+    time (PUT /api/progress → read.current_percent), so there is nothing to sync."""
+    return jsonify({'ok': True, 'deprecated': True,
+                    'note': 'progress is written directly at save time; no sync needed'})
 
 @app.route('/api/greatreads/format/<book_id>', methods=['GET'])
 def greatreads_get_format(book_id):
