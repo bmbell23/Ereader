@@ -241,7 +241,15 @@ Remote `:8007` is unused and can be turned off; cross-links live; integration do
 ---
 
 ## Story 3 — Unify the data layer (migrate Ereader JSON → SQLite)
-**Size:** L · **User-visible:** no (behavior identical) · **Depends on:** Story 2
+**Size:** L · **User-visible:** no (behavior identical) · **Depends on:** Story 2 · **STATUS: ✅ DONE (2026-06-15)**
+
+> **Done:** progress (`ereader_progress`), highlights/bookmarks (`ereader_highlights`), and feature
+> requests (`ereader_requests`) all live in the GreatReads SQLite DB now — one store, covered by
+> the daily `backup-db.sh`. Each `_load_*`/`_save_*` pair reads/writes the DB with the JSON file
+> kept as a best-effort backup + fallback and auto-migrated on first load (full record stored as a
+> JSON blob to preserve the reader/player contract exactly; denormalized cols for queries/ordering).
+> Migrated 111 highlights + 7 requests, verified byte-for-byte and via full CRUD round-trip.
+> The route handlers were untouched — only the storage functions changed.
 
 **As** the maintainer **I want** Ereader's progress/highlights/requests stored in the SQLite DB
 **so that** there's one source of truth and the JSON jank is gone.

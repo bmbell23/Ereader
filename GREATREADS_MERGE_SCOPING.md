@@ -296,6 +296,14 @@ audiobookshelf}` and `external_id` is the Calibre int / ABS uuid. Used for deep 
 
 ## Story 3 — Unify data (JSON → SQLite)
 
+> **STATUS: ✅ DONE (2026-06-15).** All three stores — progress (`ereader_progress`),
+> highlights/bookmarks (`ereader_highlights`), requests (`ereader_requests`) — now live in
+> `greatreads/data/greatreads.db`, each `_load_*`/`_save_*` reading/writing the DB with the JSON
+> file kept as a best-effort backup + fallback and auto-migrated on first load. Migrated 111
+> highlights + 7 requests; verified byte-for-byte + full CRUD round-trip; covered by the daily
+> `greatreads/scripts/backup-db.sh`. Route handlers untouched (only storage internals changed).
+> The original progress-slice notes follow for history.
+
 > **STATUS: ✅ progress slice DONE (2026-06-14).** Reading progress moved off
 > `progress.json` into the GreatReads SQLite DB. `backend/server.py`:
 > `_load_progress`/`_save_progress` now read/write an `ereader_progress` table in

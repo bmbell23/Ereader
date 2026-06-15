@@ -181,21 +181,86 @@ def _read_version():
     except OSError:
         return '0.0.0'
 
-def _load_highlights():
+# Highlights/bookmarks now live in the GreatReads SQLite DB (Story 3), same as
+# progress — one store, covered by the daily DB backup. highlights.json is still
+# written as a best-effort backup/fallback and auto-migrated on first load. These
+# rows are Ereader-private (GreatReads doesn't read them). See _load_highlights.
+def _load_highlights_json():
     if not os.path.exists(HIGHLIGHTS_FILE):
         return []
     try:
         with open(HIGHLIGHTS_FILE, 'r') as f:
-            return json.load(f)
+            data = json.load(f)
+            return data if isinstance(data, list) else []
     except Exception as e:
-        print(f"⚠️  Could not load highlights: {e}")
+        print(f"⚠️  Could not load highlights JSON: {e}")
         return []
 
+def _load_highlights():
+    """Return [record]. Reads the DB; lazily migrates a legacy highlights.json
+    into the table; falls back to JSON if the DB is unavailable."""
+    try:
+        conn = _gr_db()
+        try:
+            _ensure_highlights_table(conn)
+            rows = conn.execute('SELECT data FROM ereader_highlights').fetchall()
+        finally:
+            conn.close()
+        out = []
+        for r in rows:
+            try:
+                out.append(json.loads(r['data']))
+            except Exception:
+                pass
+        if out:
+            return out
+        # Table empty → one-time migration from the legacy JSON file (if any).
+        legacy = _load_highlights_json()
+        if legacy:
+            print(f"Migrating {len(legacy)} highlight(s) from JSON into the DB…")
+            _save_highlights(legacy)
+        return legacy
+    except Exception as e:
+        print(f"⚠️  Highlights DB unavailable, using JSON fallback: {e}")
+        return _load_highlights_json()
+
 def _save_highlights(items):
-    tmp = HIGHLIGHTS_FILE + '.tmp'
-    with open(tmp, 'w') as f:
-        json.dump(items, f, indent=2)
-    os.replace(tmp, HIGHLIGHTS_FILE)
+    """Persist the full highlight/bookmark list. The DB is primary; the JSON file
+    is also written as a best-effort backup so a save can't lose data."""
+    try:
+        conn = _gr_db()
+        try:
+            _ensure_highlights_table(conn)
+            with conn:
+                ids = [str(it['id']) for it in items if it.get('id')]
+                if ids:
+                    ph = ','.join('?' * len(ids))
+                    conn.execute(
+                        f'DELETE FROM ereader_highlights WHERE id NOT IN ({ph})', ids)
+                else:
+                    conn.execute('DELETE FROM ereader_highlights')
+                for it in items:
+                    iid = it.get('id')
+                    if not iid:
+                        continue
+                    bid = it.get('bookId')
+                    conn.execute(
+                        'INSERT INTO ereader_highlights(id,book_id,data,created) '
+                        'VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET '
+                        'book_id=excluded.book_id, data=excluded.data, created=excluded.created',
+                        (str(iid), str(bid) if bid is not None else None,
+                         json.dumps(it), it.get('created') or 0))
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"⚠️  Highlights DB write failed (JSON backup still written): {e}")
+    try:
+        tmp = HIGHLIGHTS_FILE + '.tmp'
+        with open(tmp, 'w') as f:
+            json.dump(items, f, indent=2)
+        os.replace(tmp, HIGHLIGHTS_FILE)
+    except Exception as e:
+        print(f"⚠️  Highlights JSON backup write failed: {e}")
 
 # ── Progress store (GreatReads SQLite DB, with JSON backup) ───────────────
 # Reading progress now lives in the GreatReads SQLite DB — one source of truth,
@@ -224,6 +289,22 @@ def _ensure_progress_table(conn):
         ' data     TEXT NOT NULL,'   # full JSON progress record (reader/player contract)
         ' progress REAL,'            # 0..1 fraction (denormalized for quick queries)
         ' updated  INTEGER)')        # epoch ms (denormalized for ORDER BY)
+
+def _ensure_highlights_table(conn):
+    conn.execute(
+        'CREATE TABLE IF NOT EXISTS ereader_highlights ('
+        ' id      TEXT PRIMARY KEY,'
+        ' book_id TEXT,'             # denormalized for per-book queries
+        ' data    TEXT NOT NULL,'    # full JSON highlight/bookmark record
+        ' created INTEGER)')         # epoch ms (denormalized for ORDER BY)
+
+def _ensure_requests_table(conn):
+    conn.execute(
+        'CREATE TABLE IF NOT EXISTS ereader_requests ('
+        ' id      TEXT PRIMARY KEY,'
+        ' data    TEXT NOT NULL,'    # full JSON request record (incl. comments/sections)
+        ' status  TEXT,'             # denormalized for status filters
+        ' updated INTEGER)')         # epoch ms (denormalized for ORDER BY)
 
 def _load_progress_json():
     if not os.path.exists(PROGRESS_FILE):
@@ -359,27 +440,92 @@ def _seed_requests():
         'updated':  now,
     } for s in REQUESTS_SEED]
 
-def _load_requests():
+# Feature requests now live in the GreatReads SQLite DB (Story 3), same as
+# progress/highlights. requests.json is kept as a best-effort backup/fallback and
+# auto-migrated on first load. On a truly fresh install (no DB rows, no JSON) the
+# initial backlog (REQUESTS_SEED) is materialised once.
+def _load_requests_json():
+    """Read requests.json. Returns None if the file is absent (so the caller can
+    distinguish 'no file → seed' from 'empty list')."""
     if not os.path.exists(REQUESTS_FILE):
-        seeded = _seed_requests()
-        try:
-            _save_requests(seeded)
-        except Exception as e:
-            print(f"⚠️  Could not seed requests: {e}")
-        return seeded
+        return None
     try:
         with open(REQUESTS_FILE, 'r') as f:
             data = json.load(f)
             return data if isinstance(data, list) else []
     except Exception as e:
-        print(f"⚠️  Could not load requests: {e}")
+        print(f"⚠️  Could not load requests JSON: {e}")
         return []
 
+def _load_requests():
+    """Return [record]. Reads the DB; migrates a legacy requests.json; seeds the
+    initial backlog when there's neither DB rows nor a JSON file. JSON fallback."""
+    try:
+        conn = _gr_db()
+        try:
+            _ensure_requests_table(conn)
+            rows = conn.execute('SELECT data FROM ereader_requests').fetchall()
+        finally:
+            conn.close()
+        out = []
+        for r in rows:
+            try:
+                out.append(json.loads(r['data']))
+            except Exception:
+                pass
+        if out:
+            return out
+        # Table empty → migrate from JSON, or seed the backlog on a fresh install.
+        legacy = _load_requests_json()
+        if legacy is None:
+            print("Seeding initial requests backlog…")
+            legacy = _seed_requests()
+        elif legacy:
+            print(f"Migrating {len(legacy)} request(s) from JSON into the DB…")
+        if legacy:
+            _save_requests(legacy)
+        return legacy
+    except Exception as e:
+        print(f"⚠️  Requests DB unavailable, using JSON fallback: {e}")
+        legacy = _load_requests_json()
+        return legacy if legacy is not None else _seed_requests()
+
 def _save_requests(items):
-    tmp = REQUESTS_FILE + '.tmp'
-    with open(tmp, 'w') as f:
-        json.dump(items, f, indent=2)
-    os.replace(tmp, REQUESTS_FILE)
+    """Persist the full requests list. DB is primary; requests.json is also written
+    as a best-effort backup so a save can't lose data."""
+    try:
+        conn = _gr_db()
+        try:
+            _ensure_requests_table(conn)
+            with conn:
+                ids = [str(it['id']) for it in items if it.get('id')]
+                if ids:
+                    ph = ','.join('?' * len(ids))
+                    conn.execute(
+                        f'DELETE FROM ereader_requests WHERE id NOT IN ({ph})', ids)
+                else:
+                    conn.execute('DELETE FROM ereader_requests')
+                for it in items:
+                    iid = it.get('id')
+                    if not iid:
+                        continue
+                    conn.execute(
+                        'INSERT INTO ereader_requests(id,data,status,updated) '
+                        'VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET '
+                        'data=excluded.data, status=excluded.status, updated=excluded.updated',
+                        (str(iid), json.dumps(it), it.get('status'),
+                         it.get('updated') or 0))
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"⚠️  Requests DB write failed (JSON backup still written): {e}")
+    try:
+        tmp = REQUESTS_FILE + '.tmp'
+        with open(tmp, 'w') as f:
+            json.dump(items, f, indent=2)
+        os.replace(tmp, REQUESTS_FILE)
+    except Exception as e:
+        print(f"⚠️  Requests JSON backup write failed: {e}")
 
 def get_calibre_books(limit=None, offset=0, query=None):
     """Fetch books from Calibre Content Server"""
