@@ -35,6 +35,14 @@ Verified environment facts (2026-06-14):
 
 ## Story 0 — Vendor GreatReads & run it isolated on :8092
 
+> **STATUS: ✅ DONE (2026-06-14).** Vendored from commit `dbafbc1` into `greatreads/`; isolated
+> container `greatreads_ereader` runs on **:8092** (healthy), serving a `VACUUM INTO` copy of
+> prod data (books 1516 / readings 946, `brandon` user + 1200 external_imports present).
+> Schedulers off (`ENABLE_SCHEDULERS=false` verified). Production `greatreads_app` (:8007) and
+> Ereader (:8090/:8091) untouched. Deviations from the plan below: used `VACUUM INTO` (not
+> checkpoint+cp) so prod is never written; the user table is `users` (plural).
+> Run: `docker compose -p greatreads_ereader -f greatreads/docker-compose.ereader.yml up -d --build`
+
 ### Deployment decision: **run it as a second, isolated Docker container** (recommended)
 GreatReads is *built for Docker* — its code hardcodes container paths (`main.py`
 `cover_thumbnail` → `/app/data/covers`; `config.py` `covers_dir`/`database_url` branch on

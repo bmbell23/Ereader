@@ -1,0 +1,1671 @@
+{% extends "base.html" %}
+
+{% block title %}Journal - GreatReads{% endblock %}
+
+{% block extra_head %}
+<!-- Chart.js -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<!-- html2canvas for report export -->
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="page-header-bookish mb-4">
+            <div class="page-header-icon">
+                <i class="fas fa-book-reader"></i>
+            </div>
+            <div class="page-header-content">
+                <h1 class="page-header-title mb-0">Reading Journal</h1>
+            </div>
+            <div class="ms-auto">
+                <button class="btn btn-primary" onclick="showReportModal()">
+                    <i class="fas fa-chart-bar me-2"></i>Generate Report
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Search Bar -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-body py-2">
+                <div class="d-flex gap-2 align-items-end flex-wrap">
+                    <div class="flex-grow-1" style="min-width: 200px;">
+                        <label for="searchInput" class="form-label mb-1 small">Search</label>
+                        <input type="text" class="form-control" id="searchInput" placeholder="Search books by title, author, or series...">
+                    </div>
+                    <div>
+                        <label for="sortSelect" class="form-label mb-1 small">Sort</label>
+                        <select class="form-select" id="sortSelect">
+                            <option value="date_finished">Date Finished</option>
+                            <option value="title">Title</option>
+                            <option value="author">Author</option>
+                            <option value="series">Series</option>
+                            <option value="word_count">Word Count</option>
+                            <option value="page_count">Page Count</option>
+                        </select>
+                    </div>
+                    <button class="btn btn-outline-secondary btn-sm px-2" onclick="clearFilters()" title="Clear all filters">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Compact Statistics -->
+<div class="row mb-3">
+    <div class="col-12">
+        <div class="card compact-stats">
+            <div class="card-body py-3">
+                <div class="row text-center">
+                    <!-- Status filters (left on mobile) -->
+                    <div class="col-6 col-md-2 order-0">
+                        <div class="d-flex flex-column align-items-center stat-filter"
+                             data-filter-type="read-status"
+                             data-filter-value="all"
+                             onclick="toggleFilter(this)">
+                            <i class="fas fa-book text-primary mb-1"></i>
+                            <small class="text-muted">Total</small>
+                            <strong class="text-primary" id="totalBooks">-</strong>
+                        </div>
+                    </div>
+                    <div class="col-6 col-md-2 order-2 order-md-1">
+                        <div class="d-flex flex-column align-items-center stat-filter"
+                             data-filter-type="year-filter"
+                             data-filter-value="2025"
+                             onclick="toggleFilter(this)">
+                            <i class="fas fa-calendar text-success mb-1"></i>
+                            <small class="text-muted">2025</small>
+                            <strong class="text-success" id="year2025Count">-</strong>
+                        </div>
+                    </div>
+                    <div class="col-6 col-md-2 order-4 order-md-2">
+                        <div class="d-flex flex-column align-items-center stat-filter"
+                             data-filter-type="year-filter"
+                             data-filter-value="2024"
+                             onclick="toggleFilter(this)">
+                            <i class="fas fa-calendar text-info mb-1"></i>
+                            <small class="text-muted">2024</small>
+                            <strong class="text-info" id="year2024Count">-</strong>
+                        </div>
+                    </div>
+                    <!-- Media filters (right on mobile) -->
+                    <div class="col-6 col-md-2 order-1 order-md-3">
+                        <div class="d-flex flex-column align-items-center stat-filter"
+                             data-filter-type="media-type"
+                             data-filter-value="ebook"
+                             onclick="toggleFilter(this)">
+                            <i class="fas fa-tablet-alt mb-1" style="color: #0066CC;"></i>
+                            <small class="text-muted">Ebook</small>
+                            <strong id="ebookCount" style="color: #0066CC;">-</strong>
+                        </div>
+                    </div>
+                    <div class="col-6 col-md-2 order-3 order-md-4">
+                        <div class="d-flex flex-column align-items-center stat-filter"
+                             data-filter-type="media-type"
+                             data-filter-value="physical"
+                             onclick="toggleFilter(this)">
+                            <i class="fas fa-book mb-1" style="color: #6B4BA3;"></i>
+                            <small class="text-muted">Physical</small>
+                            <strong id="physicalCount" style="color: #6B4BA3;">-</strong>
+                        </div>
+                    </div>
+                    <div class="col-6 col-md-2 order-5 order-md-5">
+                        <div class="d-flex flex-column align-items-center stat-filter"
+                             data-filter-type="media-type"
+                             data-filter-value="audio"
+                             onclick="toggleFilter(this)">
+                            <i class="fas fa-headphones mb-1" style="color: #FF6600;"></i>
+                            <small class="text-muted">Audio</small>
+                            <strong id="audioCount" style="color: #FF6600;">-</strong>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-12">
+        <!-- Loading State -->
+        <div id="loading-state" class="text-center py-5">
+            <i class="fas fa-spinner fa-spin fa-2x text-primary"></i>
+            <p class="mt-3 text-muted">Loading your reading journal...</p>
+        </div>
+
+        <!-- Journal List -->
+        <div id="journal-container" class="d-none">
+            <div class="alert alert-info">
+                <i class="fas fa-info-circle me-2"></i>
+                <strong>Click on any card</strong> to view or edit reading details.
+            </div>
+
+            <!-- Multi-select toolbar -->
+            <div id="multi-select-toolbar" class="alert alert-warning d-none mb-3">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <i class="fas fa-check-square me-2"></i>
+                        <strong><span id="selected-count">0</span> selected</strong>
+                    </div>
+                    <div>
+                        <button class="btn btn-sm btn-outline-secondary me-2" onclick="toggleSelectMode()">
+                            <i class="fas fa-times me-1"></i>Cancel
+                        </button>
+                        <button class="btn btn-sm btn-danger" onclick="deleteSelectedReadings()">
+                            <i class="fas fa-trash me-1"></i>Delete Selected
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Select mode toggle button -->
+            <div class="mb-3">
+                <button id="select-mode-btn" class="btn btn-sm btn-outline-primary" onclick="toggleSelectMode()">
+                    <i class="fas fa-check-square me-1"></i>Select Multiple
+                </button>
+            </div>
+
+            <div id="journal-list">
+                <!-- Reading cards will be inserted here -->
+            </div>
+        </div>
+
+        <!-- Empty State -->
+        <div id="empty-state" class="text-center py-5 d-none">
+            <i class="fas fa-book-open fa-3x text-muted mb-3"></i>
+            <h3 class="text-muted">No finished books yet</h3>
+            <p class="text-muted">Start reading and finish some books to see them here!</p>
+            <a href="/tbr" class="btn btn-primary">
+                <i class="fas fa-list me-1"></i>Go to TBR
+            </a>
+        </div>
+    </div>
+</div>
+
+<!-- Generate Report Modal -->
+<div class="modal fade" id="reportModal" tabindex="-1">
+    <div class="modal-dialog modal-xl modal-fullscreen-lg-down">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="fas fa-chart-bar me-2"></i>Reading Report
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <!-- Step 1: Period Selection -->
+                <div id="reportPeriodSelection">
+                    <h6 class="mb-3">Select Time Period</h6>
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label for="reportYear" class="form-label">Year</label>
+                            <select class="form-select" id="reportYear" onchange="updateMonthOptions()">
+                                <option value="">Select year...</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="reportMonth" class="form-label">Month (Optional)</label>
+                            <select class="form-select" id="reportMonth">
+                                <option value="">All year</option>
+                            </select>
+                        </div>
+                    </div>
+                    <button class="btn btn-primary" onclick="generateReport()">
+                        <i class="fas fa-chart-bar me-2"></i>Generate Report
+                    </button>
+                </div>
+
+                <!-- Step 2: Report Display -->
+                <div id="reportDisplay" class="d-none">
+                    <div id="reportHeader" class="d-flex justify-content-between align-items-center mb-4">
+                        <h4 id="reportPeriodTitle" class="mb-0"></h4>
+                        <div>
+                            <button class="btn btn-outline-secondary btn-sm me-2" onclick="showPeriodSelection()">
+                                <i class="fas fa-arrow-left me-1"></i>Change Period
+                            </button>
+                            <button class="btn btn-outline-primary btn-sm" onclick="downloadReport()">
+                                <i class="fas fa-download me-1"></i>Download
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Summary Stats -->
+                    <div id="reportStatsSection" class="row mb-4">
+                        <div class="col-md-3 col-6 mb-3">
+                            <div class="card text-center h-100">
+                                <div class="card-body">
+                                    <i class="fas fa-book fa-2x text-primary mb-2"></i>
+                                    <h3 id="reportTotalBooks" class="mb-0">-</h3>
+                                    <small class="text-muted">Total Entries</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3 col-6 mb-3">
+                            <div class="card text-center h-100">
+                                <div class="card-body">
+                                    <i class="fas fa-font fa-2x text-success mb-2"></i>
+                                    <h3 id="reportTotalWords" class="mb-0">-</h3>
+                                    <small class="text-muted">Total Words</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3 col-6 mb-3">
+                            <div class="card text-center h-100">
+                                <div class="card-body">
+                                    <i class="fas fa-file-alt fa-2x text-info mb-2"></i>
+                                    <h3 id="reportTotalPages" class="mb-0">-</h3>
+                                    <small class="text-muted">Total Pages</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-3 col-6 mb-3">
+                            <div class="card text-center h-100">
+                                <div class="card-body py-3">
+                                    <div class="d-flex justify-content-center gap-3 align-items-center" style="min-height: 80px;">
+                                        <div>
+                                            <small class="d-block" style="color: #0066CC;">Ebook</small>
+                                            <strong id="reportEbookCount" class="fs-4" style="color: #0066CC;">-</strong>
+                                        </div>
+                                        <div>
+                                            <small class="d-block" style="color: #6B4BA3;">Physical</small>
+                                            <strong id="reportPhysicalCount" class="fs-4" style="color: #6B4BA3;">-</strong>
+                                        </div>
+                                        <div>
+                                            <small class="d-block" style="color: #FF6600;">Audio</small>
+                                            <strong id="reportAudioCount" class="fs-4" style="color: #FF6600;">-</strong>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Charts Section -->
+                    <div id="reportChartsSection" class="mb-4">
+                        <h5 class="mb-3">Reading Statistics</h5>
+
+                        <div class="row">
+                            <!-- Reading by Month -->
+                            <div class="col-md-6 mb-4">
+                                <div class="card">
+                                    <div class="card-header">
+                                        <h6 class="mb-0"><i class="fas fa-calendar me-2"></i>Reading by Month</h6>
+                                    </div>
+                                    <div class="card-body">
+                                        <canvas id="reportMonthChart" style="max-height: 300px;"></canvas>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Reading by Decade -->
+                            <div class="col-md-6 mb-4">
+                                <div class="card">
+                                    <div class="card-header">
+                                        <h6 class="mb-0"><i class="fas fa-calendar-alt me-2"></i>Reading by Decade Published</h6>
+                                    </div>
+                                    <div class="card-body">
+                                        <canvas id="reportDecadeChart" style="max-height: 300px;"></canvas>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="row">
+                            <!-- Most Read Authors -->
+                            <div class="col-md-6 mb-4">
+                                <div class="card">
+                                    <div class="card-header">
+                                        <h6 class="mb-0"><i class="fas fa-user me-2"></i>Most Read Authors</h6>
+                                    </div>
+                                    <div class="card-body">
+                                        <canvas id="reportAuthorChart" style="max-height: 300px;"></canvas>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Word Count Distribution -->
+                            <div class="col-md-6 mb-4">
+                                <div class="card">
+                                    <div class="card-header">
+                                        <h6 class="mb-0"><i class="fas fa-align-left me-2"></i>Books by Word Count</h6>
+                                    </div>
+                                    <div class="card-body">
+                                        <canvas id="reportWordCountChart" style="max-height: 300px;"></canvas>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="row">
+                            <!-- Days After Publication -->
+                            <div class="col-md-6 mb-4">
+                                <div class="card">
+                                    <div class="card-header">
+                                        <h6 class="mb-0"><i class="fas fa-clock me-2"></i>Days Read After Publication</h6>
+                                    </div>
+                                    <div class="card-body">
+                                        <canvas id="reportDaysAfterPubChart" style="max-height: 300px;"></canvas>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Days to Finish -->
+                            <div class="col-md-6 mb-4">
+                                <div class="card">
+                                    <div class="card-header">
+                                        <h6 class="mb-0"><i class="fas fa-hourglass-half me-2"></i>Days to Finish</h6>
+                                    </div>
+                                    <div class="card-body">
+                                        <canvas id="reportDaysToFinishChart" style="max-height: 300px;"></canvas>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Books Grid -->
+                    <h5 class="mb-3">Books Read</h5>
+                    <div id="reportBooksGrid" class="row">
+                        <!-- Book cards will be inserted here -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Edit Reading Modal -->
+<div class="modal fade" id="editReadingModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="fas fa-edit me-2"></i>Edit Reading
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="editReadingForm">
+                    <input type="hidden" id="editReadingId" name="reading_id">
+
+                    <!-- Book Info (Read-only) -->
+                    <div class="row mb-3">
+                        <div class="col-md-8">
+                            <h6 class="text-muted">Book</h6>
+                            <h5 id="editBookTitle" class="mb-1">Book Title</h5>
+                            <p id="editAuthor" class="text-muted mb-0">Author Name</p>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="book-cover mx-auto" id="editBookCover">
+                                <img id="editBookCoverImg" src="" alt="Book cover" class="book-cover-img" style="display: none;">
+                                <i class="fas fa-book fa-2x book-cover-fallback"></i>
+                            </div>
+                        </div>
+                    </div>
+
+                    <hr>
+
+                    <!-- Reading Details -->
+                    <div class="row mb-3">
+                        <div class="col-md-4">
+                            <label for="editMedia" class="form-label">Media Type</label>
+                            <select class="form-select" id="editMedia" name="media">
+                                <option value="">Select media...</option>
+                                <option value="Ebook">Ebook</option>
+                                <option value="Physical">Physical</option>
+                                <option value="Audio">Audio</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <label for="editDateStarted" class="form-label">Date Started</label>
+                            <input type="date" class="form-control" id="editDateStarted" name="date_started">
+                        </div>
+                        <div class="col-md-4">
+                            <label for="editDateFinished" class="form-label">Date Finished</label>
+                            <input type="date" class="form-control" id="editDateFinished" name="date_finished_actual">
+                        </div>
+                    </div>
+
+                    <!-- Ratings -->
+                    <h6 class="text-muted mb-3">Ratings</h6>
+                    <div class="row mb-3">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Enjoyment</label>
+                            <div class="emoji-rating" data-rating-type="enjoyment" data-emoji="star">
+                                <input type="hidden" id="editRatingEnjoyment" name="rating_enjoyment" value="0">
+                                <div class="emoji-rating-display"></div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Writing Quality</label>
+                            <div class="emoji-rating" data-rating-type="writing" data-emoji="star">
+                                <input type="hidden" id="editRatingWriting" name="rating_writing" value="0">
+                                <div class="emoji-rating-display"></div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Characters</label>
+                            <div class="emoji-rating" data-rating-type="characters" data-emoji="star">
+                                <input type="hidden" id="editRatingCharacters" name="rating_characters" value="0">
+                                <div class="emoji-rating-display"></div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">World Building</label>
+                            <div class="emoji-rating" data-rating-type="world_building" data-emoji="star">
+                                <input type="hidden" id="editRatingWorldBuilding" name="rating_world_building" value="0">
+                                <div class="emoji-rating-display"></div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Readability</label>
+                            <div class="emoji-rating" data-rating-type="readability" data-emoji="star">
+                                <input type="hidden" id="editRatingReadability" name="rating_readability" value="0">
+                                <div class="emoji-rating-display"></div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Horror Rating</label>
+                            <div class="emoji-rating" data-rating-type="horror" data-emoji="blood">
+                                <input type="hidden" id="editRatingHorror" name="rating_horror" value="0">
+                                <div class="emoji-rating-display"></div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label">Spice Rating</label>
+                            <div class="emoji-rating" data-rating-type="spice" data-emoji="pepper">
+                                <input type="hidden" id="editRatingSpice" name="rating_spice" value="0">
+                                <div class="emoji-rating-display"></div>
+                            </div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="GreatReads.saveReadingChanges()">
+                    <i class="fas fa-save me-1"></i>Save Changes
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+let currentReadings = [];
+const STATIC_BASE = "{{ url_for('static', path='') }}";
+
+// Global variables for filtering
+let allReadings = [];
+let filteredReadings = [];
+let activeFilters = {
+    readStatus: null,
+    mediaType: null,
+    yearFilter: null
+};
+
+// Fuzzy search function
+function fuzzyMatch(text, search) {
+    if (!text) return false;
+    text = text.toLowerCase();
+    search = search.toLowerCase();
+
+    if (text.includes(search)) return true;
+
+    let searchIndex = 0;
+    for (let i = 0; i < text.length && searchIndex < search.length; i++) {
+        if (text[i] === search[searchIndex]) {
+            searchIndex++;
+        }
+    }
+    return searchIndex === search.length;
+}
+
+// Toggle filter function
+function toggleFilter(element) {
+    const filterType = element.dataset.filterType;
+    const filterValue = element.dataset.filterValue;
+
+    const filterKey = filterType === 'read-status' ? 'readStatus' :
+                      filterType === 'media-type' ? 'mediaType' :
+                      filterType === 'year-filter' ? 'yearFilter' : filterType;
+
+    if (activeFilters[filterKey] === filterValue) {
+        activeFilters[filterKey] = null;
+        element.classList.remove('active');
+    } else {
+        document.querySelectorAll(`[data-filter-type="${filterType}"]`).forEach(el => {
+            el.classList.remove('active');
+        });
+        activeFilters[filterKey] = filterValue;
+        element.classList.add('active');
+    }
+
+    applyFilters();
+}
+
+// Apply filters and sorting
+function applyFilters() {
+    const search = document.getElementById('searchInput').value.toLowerCase().trim();
+    const sortSelect = document.getElementById('sortSelect');
+    const sort = sortSelect ? sortSelect.value : 'date_finished';
+
+    filteredReadings = allReadings.filter(reading => {
+        const book = reading.book;
+
+        // Search filter
+        if (search) {
+            const matchesTitle = fuzzyMatch(book.title, search);
+            const matchesAuthor = fuzzyMatch(book.author, search);
+            const matchesUniverse = book.universe ? fuzzyMatch(book.universe, search) : false;
+            const matchesSeries = book.series ? fuzzyMatch(book.series, search) : false;
+
+            if (!matchesTitle && !matchesAuthor && !matchesUniverse && !matchesSeries) {
+                return false;
+            }
+        }
+
+        // Year filter
+        if (activeFilters.yearFilter) {
+            const finishedDate = new Date(reading.date_finished_actual);
+            const finishedYear = finishedDate.getFullYear();
+            if (finishedYear.toString() !== activeFilters.yearFilter) return false;
+        }
+
+        // Media filter
+        if (activeFilters.mediaType) {
+            const mediaType = activeFilters.mediaType.charAt(0).toUpperCase() + activeFilters.mediaType.slice(1);
+            if (reading.media !== mediaType) return false;
+        }
+
+        return true;
+    });
+
+    // Apply sorting
+    filteredReadings.sort((a, b) => {
+        switch (sort) {
+            case 'date_finished':
+                return new Date(b.date_finished_actual) - new Date(a.date_finished_actual);
+            case 'title':
+                return a.book.title.localeCompare(b.book.title);
+            case 'author':
+                return a.book.author_sorted.localeCompare(b.book.author_sorted);
+            case 'series':
+                // Sort by universe, then series, then series_number
+                const aUniverse = a.book.universe || '';
+                const bUniverse = b.book.universe || '';
+                if (aUniverse !== bUniverse) {
+                    return aUniverse.localeCompare(bUniverse);
+                }
+                if (a.book.series !== b.book.series) {
+                    return (a.book.series || '').localeCompare(b.book.series || '');
+                }
+                return (a.book.series_number || 0) - (b.book.series_number || 0);
+            case 'word_count':
+                return (b.book.word_count || 0) - (a.book.word_count || 0);
+            case 'page_count':
+                return (b.book.page_count || 0) - (a.book.page_count || 0);
+            default:
+                return new Date(b.date_finished_actual) - new Date(a.date_finished_actual);
+        }
+    });
+
+    displayReadings(filteredReadings);
+}
+
+// Clear filters
+function clearFilters() {
+    document.getElementById('searchInput').value = '';
+    activeFilters.readStatus = null;
+    activeFilters.mediaType = null;
+    activeFilters.yearFilter = null;
+
+    document.querySelectorAll('.stat-filter').forEach(el => {
+        el.classList.remove('active');
+    });
+
+    applyFilters();
+}
+
+// Update stats
+function updateStats(readings) {
+    const total = readings.length;
+    const year2025 = readings.filter(r => new Date(r.date_finished_actual).getFullYear() === 2025).length;
+    const year2024 = readings.filter(r => new Date(r.date_finished_actual).getFullYear() === 2024).length;
+    const ebook = readings.filter(r => r.media === 'Ebook').length;
+    const physical = readings.filter(r => r.media === 'Physical').length;
+    const audio = readings.filter(r => r.media === 'Audio').length;
+
+    document.getElementById('totalBooks').textContent = total;
+    document.getElementById('year2025Count').textContent = year2025;
+    document.getElementById('year2024Count').textContent = year2024;
+    document.getElementById('ebookCount').textContent = ebook;
+    document.getElementById('physicalCount').textContent = physical;
+    document.getElementById('audioCount').textContent = audio;
+}
+
+// Debounce function
+function debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+        const later = () => {
+            clearTimeout(timeout);
+            func(...args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+    };
+}
+
+// Load Journal data on page load
+document.addEventListener('DOMContentLoaded', function() {
+    loadJournalReadings();
+
+    // Setup event listeners
+    document.getElementById('searchInput').addEventListener('input', debounce(applyFilters, 300));
+    const sortSelect = document.getElementById('sortSelect');
+    if (sortSelect) {
+        sortSelect.addEventListener('change', applyFilters);
+    }
+});
+
+async function loadJournalReadings() {
+    try {
+        const readings = await GreatReads.apiCall('/readings/journal');
+        allReadings = readings;
+        currentReadings = readings;
+        updateStats(readings);
+        // Re-apply filters instead of displaying all readings
+        applyFilters();
+    } catch (error) {
+        showErrorState();
+    }
+}
+
+function displayReadings(readings) {
+    const loadingState = document.getElementById('loading-state');
+    const journalContainer = document.getElementById('journal-container');
+    const emptyState = document.getElementById('empty-state');
+    const journalList = document.getElementById('journal-list');
+
+    loadingState.classList.add('d-none');
+
+    if (readings.length === 0) {
+        emptyState.classList.remove('d-none');
+        journalContainer.classList.add('d-none');
+        return;
+    }
+
+    emptyState.classList.add('d-none');
+    journalContainer.classList.remove('d-none');
+
+    // Generate reading cards
+    let html = '';
+    readings.forEach((reading, index) => {
+        html += createReadingCard(reading, index);
+    });
+
+    journalList.innerHTML = html;
+}
+
+function createReadingCard(reading, index) {
+    const book = reading.book;
+    const statusClass = GreatReads.getStatusClass(reading);
+    const statusBadge = GreatReads.getStatusBadge(reading);
+
+    // Get format info and colors
+    const formatClass = getFormatClass(reading.media);
+    const formatBadge = getFormatBadge(reading.media);
+
+    // For finished books, use left border only
+    const borderClass = formatClass ? `border-${formatClass}` : '';
+
+    // Check if this is a reread by looking for earlier finished readings of the same book
+    const isReread = isReadingAReread(reading);
+
+    return `
+        <div class="card reading-card ${statusClass} ${borderClass} mb-3 fade-in" data-reading-id="${reading.id}" onclick="handleCardClick(event, ${reading.id})">
+            <div class="card-body">
+                <!-- Selection checkbox (hidden by default) -->
+                <div class="form-check position-absolute" style="top: 10px; right: 10px; display: none;" data-select-checkbox>
+                    <input class="form-check-input reading-select-checkbox" type="checkbox" value="${reading.id}"
+                           onclick="event.stopPropagation(); updateSelectedCount();" style="width: 20px; height: 20px; cursor: pointer;">
+                </div>
+                <div class="row">
+                    <div class="col-auto">
+                        <div class="tbr-book-cover">
+                            ${book.cover ?
+                                `<img src="${window.APP_BASE_PATH}/static/covers/${book.id}.jpg"
+                                     alt="${book.title} cover"
+                                     class="tbr-book-cover-img"
+                                     onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
+                                 <i class="fas fa-book book-cover-fallback" style="display: none;"></i>` :
+                                `<i class="fas fa-book book-cover-fallback"></i>`
+                            }
+                        </div>
+                    </div>
+                    <div class="col">
+                        <h5 class="card-title mb-1">${book.title}</h5>
+                        <p class="text-muted mb-1">${book.author}</p>
+                        ${book.series ? `<small class="text-muted">${book.universe ? book.universe + ': ' : ''}${book.series}${book.series_number ? ' #' + book.series_number : ''}</small><br>` : ''}
+                        <small class="text-muted">
+                            ${book.word_count ? book.word_count.toLocaleString() + ' words' : ''}
+                            ${book.page_count ? (book.word_count ? ' • ' : '') + book.page_count + ' pages' : ''}
+                        </small>
+
+                        <div class="row text-sm g-2 mt-2">
+                            <div class="col-4">
+                                <div><strong>Start:</strong></div>
+                                <div class="small">${GreatReads.formatDate(reading.date_started)}</div>
+                            </div>
+                            <div class="col-4">
+                                <div><strong>End:</strong></div>
+                                <div class="small">${GreatReads.formatDate(reading.date_finished_actual)}</div>
+                            </div>
+                            <div class="col-4">
+                                <div><strong>Days:</strong></div>
+                                <div class="small">${reading.actual_days_elapsed || 'N/A'}</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-auto d-flex align-items-center">
+                        <div class="d-flex gap-2 align-items-center">
+                            <div class="d-flex flex-column gap-1 align-items-end">
+                                <div style="position: relative; display: flex; align-items: center; justify-content: center; padding-top: 22px;">
+                                    ${reading.rating_overall ? `<div style="position: absolute; top: 0; right: 0; font-size: 0.9rem; white-space: nowrap;">${GreatReads.formatRating(reading.rating_overall)}</div>` : ''}
+                                    ${formatBadge}
+                                </div>
+                                <div style="min-height: 24px; display: flex; align-items: center;">
+                                    ${isReread ? '<span class="media-badge-large" style="background-color: #17a2b8; color: white;">Reread</span>' : ''}
+                                </div>
+                            </div>
+                            <div class="d-flex flex-column gap-1">
+                                <button class="btn btn-outline-primary btn-sm" onclick="event.stopPropagation(); editReading(${reading.id})" title="Edit">
+                                    <i class="fas fa-edit"></i>
+                                </button>
+                                <button class="btn btn-outline-danger btn-sm" onclick="event.stopPropagation(); deleteSingleReading(${reading.id})" title="Delete">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+async function deleteSingleReading(readingId) {
+    const reading = allReadings.find(r => r.id === readingId);
+    if (!reading) {
+        GreatReads.showToast('Reading not found', 'error');
+        return;
+    }
+
+    const bookTitle = reading.book.title;
+    const confirmMsg = `Are you sure you want to delete "${bookTitle}"? This action cannot be undone.`;
+
+    if (!confirm(confirmMsg)) {
+        return;
+    }
+
+    try {
+        await GreatReads.apiCall(`/readings/${readingId}`, { method: 'DELETE' });
+        GreatReads.showToast('Reading deleted successfully!', 'success');
+        refreshReadings();
+    } catch (error) {
+        console.error('Error deleting reading:', error);
+        GreatReads.showToast('Failed to delete reading', 'error');
+    }
+}
+
+// Helper function to check if a reading is a reread
+function isReadingAReread(reading) {
+    // First check the reread flag from the database
+    if (reading.reread) {
+        return true;
+    }
+
+    // Also check if there are any earlier finished readings of the same book
+    // This handles cases where the reread flag might not have been set
+    const earlierReadings = allReadings.filter(r =>
+        r.book_id === reading.book_id &&
+        r.is_finished &&
+        r.id !== reading.id &&
+        new Date(r.date_finished_actual) < new Date(reading.date_finished_actual)
+    );
+
+    return earlierReadings.length > 0;
+}
+
+function editReading(readingId) {
+    // Look in allReadings to ensure we find it regardless of current filters
+    const reading = allReadings.find(r => r.id === readingId);
+    if (reading) {
+        GreatReads.showEditModal(reading);
+    } else {
+        console.error('Reading not found:', readingId);
+    }
+}
+
+function refreshReadings() {
+    loadJournalReadings();
+}
+
+// Multi-select functionality
+let selectModeActive = false;
+
+function toggleSelectMode() {
+    selectModeActive = !selectModeActive;
+    const toolbar = document.getElementById('multi-select-toolbar');
+    const selectBtn = document.getElementById('select-mode-btn');
+    const checkboxes = document.querySelectorAll('[data-select-checkbox]');
+
+    if (selectModeActive) {
+        // Show checkboxes and toolbar
+        checkboxes.forEach(cb => cb.style.display = 'block');
+        toolbar.classList.remove('d-none');
+        selectBtn.innerHTML = '<i class="fas fa-times me-1"></i>Cancel Selection';
+        selectBtn.classList.remove('btn-outline-primary');
+        selectBtn.classList.add('btn-outline-secondary');
+    } else {
+        // Hide checkboxes and toolbar, uncheck all
+        checkboxes.forEach(cb => {
+            cb.style.display = 'none';
+            cb.querySelector('input').checked = false;
+        });
+        toolbar.classList.add('d-none');
+        selectBtn.innerHTML = '<i class="fas fa-check-square me-1"></i>Select Multiple';
+        selectBtn.classList.remove('btn-outline-secondary');
+        selectBtn.classList.add('btn-outline-primary');
+        updateSelectedCount();
+    }
+}
+
+function handleCardClick(event, readingId) {
+    if (selectModeActive) {
+        // In select mode, toggle the checkbox
+        event.stopPropagation();
+        const card = event.currentTarget;
+        const checkbox = card.querySelector('.reading-select-checkbox');
+        checkbox.checked = !checkbox.checked;
+        updateSelectedCount();
+    } else {
+        // Normal mode, edit the reading
+        editReading(readingId);
+    }
+}
+
+function updateSelectedCount() {
+    const checkedBoxes = document.querySelectorAll('.reading-select-checkbox:checked');
+    document.getElementById('selected-count').textContent = checkedBoxes.length;
+}
+
+async function deleteSelectedReadings() {
+    const checkedBoxes = document.querySelectorAll('.reading-select-checkbox:checked');
+    const selectedIds = Array.from(checkedBoxes).map(cb => parseInt(cb.value));
+
+    if (selectedIds.length === 0) {
+        GreatReads.showToast('No readings selected', 'warning');
+        return;
+    }
+
+    const confirmMsg = `Are you sure you want to delete ${selectedIds.length} reading${selectedIds.length > 1 ? 's' : ''}? This action cannot be undone.`;
+    if (!confirm(confirmMsg)) {
+        return;
+    }
+
+    try {
+        GreatReads.showToast(`Deleting ${selectedIds.length} reading${selectedIds.length > 1 ? 's' : ''}...`, 'info');
+
+        // Delete each reading
+        let successCount = 0;
+        let errorCount = 0;
+
+        for (const readingId of selectedIds) {
+            try {
+                await GreatReads.apiCall(`/readings/${readingId}`, { method: 'DELETE' });
+                successCount++;
+            } catch (error) {
+                console.error(`Failed to delete reading ${readingId}:`, error);
+                errorCount++;
+            }
+        }
+
+        // Show result
+        if (errorCount === 0) {
+            GreatReads.showToast(`Successfully deleted ${successCount} reading${successCount > 1 ? 's' : ''}!`, 'success');
+        } else {
+            GreatReads.showToast(`Deleted ${successCount} reading${successCount > 1 ? 's' : ''}, ${errorCount} failed`, 'warning');
+        }
+
+        // Exit select mode and refresh
+        toggleSelectMode();
+        refreshReadings();
+
+    } catch (error) {
+        console.error('Error deleting readings:', error);
+        GreatReads.showToast('Failed to delete readings', 'error');
+    }
+}
+
+function showErrorState() {
+    document.getElementById('loading-state').classList.add('d-none');
+    document.getElementById('journal-container').innerHTML = `
+        <div class="alert alert-danger text-center">
+            <i class="fas fa-exclamation-triangle me-2"></i>
+            Error loading your reading journal. Please try refreshing the page.
+        </div>
+    `;
+    document.getElementById('journal-container').classList.remove('d-none');
+}
+
+// Helper function to normalize media types
+function normalizeMediaType(mediaType) {
+    if (!mediaType) return null;
+    const normalized = {
+        'hardcover': 'physical',
+        'audiobook': 'audio'
+    };
+    const lower = mediaType.toLowerCase();
+    return normalized[lower] || mediaType;
+}
+
+// Helper functions for format badges and borders
+function getFormatClass(mediaType) {
+    const normalized = normalizeMediaType(mediaType);
+    const formatMap = {
+        'ebook': 'ebook',
+        'physical': 'physical',
+        'audio': 'audio'
+    };
+    return formatMap[normalized?.toLowerCase()] || '';
+}
+
+function getFormatBadge(mediaType) {
+    const normalized = normalizeMediaType(mediaType);
+    const badgeMap = {
+        'ebook': '<span class="media-badge-large ebook">Ebook</span>',
+        'physical': '<span class="media-badge-large physical">Physical</span>',
+        'audio': '<span class="media-badge-large audio">Audio</span>'
+    };
+    return badgeMap[normalized?.toLowerCase()] || '';
+}
+
+// Report Modal Functions
+let availablePeriods = null;
+let currentReportData = null;
+
+async function showReportModal() {
+    const modal = new bootstrap.Modal(document.getElementById('reportModal'));
+
+    // Load available periods
+    try {
+        availablePeriods = await GreatReads.apiCall('/reports/available-periods');
+
+        // Populate year dropdown
+        const yearSelect = document.getElementById('reportYear');
+        yearSelect.innerHTML = '<option value="">Select year...</option>';
+        availablePeriods.years.forEach(year => {
+            const option = document.createElement('option');
+            option.value = year;
+            option.textContent = year;
+            yearSelect.appendChild(option);
+        });
+
+        // Reset to period selection view
+        showPeriodSelection();
+
+        modal.show();
+    } catch (error) {
+        GreatReads.showToast('Failed to load available periods', 'error');
+    }
+}
+
+function updateMonthOptions() {
+    const yearSelect = document.getElementById('reportYear');
+    const monthSelect = document.getElementById('reportMonth');
+    const selectedYear = parseInt(yearSelect.value);
+
+    monthSelect.innerHTML = '<option value="">All year</option>';
+
+    if (selectedYear && availablePeriods.months_by_year[selectedYear]) {
+        const monthNames = ['January', 'February', 'March', 'April', 'May', 'June',
+                           'July', 'August', 'September', 'October', 'November', 'December'];
+
+        availablePeriods.months_by_year[selectedYear].forEach(month => {
+            const option = document.createElement('option');
+            option.value = month;
+            option.textContent = monthNames[month - 1];
+            monthSelect.appendChild(option);
+        });
+    }
+}
+
+async function generateReport() {
+    const year = document.getElementById('reportYear').value;
+    const month = document.getElementById('reportMonth').value;
+
+    if (!year) {
+        GreatReads.showToast('Please select a year', 'error');
+        return;
+    }
+
+    try {
+        // Build query params
+        let url = `/reports/?year=${year}`;
+        if (month) {
+            url += `&month=${month}`;
+        }
+
+        currentReportData = await GreatReads.apiCall(url);
+        displayReport(currentReportData);
+    } catch (error) {
+        GreatReads.showToast('Failed to generate report', 'error');
+    }
+}
+
+function displayReport(data) {
+    // Hide period selection, show report
+    document.getElementById('reportPeriodSelection').classList.add('d-none');
+    document.getElementById('reportDisplay').classList.remove('d-none');
+
+    // Update title
+    document.getElementById('reportPeriodTitle').textContent = data.period;
+
+    // Update summary stats
+    document.getElementById('reportTotalBooks').textContent = data.total_books;
+    document.getElementById('reportTotalWords').textContent = data.total_words.toLocaleString();
+    document.getElementById('reportTotalPages').textContent = data.total_pages.toLocaleString();
+    document.getElementById('reportEbookCount').textContent = data.media_counts.Ebook;
+    document.getElementById('reportPhysicalCount').textContent = data.media_counts.Physical;
+    document.getElementById('reportAudioCount').textContent = data.media_counts.Audio;
+
+    // Display books grid
+    const booksGrid = document.getElementById('reportBooksGrid');
+    booksGrid.innerHTML = '';
+
+    // Check if we have monthly grouping (annual report)
+    if (data.books_by_month && Object.keys(data.books_by_month).length > 0) {
+        const monthNames = ['January', 'February', 'March', 'April', 'May', 'June',
+                           'July', 'August', 'September', 'October', 'November', 'December'];
+
+        // Sort months numerically
+        const sortedMonths = Object.keys(data.books_by_month).map(Number).sort((a, b) => a - b);
+
+        sortedMonths.forEach(monthNum => {
+            const monthData = data.books_by_month[monthNum];
+            const monthName = monthNames[monthNum - 1];
+
+            // Add month header with totals
+            booksGrid.innerHTML += `
+                <div class="col-12 mt-4 mb-3">
+                    <div class="d-flex justify-content-between align-items-center border-bottom pb-2">
+                        <h5 class="mb-0">${monthName}</h5>
+                        <small class="text-muted">
+                            ${monthData.total_entries} ${monthData.total_entries === 1 ? 'entry' : 'entries'} •
+                            ${monthData.total_words.toLocaleString()} words
+                        </small>
+                    </div>
+                </div>
+            `;
+
+            // Add books for this month
+            monthData.books.forEach(book => {
+                booksGrid.innerHTML += createReportBookCard(book);
+            });
+        });
+    } else {
+        // Single month or no grouping - just show all books
+        data.books.forEach(book => {
+            booksGrid.innerHTML += createReportBookCard(book);
+        });
+    }
+
+    // Render charts
+    renderReportCharts(data.charts);
+}
+
+// Chart instances for cleanup
+let reportMonthChart = null;
+let reportDecadeChart = null;
+let reportAuthorChart = null;
+let reportWordCountChart = null;
+let reportDaysAfterPubChart = null;
+let reportDaysToFinishChart = null;
+
+function renderReportCharts(charts) {
+    // Destroy existing charts
+    if (reportMonthChart) reportMonthChart.destroy();
+    if (reportDecadeChart) reportDecadeChart.destroy();
+    if (reportAuthorChart) reportAuthorChart.destroy();
+    if (reportWordCountChart) reportWordCountChart.destroy();
+    if (reportDaysAfterPubChart) reportDaysAfterPubChart.destroy();
+    if (reportDaysToFinishChart) reportDaysToFinishChart.destroy();
+
+    // Reading by Month (stacked by format)
+    if (charts.months && charts.months.length > 0) {
+        const ctx = document.getElementById('reportMonthChart').getContext('2d');
+        reportMonthChart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: charts.months.map(m => m.month),
+                datasets: [
+                    {
+                        label: 'Audio',
+                        data: charts.months.map(m => m.formats.Audio),
+                        backgroundColor: '#FF6600'
+                    },
+                    {
+                        label: 'Ebook',
+                        data: charts.months.map(m => m.formats.Ebook),
+                        backgroundColor: '#0066CC'
+                    },
+                    {
+                        label: 'Physical',
+                        data: charts.months.map(m => m.formats.Physical),
+                        backgroundColor: '#6B4BA3'
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false }
+                },
+                scales: {
+                    x: {
+                        stacked: true
+                    },
+                    y: {
+                        stacked: true,
+                        beginAtZero: true,
+                        ticks: { precision: 0 }
+                    }
+                }
+            }
+        });
+    }
+
+    // Reading by Decade (stacked by format)
+    if (charts.decades && charts.decades.length > 0) {
+        const ctx = document.getElementById('reportDecadeChart').getContext('2d');
+        reportDecadeChart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: charts.decades.map(d => d.decade),
+                datasets: [
+                    {
+                        label: 'Audio',
+                        data: charts.decades.map(d => d.formats.Audio),
+                        backgroundColor: '#FF6600'
+                    },
+                    {
+                        label: 'Ebook',
+                        data: charts.decades.map(d => d.formats.Ebook),
+                        backgroundColor: '#0066CC'
+                    },
+                    {
+                        label: 'Physical',
+                        data: charts.decades.map(d => d.formats.Physical),
+                        backgroundColor: '#6B4BA3'
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false }
+                },
+                scales: {
+                    x: {
+                        stacked: true
+                    },
+                    y: {
+                        stacked: true,
+                        beginAtZero: true,
+                        ticks: { precision: 0 }
+                    }
+                }
+            }
+        });
+    }
+
+    // Most Read Authors (stacked by format)
+    if (charts.top_authors && charts.top_authors.length > 0) {
+        const ctx = document.getElementById('reportAuthorChart').getContext('2d');
+        reportAuthorChart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: charts.top_authors.map(a => a.author),
+                datasets: [
+                    {
+                        label: 'Audio',
+                        data: charts.top_authors.map(a => a.formats.Audio),
+                        backgroundColor: '#FF6600'
+                    },
+                    {
+                        label: 'Ebook',
+                        data: charts.top_authors.map(a => a.formats.Ebook),
+                        backgroundColor: '#0066CC'
+                    },
+                    {
+                        label: 'Physical',
+                        data: charts.top_authors.map(a => a.formats.Physical),
+                        backgroundColor: '#6B4BA3'
+                    }
+                ]
+            },
+            options: {
+                indexAxis: 'y',
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false }
+                },
+                scales: {
+                    x: {
+                        stacked: true,
+                        beginAtZero: true,
+                        ticks: { precision: 0 }
+                    },
+                    y: {
+                        stacked: true
+                    }
+                }
+            }
+        });
+    }
+
+    // Word Count Distribution (stacked by format)
+    const ctx3 = document.getElementById('reportWordCountChart').getContext('2d');
+    const wordCountLabels = Object.keys(charts.word_count_ranges);
+    reportWordCountChart = new Chart(ctx3, {
+        type: 'bar',
+        data: {
+            labels: wordCountLabels,
+            datasets: [
+                {
+                    label: 'Audio',
+                    data: wordCountLabels.map(label => charts.word_count_ranges[label].Audio),
+                    backgroundColor: '#FF6600'
+                },
+                {
+                    label: 'Ebook',
+                    data: wordCountLabels.map(label => charts.word_count_ranges[label].Ebook),
+                    backgroundColor: '#0066CC'
+                },
+                {
+                    label: 'Physical',
+                    data: wordCountLabels.map(label => charts.word_count_ranges[label].Physical),
+                    backgroundColor: '#6B4BA3'
+                }
+            ]
+        },
+        options: {
+            indexAxis: 'y',
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false }
+            },
+            scales: {
+                x: {
+                    stacked: true,
+                    beginAtZero: true,
+                    ticks: { precision: 0 }
+                },
+                y: {
+                    stacked: true
+                }
+            }
+        }
+    });
+
+    // Days After Publication (stacked by format)
+    const ctx5 = document.getElementById('reportDaysAfterPubChart').getContext('2d');
+    const daysAfterPubLabels = Object.keys(charts.days_after_pub);
+    reportDaysAfterPubChart = new Chart(ctx5, {
+        type: 'bar',
+        data: {
+            labels: daysAfterPubLabels,
+            datasets: [
+                {
+                    label: 'Audio',
+                    data: daysAfterPubLabels.map(label => charts.days_after_pub[label].Audio),
+                    backgroundColor: '#FF6600'
+                },
+                {
+                    label: 'Ebook',
+                    data: daysAfterPubLabels.map(label => charts.days_after_pub[label].Ebook),
+                    backgroundColor: '#0066CC'
+                },
+                {
+                    label: 'Physical',
+                    data: daysAfterPubLabels.map(label => charts.days_after_pub[label].Physical),
+                    backgroundColor: '#6B4BA3'
+                }
+            ]
+        },
+        options: {
+            indexAxis: 'y',
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false }
+            },
+            scales: {
+                x: {
+                    stacked: true,
+                    beginAtZero: true,
+                    ticks: { precision: 0 }
+                },
+                y: {
+                    stacked: true
+                }
+            }
+        }
+    });
+
+    // Days to Finish (stacked by format)
+    const ctx6 = document.getElementById('reportDaysToFinishChart').getContext('2d');
+    const daysToFinishLabels = Object.keys(charts.days_to_finish);
+    reportDaysToFinishChart = new Chart(ctx6, {
+        type: 'bar',
+        data: {
+            labels: daysToFinishLabels,
+            datasets: [
+                {
+                    label: 'Audio',
+                    data: daysToFinishLabels.map(label => charts.days_to_finish[label].Audio),
+                    backgroundColor: '#FF6600'
+                },
+                {
+                    label: 'Ebook',
+                    data: daysToFinishLabels.map(label => charts.days_to_finish[label].Ebook),
+                    backgroundColor: '#0066CC'
+                },
+                {
+                    label: 'Physical',
+                    data: daysToFinishLabels.map(label => charts.days_to_finish[label].Physical),
+                    backgroundColor: '#6B4BA3'
+                }
+            ]
+        },
+        options: {
+            indexAxis: 'y',
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { display: false }
+            },
+            scales: {
+                x: {
+                    stacked: true,
+                    beginAtZero: true,
+                    ticks: { precision: 0 }
+                },
+                y: {
+                    stacked: true
+                }
+            }
+        }
+    });
+}
+
+function createReportBookCard(book) {
+    const mediaColors = {
+        'Ebook': '#0066CC',
+        'Physical': '#6B4BA3',
+        'Audio': '#FF6600'
+    };
+    const mediaColor = mediaColors[book.media] || '#6c757d';
+
+    return `
+        <div class="col-md-4 col-sm-6 mb-3">
+            <div class="card h-100" style="border-left: 4px solid ${mediaColor};">
+                <div class="card-body">
+                    <div class="d-flex gap-2">
+                        <div class="flex-shrink-0">
+                            ${book.cover ?
+                                `<img src="${window.APP_BASE_PATH}/static/covers/${book.id}.jpg"
+                                     alt="${book.title} cover"
+                                     style="width: 60px; height: 90px; object-fit: cover; border-radius: 4px;"
+                                     onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                                 <div class="d-none align-items-center justify-content-center bg-light" style="width: 60px; height: 90px; border-radius: 4px;">
+                                     <i class="fas fa-book text-muted"></i>
+                                 </div>` :
+                                `<div class="d-flex align-items-center justify-content-center bg-light" style="width: 60px; height: 90px; border-radius: 4px;">
+                                     <i class="fas fa-book text-muted"></i>
+                                 </div>`
+                            }
+                        </div>
+                        <div class="flex-grow-1 d-flex flex-column">
+                            <h6 class="card-title mb-1" style="font-size: 0.9rem;">${book.title}</h6>
+                            <p class="text-muted mb-1" style="font-size: 0.8rem;">${book.author}</p>
+                            <small class="text-muted" style="font-size: 0.75rem; min-height: 1.2em;">
+                                ${book.series ? `${book.series}${book.series_number ? ' #' + book.series_number : ''}` : '&nbsp;'}
+                            </small>
+                            <div class="mt-2">
+                                <span class="badge" style="background-color: ${mediaColor}; font-size: 0.7rem;">${book.media}</span>
+                            </div>
+                            <small class="text-muted d-block mt-1" style="font-size: 0.75rem;">
+                                ${book.word_count ? book.word_count.toLocaleString() + ' words' : ''}
+                                ${book.page_count ? (book.word_count ? ' • ' : '') + book.page_count + ' pages' : ''}
+                            </small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function showPeriodSelection() {
+    document.getElementById('reportPeriodSelection').classList.remove('d-none');
+    document.getElementById('reportDisplay').classList.add('d-none');
+}
+
+async function downloadReport() {
+    if (!currentReportData) return;
+
+    try {
+        const reportElement = document.getElementById('reportDisplay');
+        const buttonsContainer = reportElement.querySelector('.d-flex.justify-content-between.align-items-center.mb-4');
+        const booksGrid = document.getElementById('reportBooksGrid');
+
+        // Check if this is an annual report with monthly grouping
+        const hasMonthlyGrouping = currentReportData.books_by_month &&
+                                   Object.keys(currentReportData.books_by_month).length > 0;
+
+        if (hasMonthlyGrouping) {
+            // Multi-image download for annual reports
+            await downloadAnnualReportMultiImage();
+        } else {
+            // Single image download for monthly reports
+            await downloadSingleImage();
+        }
+
+    } catch (error) {
+        console.error('Error generating report:', error);
+        GreatReads.showToast('Failed to generate report image: ' + error.message, 'error');
+    }
+}
+
+async function downloadSingleImage() {
+    const reportElement = document.getElementById('reportDisplay');
+    const headerContainer = document.getElementById('reportHeader');
+
+    GreatReads.showToast('Generating report image...', 'info');
+
+    // Hide entire header (title + buttons)
+    const originalHeaderDisplay = headerContainer.style.display;
+    headerContainer.style.display = 'none';
+
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    // Generate canvas
+    const canvas = await html2canvas(reportElement, {
+        backgroundColor: '#ffffff',
+        scale: 2,
+        logging: false,
+        useCORS: true,
+        allowTaint: true,
+        windowWidth: reportElement.scrollWidth,
+        windowHeight: reportElement.scrollHeight
+    });
+
+    // Restore header
+    headerContainer.style.display = originalHeaderDisplay;
+
+    // Download
+    canvas.toBlob((blob) => {
+        if (!blob) throw new Error('Failed to create image blob');
+
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `reading-report-${currentReportData.period.replace(/ /g, '-')}.png`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+
+        GreatReads.showToast('Report downloaded successfully!', 'success');
+    }, 'image/png');
+}
+
+async function downloadAnnualReportMultiImage() {
+    const reportElement = document.getElementById('reportDisplay');
+    const headerContainer = document.getElementById('reportHeader');
+    const booksGrid = document.getElementById('reportBooksGrid');
+    const statsSection = document.getElementById('reportStatsSection');
+    const chartsSection = document.getElementById('reportChartsSection');
+    const periodTitle = document.getElementById('reportPeriodTitle').textContent;
+
+    GreatReads.showToast('Generating multiple report images...', 'info');
+
+    // Hide entire header (title + buttons)
+    const originalHeaderDisplay = headerContainer.style.display;
+    headerContainer.style.display = 'none';
+
+    // Save original books grid content
+    const originalBooksContent = booksGrid.innerHTML;
+
+    // Temporarily hide books grid
+    const originalBooksDisplay = booksGrid.style.display;
+    booksGrid.style.display = 'none';
+
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    // 1. Generate stats + charts image
+    const statsCanvas = await html2canvas(reportElement, {
+        backgroundColor: '#ffffff',
+        scale: 2,
+        logging: false,
+        useCORS: true,
+        allowTaint: true
+    });
+
+    // Download stats image
+    await new Promise((resolve) => {
+        statsCanvas.toBlob((blob) => {
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `${currentReportData.period.replace(/ /g, '-')}-1-Stats.png`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+            resolve();
+        }, 'image/png');
+    });
+
+    // 2. Generate images for each month
+    const monthNames = ['January', 'February', 'March', 'April', 'May', 'June',
+                       'July', 'August', 'September', 'October', 'November', 'December'];
+    const sortedMonths = Object.keys(currentReportData.books_by_month).map(Number).sort((a, b) => a - b);
+
+    // Hide stats and charts for monthly images
+    const originalStatsDisplay = statsSection.style.display;
+    const originalChartsDisplay = chartsSection.style.display;
+    statsSection.style.display = 'none';
+    chartsSection.style.display = 'none';
+
+    let imageNumber = 2;
+
+    for (const monthNum of sortedMonths) {
+        const monthData = currentReportData.books_by_month[monthNum];
+        const monthName = monthNames[monthNum - 1];
+
+        // Create temporary container for this month
+        booksGrid.innerHTML = `
+            <div class="col-12 mb-3">
+                <h4>${monthName} ${currentReportData.period.split(' ')[0]}</h4>
+                <p class="text-muted">
+                    ${monthData.total_entries} ${monthData.total_entries === 1 ? 'entry' : 'entries'} •
+                    ${monthData.total_words.toLocaleString()} words
+                </p>
+            </div>
+        `;
+
+        // Add books for this month
+        monthData.books.forEach(book => {
+            booksGrid.innerHTML += createReportBookCard(book);
+        });
+
+        // Show books grid
+        booksGrid.style.display = originalBooksDisplay;
+
+        await new Promise(resolve => setTimeout(resolve, 200));
+
+        // Generate canvas for this month
+        const monthCanvas = await html2canvas(reportElement, {
+            backgroundColor: '#ffffff',
+            scale: 2,
+            logging: false,
+            useCORS: true,
+            allowTaint: true
+        });
+
+        // Download month image
+        await new Promise((resolve) => {
+            monthCanvas.toBlob((blob) => {
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = `${currentReportData.period.replace(/ /g, '-')}-${imageNumber}-${monthName}.png`;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                URL.revokeObjectURL(url);
+                resolve();
+            }, 'image/png');
+        });
+
+        imageNumber++;
+    }
+
+    // Restore original content
+    booksGrid.innerHTML = originalBooksContent;
+    booksGrid.style.display = originalBooksDisplay;
+    statsSection.style.display = originalStatsDisplay;
+    chartsSection.style.display = originalChartsDisplay;
+    headerContainer.style.display = originalHeaderDisplay;
+
+    GreatReads.showToast(`Downloaded ${imageNumber - 1} report images!`, 'success');
+}
+</script>
+{% endblock %}

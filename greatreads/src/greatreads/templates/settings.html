@@ -1,0 +1,577 @@
+{% extends "base.html" %}
+
+{% block title %}Settings - GreatReads{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="page-header-bookish mb-4">
+            <div class="page-header-icon">
+                <i class="fas fa-cog"></i>
+            </div>
+            <div class="page-header-content">
+                <h1 class="page-header-title">Settings</h1>
+                <p class="page-header-subtitle">Configure your reading preferences</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-lg-8">
+        <!-- WPD Mode Card -->
+        <div class="card mb-4">
+            <div class="card-header d-flex align-items-center justify-content-between">
+                <h5 class="mb-0">
+                    <i class="fas fa-magic me-2"></i>
+                    WPD Calculation Mode
+                </h5>
+                <span id="wpd-mode-badge" class="badge bg-secondary">Loading…</span>
+            </div>
+            <div class="card-body">
+                <p class="text-muted mb-3">
+                    Choose how Words Per Day is calculated for reading estimates.
+                    <strong>Auto</strong> derives WPD from your actual finished readings,
+                    weighted so that more recent books matter more.
+                    <strong>Manual</strong> uses the values you set below.
+                </p>
+
+                <div class="d-flex gap-3 mb-4">
+                    <div class="form-check form-check-inline">
+                        <input class="form-check-input" type="radio" name="wpdMode" id="wpdModeManual" value="manual">
+                        <label class="form-check-label fw-semibold" for="wpdModeManual">
+                            <i class="fas fa-pencil-alt me-1 text-secondary"></i>Manual
+                        </label>
+                    </div>
+                    <div class="form-check form-check-inline">
+                        <input class="form-check-input" type="radio" name="wpdMode" id="wpdModeAuto" value="auto">
+                        <label class="form-check-label fw-semibold" for="wpdModeAuto">
+                            <i class="fas fa-brain me-1 text-primary"></i>Auto (from history)
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Auto WPD preview table -->
+                <div id="auto-wpd-section" class="mb-3" style="display:none;">
+                    <h6 class="text-muted mb-2">
+                        <i class="fas fa-history me-1"></i>Auto-calculated WPD (from your reading history)
+                    </h6>
+                    <div class="table-responsive">
+                        <table class="table table-sm table-bordered align-middle mb-0">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Format</th>
+                                    <th class="text-end">Auto WPD</th>
+                                    <th class="text-end">Sample books</th>
+                                    <th class="text-end">Manual WPD</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td><span class="media-badge-large ebook">Ebook</span></td>
+                                    <td class="text-end fw-bold" id="auto-ebook-wpd">—</td>
+                                    <td class="text-end text-muted small" id="auto-ebook-count">—</td>
+                                    <td class="text-end text-muted small" id="manual-ebook-wpd">—</td>
+                                </tr>
+                                <tr>
+                                    <td><span class="media-badge-large physical">Physical</span></td>
+                                    <td class="text-end fw-bold" id="auto-physical-wpd">—</td>
+                                    <td class="text-end text-muted small" id="auto-physical-count">—</td>
+                                    <td class="text-end text-muted small" id="manual-physical-wpd">—</td>
+                                </tr>
+                                <tr>
+                                    <td><span class="media-badge-large audio">Audio</span></td>
+                                    <td class="text-end fw-bold" id="auto-audio-wpd">—</td>
+                                    <td class="text-end text-muted small" id="auto-audio-count">—</td>
+                                    <td class="text-end text-muted small" id="manual-audio-wpd">—</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <p class="text-muted small mt-2 mb-0">
+                        <i class="fas fa-info-circle me-1"></i>
+                        Weighted average — recent reads count more. Formats with no history fall back to Manual.
+                    </p>
+                </div>
+
+                <button type="button" class="btn btn-primary" onclick="saveWpdMode()">
+                    <i class="fas fa-save me-2"></i>Save Mode
+                </button>
+            </div>
+        </div>
+
+        <!-- Reading Speeds Card (Manual values) -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="fas fa-tachometer-alt me-2"></i>
+                    Manual Reading Speeds
+                </h5>
+            </div>
+            <div class="card-body">
+                <p class="text-muted mb-4">
+                    Set your average reading speed (words per day) for each format.
+                    Used when mode is <strong>Manual</strong>, and as a fallback for formats with no history when mode is <strong>Auto</strong>.
+                </p>
+
+                <form id="reading-speeds-form">
+                    <div class="mb-3">
+                        <label for="ebookWpd" class="form-label">
+                            <span class="media-badge-large ebook me-2">Ebook</span>
+                            Words Per Day
+                        </label>
+                        <input type="number" class="form-control" id="ebookWpd" name="ebook_wpd"
+                               min="1000" max="100000" step="1" required>
+                        <div class="form-text">Default: 15,000 words/day</div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="physicalWpd" class="form-label">
+                            <span class="media-badge-large physical me-2">Physical</span>
+                            Words Per Day
+                        </label>
+                        <input type="number" class="form-control" id="physicalWpd" name="physical_wpd"
+                               min="1000" max="100000" step="1" required>
+                        <div class="form-text">Default: 12,000 words/day</div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="audioWpd" class="form-label">
+                            <span class="media-badge-large audio me-2">Audio</span>
+                            Words Per Day
+                        </label>
+                        <input type="number" class="form-control" id="audioWpd" name="audio_wpd"
+                               min="1000" max="100000" step="1" required>
+                        <div class="form-text">Default: 25,000 words/day</div>
+                    </div>
+
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-save me-2"></i>Save Manual Speeds
+                        </button>
+                        <button type="button" class="btn btn-secondary" onclick="resetToDefaults()">
+                            <i class="fas fa-undo me-2"></i>Reset to Defaults
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Chart Preferences Card -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="fas fa-chart-bar me-2"></i>
+                    Chart Preferences
+                </h5>
+            </div>
+            <div class="card-body">
+                <p class="text-muted mb-4">
+                    Set your default metric for statistics charts. This will be applied to all charts that support multiple metrics (Books, Words, Pages).
+                </p>
+
+                <form id="chart-preferences-form">
+                    <div class="mb-3">
+                        <label for="defaultChartMetric" class="form-label">Default Chart Metric</label>
+                        <select class="form-select" id="defaultChartMetric" name="default_chart_metric">
+                            <option value="books">Books</option>
+                            <option value="words">Words</option>
+                            <option value="pages">Pages</option>
+                        </select>
+                        <div class="form-text">This will be the default view when you open the Statistics page</div>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fas fa-save me-2"></i>Save Preference
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Left-Handed Mode Card -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="fas fa-hand-paper me-2"></i>
+                    Left-Handed Mode
+                </h5>
+            </div>
+            <div class="card-body">
+                <p class="text-muted mb-4">
+                    Move the mobile menu button to the left side of the screen for easier access with your left hand.
+                </p>
+
+                <form id="left-handed-form">
+                    <div class="form-check form-switch mb-3">
+                        <input class="form-check-input" type="checkbox" id="leftHandedMode" name="left_handed_mode">
+                        <label class="form-check-label" for="leftHandedMode">
+                            Enable left-handed mode
+                        </label>
+                        <div class="form-text">The hamburger menu will appear on the left side on mobile devices</div>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fas fa-save me-2"></i>Save Preference
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Change Password Card -->
+        <div class="card mb-4">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="fas fa-key me-2"></i>
+                    Change Password
+                </h5>
+            </div>
+            <div class="card-body">
+                <div id="password-success-message" class="alert alert-success" style="display: none;"></div>
+                <div id="password-error-message" class="alert alert-danger" style="display: none;"></div>
+
+                <form id="password-form">
+                    <div class="mb-3">
+                        <label for="current_password" class="form-label">Current Password</label>
+                        <input type="password" class="form-control" id="current_password" name="current_password" required>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="new_password" class="form-label">New Password</label>
+                        <input type="password" class="form-control" id="new_password" name="new_password" required minlength="6">
+                        <div class="form-text">Password must be at least 6 characters</div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="confirm_password" class="form-label">Confirm New Password</label>
+                        <input type="password" class="form-control" id="confirm_password" name="confirm_password" required minlength="6">
+                    </div>
+
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fas fa-key me-2"></i>Change Password
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Info Card -->
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="fas fa-info-circle me-2"></i>
+                    About Reading Speeds
+                </h5>
+            </div>
+            <div class="card-body">
+                <p class="mb-2">
+                    <strong>How to determine your reading speed:</strong>
+                </p>
+                <ul>
+                    <li>Track how long it takes you to read a few books</li>
+                    <li>Divide the word count by the number of days it took</li>
+                    <li>Average across multiple books for better accuracy</li>
+                </ul>
+                <p class="mb-2 mt-3">
+                    <strong>Typical reading speeds:</strong>
+                </p>
+                <ul>
+                    <li><strong>Ebook:</strong> 12,000-20,000 words/day</li>
+                    <li><strong>Physical books:</strong> 10,000-15,000 words/day</li>
+                    <li><strong>Audiobooks:</strong> 20,000-30,000 words/day (depends on playback speed)</li>
+                </ul>
+                <p class="text-muted small mt-3">
+                    Note: These settings only affect future estimates. Existing readings with manual
+                    overrides will not be changed.
+                </p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+// Load current settings on page load
+document.addEventListener('DOMContentLoaded', function() {
+    loadWpdMode();
+    loadReadingSpeeds();
+    loadChartPreferences();
+    loadLeftHandedMode();
+
+    // Show/hide auto WPD section when radio changes
+    document.querySelectorAll('input[name="wpdMode"]').forEach(r => {
+        r.addEventListener('change', () => {
+            const isAuto = document.getElementById('wpdModeAuto').checked;
+            document.getElementById('auto-wpd-section').style.display = isAuto ? 'block' : 'none';
+        });
+    });
+});
+
+async function loadWpdMode() {
+    try {
+        const modeResp = await GreatReads.apiCall('/settings/wpd-mode');
+        const mode = modeResp.mode || 'manual';
+        document.getElementById(mode === 'auto' ? 'wpdModeAuto' : 'wpdModeManual').checked = true;
+
+        const badge = document.getElementById('wpd-mode-badge');
+        badge.textContent = mode === 'auto' ? 'Auto' : 'Manual';
+        badge.className = `badge ${mode === 'auto' ? 'bg-primary' : 'bg-secondary'}`;
+
+        if (mode === 'auto') {
+            document.getElementById('auto-wpd-section').style.display = 'block';
+            await loadAutoWpd();
+        }
+    } catch (e) {
+        console.error('Error loading WPD mode:', e);
+    }
+}
+
+async function loadAutoWpd() {
+    try {
+        const [autoResp, manualResp] = await Promise.all([
+            GreatReads.apiCall('/settings/auto-wpd'),
+            GreatReads.apiCall('/settings/reading-speeds'),
+        ]);
+
+        const fmt = v => v != null ? v.toLocaleString() : '<span class="text-muted">No data</span>';
+        document.getElementById('auto-ebook-wpd').innerHTML = fmt(autoResp.ebook);
+        document.getElementById('auto-physical-wpd').innerHTML = fmt(autoResp.physical);
+        document.getElementById('auto-audio-wpd').innerHTML = fmt(autoResp.audio);
+
+        document.getElementById('auto-ebook-count').textContent = autoResp.ebook_sample_count + ' books';
+        document.getElementById('auto-physical-count').textContent = autoResp.physical_sample_count + ' books';
+        document.getElementById('auto-audio-count').textContent = autoResp.audio_sample_count + ' books';
+
+        document.getElementById('manual-ebook-wpd').textContent = (manualResp.ebook_wpd || 15000).toLocaleString();
+        document.getElementById('manual-physical-wpd').textContent = (manualResp.physical_wpd || 12000).toLocaleString();
+        document.getElementById('manual-audio-wpd').textContent = (manualResp.audio_wpd || 25000).toLocaleString();
+    } catch (e) {
+        console.error('Error loading auto WPD:', e);
+    }
+}
+
+async function saveWpdMode() {
+    const mode = document.querySelector('input[name="wpdMode"]:checked')?.value || 'manual';
+    try {
+        await GreatReads.apiCall('/settings/wpd-mode', { method: 'PUT', data: { mode } });
+
+        const badge = document.getElementById('wpd-mode-badge');
+        badge.textContent = mode === 'auto' ? 'Auto' : 'Manual';
+        badge.className = `badge ${mode === 'auto' ? 'bg-primary' : 'bg-secondary'}`;
+
+        GreatReads.showToast(`WPD mode set to ${mode === 'auto' ? 'Auto' : 'Manual'}`, 'success');
+
+        if (mode === 'auto') {
+            document.getElementById('auto-wpd-section').style.display = 'block';
+            await loadAutoWpd();
+        } else {
+            document.getElementById('auto-wpd-section').style.display = 'none';
+        }
+
+        // Recalculate chains to apply new mode
+        await GreatReads.recalculateChains();
+        GreatReads.showToast('Reading estimates updated!', 'info');
+    } catch (e) {
+        console.error('Error saving WPD mode:', e);
+        GreatReads.showToast('Error saving WPD mode', 'error');
+    }
+}
+
+async function loadReadingSpeeds() {
+    try {
+        const response = await GreatReads.apiCall('/settings/reading-speeds');
+
+        document.getElementById('ebookWpd').value = response.ebook_wpd;
+        document.getElementById('physicalWpd').value = response.physical_wpd;
+        document.getElementById('audioWpd').value = response.audio_wpd;
+    } catch (error) {
+        console.error('Error loading reading speeds:', error);
+        GreatReads.showToast('Error loading settings', 'error');
+    }
+}
+
+async function loadChartPreferences() {
+    try {
+        // Try to load from database first
+        const response = await GreatReads.apiCall('/settings/default_chart_metric');
+        const defaultMetric = response.setting_value || 'books';
+        document.getElementById('defaultChartMetric').value = defaultMetric;
+        // Also update localStorage for backwards compatibility
+        localStorage.setItem('defaultChartMetric', defaultMetric);
+    } catch (error) {
+        // Fall back to localStorage if database doesn't have it (404 means not set yet)
+        // This is expected on first load before the setting has been saved
+        const defaultMetric = localStorage.getItem('defaultChartMetric') || 'books';
+        document.getElementById('defaultChartMetric').value = defaultMetric;
+        console.log('Chart preference not yet saved to database, using default:', defaultMetric);
+    }
+}
+
+async function loadLeftHandedMode() {
+    try {
+        const response = await GreatReads.apiCall('/settings/left_handed_mode');
+        const isLeftHanded = response.setting_value === 'true';
+        document.getElementById('leftHandedMode').checked = isLeftHanded;
+    } catch (error) {
+        // Default to false if not set
+        document.getElementById('leftHandedMode').checked = false;
+    }
+}
+
+function applyLeftHandedMode(isLeftHanded) {
+    if (isLeftHanded) {
+        document.body.classList.add('left-handed-mode');
+    } else {
+        document.body.classList.remove('left-handed-mode');
+    }
+}
+
+// Handle form submission
+document.getElementById('reading-speeds-form').addEventListener('submit', async function(e) {
+    e.preventDefault();
+
+    const formData = new FormData(e.target);
+    const speeds = {
+        ebook_wpd: parseInt(formData.get('ebook_wpd')),
+        physical_wpd: parseInt(formData.get('physical_wpd')),
+        audio_wpd: parseInt(formData.get('audio_wpd'))
+    };
+
+    try {
+        await GreatReads.apiCall('/settings/reading-speeds', {
+            method: 'PUT',
+            data: speeds
+        });
+
+        GreatReads.showToast('Manual speeds saved!', 'success');
+
+        // Refresh manual WPD column in auto table if it's visible
+        const autoSection = document.getElementById('auto-wpd-section');
+        if (autoSection && autoSection.style.display !== 'none') {
+            await loadAutoWpd();
+        }
+
+        // Recalculate chains to apply new speeds
+        await GreatReads.recalculateChains();
+        GreatReads.showToast('Reading estimates updated!', 'info');
+    } catch (error) {
+        console.error('Error saving settings:', error);
+        GreatReads.showToast('Error saving settings', 'error');
+    }
+});
+
+function resetToDefaults() {
+    if (confirm('Reset all reading speeds to default values?')) {
+        document.getElementById('ebookWpd').value = 15000;
+        document.getElementById('physicalWpd').value = 12000;
+        document.getElementById('audioWpd').value = 25000;
+    }
+}
+
+// Handle chart preferences form submission
+document.getElementById('chart-preferences-form').addEventListener('submit', async function(e) {
+    e.preventDefault();
+
+    const defaultMetric = document.getElementById('defaultChartMetric').value;
+
+    try {
+        // Save to database using the generic settings endpoint
+        await GreatReads.apiCall('/settings/default_chart_metric', {
+            method: 'PUT',
+            data: {
+                setting_value: defaultMetric
+            }
+        });
+
+        // Also save to localStorage for backwards compatibility
+        localStorage.setItem('defaultChartMetric', defaultMetric);
+
+        GreatReads.showToast('Chart preference saved successfully!', 'success');
+    } catch (error) {
+        console.error('Error saving chart preference:', error);
+        GreatReads.showToast('Error saving chart preference', 'error');
+    }
+});
+
+// Handle left-handed mode form submission
+document.getElementById('left-handed-form').addEventListener('submit', async function(e) {
+    e.preventDefault();
+
+    const isLeftHanded = document.getElementById('leftHandedMode').checked;
+
+    try {
+        await GreatReads.apiCall('/settings/left_handed_mode', {
+            method: 'PUT',
+            data: {
+                setting_value: isLeftHanded.toString()
+            }
+        });
+
+        // Apply the setting immediately
+        applyLeftHandedMode(isLeftHanded);
+
+        GreatReads.showToast('Left-handed mode saved successfully!', 'success');
+    } catch (error) {
+        console.error('Error saving left-handed mode:', error);
+        GreatReads.showToast('Error saving left-handed mode', 'error');
+    }
+});
+
+// Handle password form submission
+document.getElementById('password-form').addEventListener('submit', async function(e) {
+    e.preventDefault();
+
+    const currentPassword = document.getElementById('current_password').value;
+    const newPassword = document.getElementById('new_password').value;
+    const confirmPassword = document.getElementById('confirm_password').value;
+
+    // Hide previous messages
+    document.getElementById('password-success-message').style.display = 'none';
+    document.getElementById('password-error-message').style.display = 'none';
+
+    // Validate passwords match
+    if (newPassword !== confirmPassword) {
+        document.getElementById('password-error-message').textContent = 'New passwords do not match';
+        document.getElementById('password-error-message').style.display = 'block';
+        return;
+    }
+
+    // Validate password length
+    if (newPassword.length < 6) {
+        document.getElementById('password-error-message').textContent = 'Password must be at least 6 characters';
+        document.getElementById('password-error-message').style.display = 'block';
+        return;
+    }
+
+    try {
+        const response = await fetch(`${window.APP_BASE_PATH}/api/auth/change-password`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                current_password: currentPassword,
+                new_password: newPassword
+            })
+        });
+
+        const data = await response.json();
+
+        if (response.ok) {
+            document.getElementById('password-success-message').textContent = 'Password changed successfully!';
+            document.getElementById('password-success-message').style.display = 'block';
+
+            // Clear form
+            document.getElementById('password-form').reset();
+        } else {
+            document.getElementById('password-error-message').textContent = data.detail || 'Failed to change password';
+            document.getElementById('password-error-message').style.display = 'block';
+        }
+    } catch (error) {
+        console.error('Error changing password:', error);
+        document.getElementById('password-error-message').textContent = 'An error occurred while changing password';
+        document.getElementById('password-error-message').style.display = 'block';
+    }
+});
+</script>
+{% endblock %}
+

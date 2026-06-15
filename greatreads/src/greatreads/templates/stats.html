@@ -1,0 +1,1753 @@
+{% extends "base.html" %}
+
+{% block title %}Statistics - GreatReads{% endblock %}
+
+{% block extra_head %}
+<!-- Chart.js -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="page-header-bookish mb-4">
+            <div class="page-header-icon">
+                <i class="fas fa-chart-bar"></i>
+            </div>
+            <div class="page-header-content">
+                <h1 class="page-header-title">Reading Statistics</h1>
+                <p class="page-header-subtitle">Insights into your reading journey</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-body">
+                <div class="row align-items-end">
+                    <div class="col-md-4">
+                        <label for="yearFilter" class="form-label">
+                            <i class="fas fa-calendar-alt me-2"></i>Year
+                        </label>
+                        <select id="yearFilter" class="form-select">
+                            <option value="">All Years</option>
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <label for="monthFilter" class="form-label">
+                            <i class="fas fa-calendar me-2"></i>Month
+                        </label>
+                        <select id="monthFilter" class="form-select" disabled>
+                            <option value="">All Months</option>
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="d-flex align-items-center h-100">
+                            <div class="text-muted">
+                                <i class="fas fa-book-open me-2"></i>
+                                <span id="totalBooksRead">0</span> books read
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Charts Row 1 - Dynamic based on filter -->
+<div class="row" id="timeBasedChartsRow">
+    <div class="col-md-6 mb-4">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0" id="readingOverTimeTitle">
+                    <i class="fas fa-chart-bar me-2"></i>Reading Over Time
+                </h5>
+                <div class="btn-group btn-group-sm" role="group">
+                    <button type="button" class="btn btn-outline-secondary active" id="metricBooksTime" onclick="switchTimeMetric('books')">Books</button>
+                    <button type="button" class="btn btn-outline-secondary" id="metricWordsTime" onclick="switchTimeMetric('words')">Words</button>
+                    <button type="button" class="btn btn-outline-secondary" id="metricPagesTime" onclick="switchTimeMetric('pages')">Pages</button>
+                </div>
+            </div>
+            <div class="card-body">
+                <canvas id="readingOverTimeChart" style="max-height: 350px;"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-6 mb-4">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">
+                    <i class="fas fa-user me-2"></i>Reading by Author
+                </h5>
+                <div class="btn-group btn-group-sm" role="group">
+                    <button type="button" class="btn btn-outline-secondary active" id="metricBooksAuthor" onclick="switchAuthorMetric('books')">Books</button>
+                    <button type="button" class="btn btn-outline-secondary" id="metricWordsAuthor" onclick="switchAuthorMetric('words')">Words</button>
+                    <button type="button" class="btn btn-outline-secondary" id="metricPagesAuthor" onclick="switchAuthorMetric('pages')">Pages</button>
+                </div>
+            </div>
+            <div class="card-body">
+                <canvas id="authorBarChart" style="max-height: 350px;"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Charts Row 2 -->
+<div class="row">
+    <div class="col-md-6 mb-4">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">
+                    <i class="fas fa-calendar-alt me-2"></i>Reading by Decade Published
+                </h5>
+                <div class="btn-group btn-group-sm" role="group">
+                    <button type="button" class="btn btn-outline-secondary active" onclick="switchDecadeMetric('books')">Books</button>
+                    <button type="button" class="btn btn-outline-secondary" onclick="switchDecadeMetric('words')">Words</button>
+                    <button type="button" class="btn btn-outline-secondary" onclick="switchDecadeMetric('pages')">Pages</button>
+                </div>
+            </div>
+            <div class="card-body">
+                <canvas id="decadeBarChart" style="max-height: 300px;"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-6 mb-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="fas fa-align-left me-2"></i>Books Read By Word Count
+                </h5>
+            </div>
+            <div class="card-body">
+                <canvas id="wordCountBarChart" style="max-height: 300px;"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Charts Row 3 -->
+<div class="row">
+    <div class="col-md-6 mb-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="fas fa-book me-2"></i>Books Read by Format
+                </h5>
+            </div>
+            <div class="card-body">
+                <canvas id="formatPieChart" style="max-height: 300px;"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-6 mb-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="fas fa-tachometer-alt me-2"></i>Reading Speed
+                </h5>
+            </div>
+            <div class="card-body">
+                <canvas id="speedBarChart" style="max-height: 300px;"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Charts Row 3b - Library Word Count by Format -->
+<div class="row">
+    <div class="col-12 mb-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="fas fa-layer-group me-2"></i>Library Word Count by Format
+                </h5>
+            </div>
+            <div class="card-body">
+                <div class="row align-items-center">
+                    <div class="col-md-7">
+                        <canvas id="libraryWordCountChart" style="max-height: 300px;"></canvas>
+                    </div>
+                    <div class="col-md-5 text-center py-3" id="libraryOverallStats">
+                        <!-- populated by JS -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Charts Row 4 - Author Gender, Days Read After Publication, Days to Finish -->
+<div class="row">
+    <div class="col-md-4 mb-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="fas fa-venus-mars me-2"></i>Author Gender
+                </h5>
+            </div>
+            <div class="card-body">
+                <canvas id="authorGenderChart" style="max-height: 300px;"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-4 mb-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="fas fa-clock me-2"></i>Days Read After Publication
+                </h5>
+            </div>
+            <div class="card-body">
+                <canvas id="daysAfterPubChart" style="max-height: 300px;"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-4 mb-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="fas fa-hourglass-half me-2"></i>Days to Finish
+                </h5>
+            </div>
+            <div class="card-body">
+                <canvas id="daysToFinishChart" style="max-height: 300px;"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Charts Row 5 - Full Width Genre Chart -->
+<div class="row">
+    <div class="col-12 mb-4">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">
+                    <i class="fas fa-bookmark me-2"></i>Reading by Genre
+                </h5>
+                <div class="btn-group btn-group-sm" role="group">
+                    <button type="button" class="btn btn-outline-secondary active" id="metricBooksGenre" onclick="switchGenreMetric('books')">Books</button>
+                    <button type="button" class="btn btn-outline-secondary" id="metricWordsGenre" onclick="switchGenreMetric('words')">Words</button>
+                    <button type="button" class="btn btn-outline-secondary" id="metricPagesGenre" onclick="switchGenreMetric('pages')">Pages</button>
+                </div>
+            </div>
+            <div class="card-body">
+                <canvas id="genreBarChart" style="height: 600px;"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Charts Row 6 - Full Width Series Progress -->
+<div class="row">
+    <div class="col-12 mb-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="fas fa-layer-group me-2"></i>Series Progress
+                </h5>
+            </div>
+            <div class="card-body">
+                <canvas id="seriesProgressChart" style="height: 1200px;"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Set Chart.js defaults for better text rendering
+Chart.defaults.font.family = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
+Chart.defaults.font.size = 13;
+
+// Media type colors
+const COLORS = {
+    Audio: '#FF6600',
+    Ebook: '#0066CC',
+    Physical: '#6B4BA3',
+    Unread_Large: '#DC143C',  // Crimson for unread books >= 40k words
+    Unread_Small: '#DAA520'   // Goldenrod for unread books < 40k words
+};
+
+// Metric colors - matching website's purple/blue gradient aesthetic
+const METRIC_COLORS = {
+    books: {
+        fill: 'rgba(118, 75, 162, 0.85)',    // Purple from gradient, higher opacity
+        border: '#764ba2'
+    },
+    words: {
+        fill: 'rgba(102, 126, 234, 0.85)',   // Blue from gradient, higher opacity
+        border: '#667eea'
+    },
+    pages: {
+        fill: 'rgba(222, 184, 135, 0.85)',   // Papyrus/beige color, higher opacity
+        border: '#C8A882'
+    }
+};
+
+// Chart variables
+let readingOverTimeChart = null;
+let currentTimeMetric = 'books';    // Track current time metric (will be loaded from settings)
+let currentTimeData = null;               // Store current time data
+let authorChart = null;
+let currentAuthorMetric = 'books';  // Track current author metric (will be loaded from settings)
+let currentAuthorData = null;             // Store current author data
+let genreChart = null;
+let currentGenreMetric = 'books';   // Track current genre metric (will be loaded from settings)
+let currentGenreData = null;              // Store current genre data
+let formatChart = null;
+let speedChart = null;
+let decadeChart = null;
+let currentDecadeMetric = 'books';  // Track current decade metric (will be loaded from settings)
+let currentDecadeData = null;             // Store current decade data
+let wordCountChart = null;
+let libraryWordCountChart = null;
+let seriesProgressChart = null;
+let authorGenderChart = null;
+let daysAfterPubChart = null;
+let daysToFinishChart = null;
+
+// Common chart options for crisp rendering
+const commonChartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    devicePixelRatio: 2,
+    animation: false  // Disable animations to prevent resize loops in some browsers
+};
+
+// Load default chart metric preference from database
+async function loadChartPreference() {
+    try {
+        const response = await GreatReads.apiCall('/settings/default_chart_metric');
+        const defaultMetric = response.setting_value || 'books';
+
+        // Update all current metrics
+        currentTimeMetric = defaultMetric;
+        currentAuthorMetric = defaultMetric;
+        currentGenreMetric = defaultMetric;
+        currentDecadeMetric = defaultMetric;
+
+        // Also update localStorage for backwards compatibility
+        localStorage.setItem('defaultChartMetric', defaultMetric);
+    } catch (error) {
+        // Fall back to localStorage if database doesn't have it (404 means not set yet)
+        // This is expected on first load before the setting has been saved
+        const defaultMetric = localStorage.getItem('defaultChartMetric') || 'books';
+        currentTimeMetric = defaultMetric;
+        currentAuthorMetric = defaultMetric;
+        currentGenreMetric = defaultMetric;
+        currentDecadeMetric = defaultMetric;
+    }
+}
+
+// Load stats data
+async function loadStats() {
+    try {
+        const year = document.getElementById('yearFilter').value;
+        const month = document.getElementById('monthFilter').value;
+
+        let url = '/stats/';
+        const params = new URLSearchParams();
+        if (year) params.append('year', year);
+        if (month) params.append('month', month);
+        if (params.toString()) url += '?' + params.toString();
+
+        const response = await GreatReads.apiCall(url);
+
+        // Update total books read
+        document.getElementById('totalBooksRead').textContent = response.total_books_read || 0;
+
+        // Update filter options
+        updateFilterOptions(response.filters);
+
+        // Update time-based charts (dynamic based on filter)
+        // This also updates the author chart
+        updateTimeBasedCharts(response);
+
+        // Update other charts
+        updateFormatChart(response.books_by_format);
+        updateSpeedChart(response.reading_speed);
+        updateWordCountChart(response.word_count_distribution);
+        updateLibraryWordCountChart(response.library_word_counts);
+        updateSeriesProgressChart(response.series_progress);
+        updateAuthorGenderChart(response.author_gender);
+        updateDaysAfterPubChart(response.days_after_publication);
+        updateDaysToFinishChart(response.days_to_finish);
+
+        // Store decade data and update chart
+        currentDecadeData = response.books_by_decade;
+        updateDecadeChart();
+
+        // Store genre data and update chart
+        currentGenreData = response.books_by_genre;
+        updateGenreChart();
+
+        // Update button states to reflect default metric
+        updateButtonStates();
+
+    } catch (error) {
+        console.error('Error loading stats:', error);
+        GreatReads.showToast('Error loading statistics', 'error');
+    }
+}
+
+// Update all button states to reflect current metrics
+function updateButtonStates() {
+    // Time chart buttons
+    document.getElementById('metricBooksTime').classList.toggle('active', currentTimeMetric === 'books');
+    document.getElementById('metricWordsTime').classList.toggle('active', currentTimeMetric === 'words');
+    document.getElementById('metricPagesTime').classList.toggle('active', currentTimeMetric === 'pages');
+
+    // Author chart buttons
+    document.getElementById('metricBooksAuthor').classList.toggle('active', currentAuthorMetric === 'books');
+    document.getElementById('metricWordsAuthor').classList.toggle('active', currentAuthorMetric === 'words');
+    document.getElementById('metricPagesAuthor').classList.toggle('active', currentAuthorMetric === 'pages');
+
+    // Genre chart buttons
+    document.getElementById('metricBooksGenre').classList.toggle('active', currentGenreMetric === 'books');
+    document.getElementById('metricWordsGenre').classList.toggle('active', currentGenreMetric === 'words');
+    document.getElementById('metricPagesGenre').classList.toggle('active', currentGenreMetric === 'pages');
+
+    // Decade chart buttons (if they exist)
+    const decadeBooksBtn = document.querySelector('[onclick="switchDecadeMetric(\'books\')"]');
+    const decadeWordsBtn = document.querySelector('[onclick="switchDecadeMetric(\'words\')"]');
+    const decadePagesBtn = document.querySelector('[onclick="switchDecadeMetric(\'pages\')"]');
+    if (decadeBooksBtn) decadeBooksBtn.classList.toggle('active', currentDecadeMetric === 'books');
+    if (decadeWordsBtn) decadeWordsBtn.classList.toggle('active', currentDecadeMetric === 'words');
+    if (decadePagesBtn) decadePagesBtn.classList.toggle('active', currentDecadeMetric === 'pages');
+}
+
+// Update filter options
+function updateFilterOptions(filters) {
+    const yearSelect = document.getElementById('yearFilter');
+    const monthSelect = document.getElementById('monthFilter');
+
+    // Update years
+    if (filters.available_years && filters.available_years.length > 0) {
+        const currentYear = yearSelect.value;
+        yearSelect.innerHTML = '<option value="">All Years</option>';
+        filters.available_years.forEach(year => {
+            const option = document.createElement('option');
+            option.value = year;
+            option.textContent = year;
+            if (year == currentYear) option.selected = true;
+            yearSelect.appendChild(option);
+        });
+    }
+
+    // Update months
+    if (filters.selected_year && filters.available_months && filters.available_months.length > 0) {
+        monthSelect.disabled = false;
+        const currentMonth = monthSelect.value;
+        monthSelect.innerHTML = '<option value="">All Months</option>';
+
+        const monthNames = ['January', 'February', 'March', 'April', 'May', 'June',
+                           'July', 'August', 'September', 'October', 'November', 'December'];
+
+        filters.available_months.forEach(month => {
+            const option = document.createElement('option');
+            option.value = month;
+            option.textContent = monthNames[month - 1];
+            if (month == currentMonth) option.selected = true;
+            monthSelect.appendChild(option);
+        });
+    } else {
+        monthSelect.disabled = true;
+        monthSelect.innerHTML = '<option value="">All Months</option>';
+    }
+}
+
+// Update time-based charts (combined chart with metric toggle)
+function updateTimeBasedCharts(response) {
+    const year = response.filters.selected_year;
+    const month = response.filters.selected_month;
+    const timeBasedRow = document.getElementById('timeBasedChartsRow');
+
+    // If viewing a specific month, hide these charts
+    if (year && month) {
+        timeBasedRow.style.display = 'none';
+        return;
+    }
+
+    // Show the charts
+    timeBasedRow.style.display = 'flex';
+
+    // Store data and update charts
+    currentTimeData = {
+        books: !year ? response.books_by_year : response.books_by_month,
+        words: !year ? response.words_by_year : response.words_by_month,
+        pages: !year ? response.pages_by_year : response.pages_by_month,
+        type: !year ? 'year' : 'month'
+    };
+    updateReadingOverTimeChart();
+
+    // Store author data and update chart
+    currentAuthorData = response.top_authors;
+    updateAuthorChart();
+
+    // Store decade data and update chart
+    currentDecadeData = response.books_by_decade;
+    updateDecadeChart();
+}
+
+// Switch between time metrics (books/words/pages)
+function switchTimeMetric(metric) {
+    currentTimeMetric = metric;
+
+    // Update button states
+    document.getElementById('metricBooksTime').classList.toggle('active', metric === 'books');
+    document.getElementById('metricWordsTime').classList.toggle('active', metric === 'words');
+    document.getElementById('metricPagesTime').classList.toggle('active', metric === 'pages');
+
+    // Update chart
+    updateReadingOverTimeChart();
+}
+
+// Switch between author metrics (books/words/pages)
+function switchAuthorMetric(metric) {
+    currentAuthorMetric = metric;
+
+    // Update button states
+    document.getElementById('metricBooksAuthor').classList.toggle('active', metric === 'books');
+    document.getElementById('metricWordsAuthor').classList.toggle('active', metric === 'words');
+    document.getElementById('metricPagesAuthor').classList.toggle('active', metric === 'pages');
+
+    // Update chart
+    updateAuthorChart();
+}
+
+// Switch decade metric (books/words/pages)
+function switchDecadeMetric(metric) {
+    currentDecadeMetric = metric;
+
+    // Update button states - find the card containing the decade chart
+    const card = document.getElementById('decadeBarChart').closest('.card');
+    const buttons = card.querySelectorAll('.btn-group button');
+    buttons.forEach(btn => {
+        btn.classList.remove('active');
+        if (btn.textContent.toLowerCase() === metric) {
+            btn.classList.add('active');
+        }
+    });
+
+    updateDecadeChart();
+}
+
+// Update the combined reading over time chart
+function updateReadingOverTimeChart() {
+    if (!currentTimeData) return;
+
+    const ctx = document.getElementById('readingOverTimeChart').getContext('2d');
+
+    if (readingOverTimeChart) {
+        readingOverTimeChart.destroy();
+    }
+
+    const data = currentTimeData[currentTimeMetric];
+    const type = currentTimeData.type;
+
+    let labels, audioData, ebookData, physicalData;
+
+    if (type === 'month') {
+        labels = Object.keys(data);
+        audioData = Object.values(data).map(d => d.Audio || 0);
+        ebookData = Object.values(data).map(d => d.Ebook || 0);
+        physicalData = Object.values(data).map(d => d.Physical || 0);
+    } else {
+        // Years
+        labels = Object.keys(data);
+        audioData = Object.values(data).map(d => d.Audio || 0);
+        ebookData = Object.values(data).map(d => d.Ebook || 0);
+        physicalData = Object.values(data).map(d => d.Physical || 0);
+    }
+
+    readingOverTimeChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: 'Audio',
+                    data: audioData,
+                    backgroundColor: COLORS.Audio,
+                    borderColor: COLORS.Audio,
+                    borderWidth: 2,
+                    borderRadius: 4
+                },
+                {
+                    label: 'Ebook',
+                    data: ebookData,
+                    backgroundColor: COLORS.Ebook,
+                    borderColor: COLORS.Ebook,
+                    borderWidth: 2,
+                    borderRadius: 4
+                },
+                {
+                    label: 'Physical',
+                    data: physicalData,
+                    backgroundColor: COLORS.Physical,
+                    borderColor: COLORS.Physical,
+                    borderWidth: 2,
+                    borderRadius: 4
+                }
+            ]
+        },
+        options: {
+            ...commonChartOptions,
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'top'
+                }
+            },
+            scales: {
+                x: {
+                    stacked: true,
+                    ticks: {
+                        font: {
+                            size: 12,
+                            weight: '500'
+                        },
+                        color: '#333'
+                    }
+                },
+                y: {
+                    stacked: true,
+                    beginAtZero: true,
+                    ticks: {
+                        stepSize: 1,
+                        font: {
+                            size: 12,
+                            weight: '500'
+                        },
+                        color: '#333'
+                    }
+                }
+            }
+        }
+    });
+}
+
+// Update Books Read by Format pie chart
+function updateFormatChart(data) {
+    const ctx = document.getElementById('formatPieChart').getContext('2d');
+
+    if (formatChart) {
+        formatChart.destroy();
+    }
+
+    const labels = Object.keys(data);
+    const values = Object.values(data);
+    // Use 85% opacity for better visibility
+    const colors = labels.map(label => {
+        const hex = COLORS[label];
+        const r = parseInt(hex.slice(1, 3), 16);
+        const g = parseInt(hex.slice(3, 5), 16);
+        const b = parseInt(hex.slice(5, 7), 16);
+        return `rgba(${r}, ${g}, ${b}, 0.85)`;
+    });
+    const borderColors = labels.map(label => COLORS[label]);
+
+    formatChart = new Chart(ctx, {
+        type: 'pie',
+        data: {
+            labels: labels,
+            datasets: [{
+                data: values,
+                backgroundColor: colors,
+                borderWidth: 2,
+                borderColor: borderColors
+            }]
+        },
+        options: {
+            ...commonChartOptions,
+            plugins: {
+                legend: {
+                    position: 'bottom',
+                    labels: {
+                        padding: 15,
+                        font: {
+                            size: 12
+                        }
+                    }
+                },
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            const label = context.label || '';
+                            const value = context.parsed || 0;
+                            const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                            const percentage = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
+                            return `${label}: ${value} (${percentage}%)`;
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+// Update Reading Speed bar chart
+function updateSpeedChart(data) {
+    const ctx = document.getElementById('speedBarChart').getContext('2d');
+
+    if (speedChart) {
+        speedChart.destroy();
+    }
+
+    const labels = Object.keys(data);
+    const values = Object.values(data);
+    // Use 85% opacity for better visibility
+    const colors = labels.map(label => {
+        const hex = COLORS[label];
+        const r = parseInt(hex.slice(1, 3), 16);
+        const g = parseInt(hex.slice(3, 5), 16);
+        const b = parseInt(hex.slice(5, 7), 16);
+        return `rgba(${r}, ${g}, ${b}, 0.85)`;
+    });
+    const borderColors = labels.map(label => COLORS[label]);
+
+    speedChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Words per Day',
+                data: values,
+                backgroundColor: colors,
+                borderColor: borderColors,
+                borderWidth: 2,
+                borderRadius: 4
+            }]
+        },
+        options: {
+            ...commonChartOptions,
+            plugins: {
+                legend: {
+                    display: false
+                },
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            return `${context.parsed.y.toLocaleString()} words/day`;
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    ticks: {
+                        font: {
+                            size: 12,
+                            weight: '500'
+                        },
+                        color: '#333'
+                    }
+                },
+                y: {
+                    beginAtZero: true,
+                    ticks: {
+                        callback: function(value) {
+                            return value.toLocaleString();
+                        },
+                        font: {
+                            size: 12,
+                            weight: '500'
+                        },
+                        color: '#333'
+                    },
+                    title: {
+                        display: true,
+                        text: 'Words per Day',
+                        font: {
+                            size: 12,
+                            weight: '500'
+                        },
+                        color: '#333'
+                    }
+                }
+            }
+        }
+    });
+}
+
+// Update Word Count Distribution horizontal bar chart
+function updateWordCountChart(data) {
+    const ctx = document.getElementById('wordCountBarChart').getContext('2d');
+
+    if (wordCountChart) {
+        wordCountChart.destroy();
+    }
+
+    // Define the order of ranges (from top to bottom)
+    const rangeOrder = ["500k+", "400-500k", "300-400k", "200-300k", "100-200k", "50-100k", "<50k"];
+    const labels = rangeOrder;
+
+    // Extract data by format for each range
+    const audioData = rangeOrder.map(range => data[range]?.Audio || 0);
+    const ebookData = rangeOrder.map(range => data[range]?.Ebook || 0);
+    const physicalData = rangeOrder.map(range => data[range]?.Physical || 0);
+
+    wordCountChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: 'Audio',
+                    data: audioData,
+                    backgroundColor: COLORS.Audio,
+                    borderColor: COLORS.Audio,
+                    borderWidth: 2,
+                    borderRadius: 4
+                },
+                {
+                    label: 'Ebook',
+                    data: ebookData,
+                    backgroundColor: COLORS.Ebook,
+                    borderColor: COLORS.Ebook,
+                    borderWidth: 2,
+                    borderRadius: 4
+                },
+                {
+                    label: 'Physical',
+                    data: physicalData,
+                    backgroundColor: COLORS.Physical,
+                    borderColor: COLORS.Physical,
+                    borderWidth: 2,
+                    borderRadius: 4
+                }
+            ]
+        },
+        options: {
+            ...commonChartOptions,
+            indexAxis: 'y',
+            layout: {
+                padding: {
+                    left: 20
+                }
+            },
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'top'
+                }
+            },
+            scales: {
+                x: {
+                    stacked: true,
+                    beginAtZero: true,
+                    ticks: {
+                        stepSize: 1,
+                        font: {
+                            size: 12,
+                            weight: '500'
+                        },
+                        color: '#333'
+                    }
+                },
+                y: {
+                    stacked: true,
+                    ticks: {
+                        autoSkip: false,
+                        font: {
+                            size: 12,
+                            weight: '500'
+                        },
+                        color: '#333'
+                    }
+                }
+            }
+        }
+    });
+}
+
+// Update Library Word Count by Format pie chart
+function updateLibraryWordCountChart(data) {
+    const ctx = document.getElementById('libraryWordCountChart').getContext('2d');
+
+    if (libraryWordCountChart) {
+        libraryWordCountChart.destroy();
+    }
+
+    if (!data) return;
+
+    function fmtWords(v) {
+        if (v >= 1000000) return (v / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
+        if (v >= 1000)    return Math.round(v / 1000) + 'K';
+        return String(v);
+    }
+
+    function hexToRgba(hex, alpha) {
+        const r = parseInt(hex.slice(1, 3), 16);
+        const g = parseInt(hex.slice(3, 5), 16);
+        const b = parseInt(hex.slice(5, 7), 16);
+        return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    }
+
+    // Format definitions: name, solid color, faded color
+    const formats = [
+        { key: 'Audio',    label: 'Audio',    hex: COLORS.Audio    },
+        { key: 'Ebook',    label: 'Ebook',    hex: COLORS.Ebook    },
+        { key: 'Physical', label: 'Physical', hex: COLORS.Physical }
+    ];
+
+    // Build 6 slices: read then unread for each format
+    const sliceLabels = [];
+    const sliceValues = [];
+    const sliceBg     = [];
+    const sliceBorder = [];
+    const sliceMeta   = [];   // for tooltip context
+
+    formats.forEach(f => {
+        const read   = data[f.key]?.read   || 0;
+        const unread = data[f.key]?.unread || 0;
+        const total  = read + unread;
+        const readPct = total > 0 ? Math.round(read / total * 100) : 0;
+
+        sliceLabels.push(`${f.label} – Read`);
+        sliceValues.push(read);
+        sliceBg.push(hexToRgba(f.hex, 0.85));
+        sliceBorder.push(f.hex);
+        sliceMeta.push({ fmt: f.label, status: 'Read', fmtTotal: total, fmtReadPct: readPct });
+
+        sliceLabels.push(`${f.label} – Unread`);
+        sliceValues.push(unread);
+        sliceBg.push(hexToRgba(f.hex, 0.28));
+        sliceBorder.push(hexToRgba(f.hex, 0.6));
+        sliceMeta.push({ fmt: f.label, status: 'Unread', fmtTotal: total, fmtReadPct: readPct });
+    });
+
+    libraryWordCountChart = new Chart(ctx, {
+        type: 'pie',
+        data: {
+            labels: sliceLabels,
+            datasets: [{
+                data: sliceValues,
+                backgroundColor: sliceBg,
+                borderColor: sliceBorder,
+                borderWidth: 2
+            }]
+        },
+        options: {
+            ...commonChartOptions,
+            plugins: {
+                legend: {
+                    position: 'bottom',
+                    labels: {
+                        padding: 12,
+                        font: { size: 12 },
+                        generateLabels: function(chart) {
+                            // Show one legend item per format (3 items), color-blocked
+                            return formats.map((f, i) => ({
+                                text: f.label,
+                                fillStyle: hexToRgba(f.hex, 0.85),
+                                strokeStyle: f.hex,
+                                lineWidth: 2,
+                                hidden: false,
+                                index: i * 2
+                            }));
+                        }
+                    },
+                    onClick: null
+                },
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            const meta  = sliceMeta[context.dataIndex];
+                            const words = sliceValues[context.dataIndex];
+                            return [
+                                ` ${meta.status}: ${fmtWords(words)} words`,
+                                ` ${meta.fmt} total: ${fmtWords(meta.fmtTotal)} words (${meta.fmtReadPct}% read)`
+                            ];
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    // Populate overall stats panel (deduped)
+    const overallRead   = data['Overall']?.read   || 0;
+    const overallUnread = data['Overall']?.unread  || 0;
+    const overallTotal  = overallRead + overallUnread;
+    const readPct   = overallTotal > 0 ? Math.round(overallRead   / overallTotal * 100) : 0;
+    const unreadPct = overallTotal > 0 ? Math.round(overallUnread / overallTotal * 100) : 0;
+
+    const panel = document.getElementById('libraryOverallStats');
+    if (panel) {
+        panel.innerHTML = `
+            <div style="font-size:0.8rem;text-transform:uppercase;letter-spacing:.08em;color:#666;margin-bottom:12px;">Overall Library</div>
+            <div style="margin-bottom:16px;">
+                <div style="font-size:2rem;font-weight:700;color:#333;line-height:1;">${fmtWords(overallTotal)}</div>
+                <div style="font-size:0.8rem;color:#888;margin-top:2px;">total words</div>
+            </div>
+            <div style="display:flex;justify-content:center;gap:28px;">
+                <div>
+                    <div style="font-size:1.4rem;font-weight:700;color:#2d7a2d;">${readPct}%</div>
+                    <div style="font-size:0.75rem;color:#555;">Read</div>
+                    <div style="font-size:0.75rem;color:#888;">${fmtWords(overallRead)} words</div>
+                </div>
+                <div style="border-left:1px solid #ddd;"></div>
+                <div>
+                    <div style="font-size:1.4rem;font-weight:700;color:#999;">${unreadPct}%</div>
+                    <div style="font-size:0.75rem;color:#555;">Unread</div>
+                    <div style="font-size:0.75rem;color:#888;">${fmtWords(overallUnread)} words</div>
+                </div>
+            </div>
+            <div style="font-size:0.7rem;color:#aaa;margin-top:14px;">(each book counted once)</div>
+        `;
+    }
+}
+
+// Update Series Progress horizontal bar chart
+function updateSeriesProgressChart(data) {
+    const ctx = document.getElementById('seriesProgressChart').getContext('2d');
+
+    if (seriesProgressChart) {
+        seriesProgressChart.destroy();
+    }
+
+    if (!data || data.length === 0) {
+        return;
+    }
+
+    // Extract series names and data (word counts)
+    // Note: universe data is still available in the data object for future use
+    const labels = data.map(s => s.series);
+    const audioData = data.map(s => s.Audio || 0);
+    const ebookData = data.map(s => s.Ebook || 0);
+    const physicalData = data.map(s => s.Physical || 0);
+    const unreadLargeData = data.map(s => s.Unread_Large || 0);
+    const unreadSmallData = data.map(s => s.Unread_Small || 0);
+
+    // Create background colors for completed vs incomplete series
+    const backgroundColors = data.map(s => s.completed ? 'rgba(102, 126, 234, 0.08)' : 'transparent');
+
+    seriesProgressChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: 'Audio',
+                    data: audioData,
+                    backgroundColor: COLORS.Audio,
+                    borderColor: COLORS.Audio,
+                    borderWidth: 2,
+                    borderRadius: 4
+                },
+                {
+                    label: 'Ebook',
+                    data: ebookData,
+                    backgroundColor: COLORS.Ebook,
+                    borderColor: COLORS.Ebook,
+                    borderWidth: 2,
+                    borderRadius: 4
+                },
+                {
+                    label: 'Physical',
+                    data: physicalData,
+                    backgroundColor: COLORS.Physical,
+                    borderColor: COLORS.Physical,
+                    borderWidth: 2,
+                    borderRadius: 4
+                },
+                {
+                    label: 'Unread Novels',
+                    data: unreadLargeData,
+                    backgroundColor: COLORS.Unread_Large,
+                    borderColor: COLORS.Unread_Large,
+                    borderWidth: 2,
+                    borderRadius: 4
+                },
+                {
+                    label: 'Unread Novellas',
+                    data: unreadSmallData,
+                    backgroundColor: COLORS.Unread_Small,
+                    borderColor: COLORS.Unread_Small,
+                    borderWidth: 2,
+                    borderRadius: 4
+                }
+            ]
+        },
+        options: {
+            ...commonChartOptions,
+            maintainAspectRatio: false,
+            indexAxis: 'y',
+            layout: {
+                padding: {
+                    left: 20
+                }
+            },
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'top'
+                },
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            const words = context.parsed.x.toLocaleString();
+                            const index = context.dataIndex;
+                            const seriesData = data[index];
+                            const label = context.dataset.label;
+
+                            // Get book count and titles from the data
+                            let bookCount = 0;
+                            let bookTitles = [];
+
+                            if (label === 'Audio') {
+                                bookCount = seriesData.Audio_count || 0;
+                                bookTitles = seriesData.Audio_titles || [];
+                            } else if (label === 'Ebook') {
+                                bookCount = seriesData.Ebook_count || 0;
+                                bookTitles = seriesData.Ebook_titles || [];
+                            } else if (label === 'Physical') {
+                                bookCount = seriesData.Physical_count || 0;
+                                bookTitles = seriesData.Physical_titles || [];
+                            } else if (label === 'Unread Novels') {
+                                bookCount = seriesData.Unread_Large_count || 0;
+                                bookTitles = seriesData.Unread_Large_titles || [];
+                            } else if (label === 'Unread Novellas') {
+                                bookCount = seriesData.Unread_Small_count || 0;
+                                bookTitles = seriesData.Unread_Small_titles || [];
+                            }
+
+                            if (bookCount === 0) {
+                                return label + ': 0 books';
+                            }
+
+                            // Build the label with book titles
+                            let result = label + ': ' + bookCount + ' book' + (bookCount !== 1 ? 's' : '') + ' (' + words + ' words)';
+
+                            // Add book titles if available
+                            if (bookTitles.length > 0) {
+                                result += '\n  • ' + bookTitles.join('\n  • ');
+                            }
+
+                            return result;
+                        },
+                        footer: function(tooltipItems) {
+                            // Calculate total books and words in series
+                            const index = tooltipItems[0].dataIndex;
+                            const total = data[index].total;
+                            const totalWords = data[index].total_words.toLocaleString();
+                            const completed = data[index].completed ? ' ✓ COMPLETED' : '';
+                            return `Total: ${total} book${total !== 1 ? 's' : ''} (${totalWords} words)${completed}`;
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    stacked: true,
+                    beginAtZero: true,
+                    ticks: {
+                        callback: function(value) {
+                            // Format word count with commas
+                            return value.toLocaleString();
+                        },
+                        font: {
+                            size: 12,
+                            weight: '500'
+                        },
+                        color: '#333'
+                    },
+                    title: {
+                        display: true,
+                        text: 'Word Count',
+                        color: '#333',
+                        font: {
+                            size: 13,
+                            weight: 'bold'
+                        }
+                    }
+                },
+                y: {
+                    stacked: true,
+                    ticks: {
+                        autoSkip: false,
+                        font: {
+                            size: 13,
+                            weight: '500'
+                        },
+                        color: '#333'
+                    }
+                }
+            }
+        },
+        plugins: [{
+            id: 'completedSeriesBackground',
+            beforeDatasetsDraw: function(chart) {
+                const ctx = chart.ctx;
+                const yAxis = chart.scales.y;
+                const xAxis = chart.scales.x;
+
+                data.forEach((series, index) => {
+                    const y = yAxis.getPixelForValue(index);
+                    const barHeight = yAxis.height / data.length;
+
+                    ctx.save();
+
+                    if (series.completed) {
+                        // Green background for completed series
+                        ctx.fillStyle = 'rgba(34, 197, 94, 0.15)';
+                        ctx.fillRect(
+                            chart.chartArea.left,
+                            y - barHeight / 2,
+                            chart.chartArea.width,
+                            barHeight
+                        );
+
+                        // Gold glow/border for completed series
+                        ctx.strokeStyle = 'rgba(234, 179, 8, 0.8)';
+                        ctx.lineWidth = 5;
+                        ctx.beginPath();
+                        ctx.moveTo(chart.chartArea.left, y - barHeight / 2);
+                        ctx.lineTo(chart.chartArea.left, y + barHeight / 2);
+                        ctx.stroke();
+
+                        // Add a subtle gold shadow/glow effect
+                        ctx.shadowColor = 'rgba(234, 179, 8, 0.4)';
+                        ctx.shadowBlur = 8;
+                        ctx.strokeStyle = 'rgba(234, 179, 8, 0.6)';
+                        ctx.lineWidth = 3;
+                        ctx.beginPath();
+                        ctx.moveTo(chart.chartArea.left, y - barHeight / 2);
+                        ctx.lineTo(chart.chartArea.left, y + barHeight / 2);
+                        ctx.stroke();
+                    } else {
+                        // Red background for incomplete series
+                        ctx.fillStyle = 'rgba(239, 68, 68, 0.12)';
+                        ctx.fillRect(
+                            chart.chartArea.left,
+                            y - barHeight / 2,
+                            chart.chartArea.width,
+                            barHeight
+                        );
+
+                        // Red left border for incomplete series
+                        ctx.strokeStyle = 'rgba(239, 68, 68, 0.6)';
+                        ctx.lineWidth = 4;
+                        ctx.beginPath();
+                        ctx.moveTo(chart.chartArea.left, y - barHeight / 2);
+                        ctx.lineTo(chart.chartArea.left, y + barHeight / 2);
+                        ctx.stroke();
+                    }
+
+                    ctx.restore();
+                });
+            }
+        }]
+    });
+}
+
+// Update Reading by Author horizontal bar chart
+function updateAuthorChart() {
+    if (!currentAuthorData) return;
+
+    const ctx = document.getElementById('authorBarChart').getContext('2d');
+
+    if (authorChart) {
+        authorChart.destroy();
+    }
+
+    const metricData = currentAuthorData[currentAuthorMetric];
+    const labels = metricData.map(item => item.author);
+    const audioData = metricData.map(item => item.Audio || 0);
+    const ebookData = metricData.map(item => item.Ebook || 0);
+    const physicalData = metricData.map(item => item.Physical || 0);
+
+    authorChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: 'Audio',
+                    data: audioData,
+                    backgroundColor: COLORS.Audio,
+                    borderColor: COLORS.Audio,
+                    borderWidth: 2,
+                    borderRadius: 4
+                },
+                {
+                    label: 'Ebook',
+                    data: ebookData,
+                    backgroundColor: COLORS.Ebook,
+                    borderColor: COLORS.Ebook,
+                    borderWidth: 2,
+                    borderRadius: 4
+                },
+                {
+                    label: 'Physical',
+                    data: physicalData,
+                    backgroundColor: COLORS.Physical,
+                    borderColor: COLORS.Physical,
+                    borderWidth: 2,
+                    borderRadius: 4
+                }
+            ]
+        },
+        options: {
+            ...commonChartOptions,
+            indexAxis: 'y',
+            layout: {
+                padding: {
+                    left: 20
+                }
+            },
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'top'
+                }
+            },
+            scales: {
+                x: {
+                    stacked: true,
+                    beginAtZero: true,
+                    ticks: {
+                        stepSize: currentAuthorMetric === 'words' ? undefined : 1,
+                        callback: function(value) {
+                            if (currentAuthorMetric === 'words') {
+                                if (value >= 1000000) return (value / 1000000).toFixed(value % 1000000 === 0 ? 0 : 1) + 'M';
+                                if (value >= 1000) return Math.round(value / 1000) + 'K';
+                                return value;
+                            }
+                            return value;
+                        },
+                        font: {
+                            size: 12,
+                            weight: '500'
+                        },
+                        color: '#333'
+                    }
+                },
+                y: {
+                    stacked: true,
+                    ticks: {
+                        autoSkip: false,
+                        font: {
+                            size: 12,
+                            weight: '500'
+                        },
+                        color: '#333'
+                    }
+                }
+            }
+        }
+    });
+}
+
+// Switch genre metric
+function switchGenreMetric(metric) {
+    currentGenreMetric = metric;
+
+    // Update button states
+    document.getElementById('metricBooksGenre').classList.toggle('active', metric === 'books');
+    document.getElementById('metricWordsGenre').classList.toggle('active', metric === 'words');
+    document.getElementById('metricPagesGenre').classList.toggle('active', metric === 'pages');
+
+    // Update chart
+    updateGenreChart();
+}
+
+// Update Reading by Genre horizontal bar chart
+function updateGenreChart() {
+    if (!currentGenreData) return;
+
+    const ctx = document.getElementById('genreBarChart').getContext('2d');
+
+    if (genreChart) {
+        genreChart.destroy();
+    }
+
+    const metricData = currentGenreData[currentGenreMetric];
+    const labels = metricData.map(item => item.genre);
+    const audioData = metricData.map(item => item.Audio || 0);
+    const ebookData = metricData.map(item => item.Ebook || 0);
+    const physicalData = metricData.map(item => item.Physical || 0);
+
+    genreChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: 'Audio',
+                    data: audioData,
+                    backgroundColor: COLORS.Audio,
+                    borderColor: COLORS.Audio,
+                    borderWidth: 2,
+                    borderRadius: 4
+                },
+                {
+                    label: 'Ebook',
+                    data: ebookData,
+                    backgroundColor: COLORS.Ebook,
+                    borderColor: COLORS.Ebook,
+                    borderWidth: 2,
+                    borderRadius: 4
+                },
+                {
+                    label: 'Physical',
+                    data: physicalData,
+                    backgroundColor: COLORS.Physical,
+                    borderColor: COLORS.Physical,
+                    borderWidth: 2,
+                    borderRadius: 4
+                }
+            ]
+        },
+        options: {
+            ...commonChartOptions,
+            indexAxis: 'y',
+            layout: {
+                padding: {
+                    left: 20
+                }
+            },
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'top'
+                }
+            },
+            scales: {
+                x: {
+                    stacked: true,
+                    beginAtZero: true,
+                    ticks: {
+                        stepSize: 1,
+                        font: {
+                            size: 12,
+                            weight: '500'
+                        },
+                        color: '#333'
+                    }
+                },
+                y: {
+                    stacked: true,
+                    ticks: {
+                        autoSkip: false,
+                        font: {
+                            size: 12,
+                            weight: '500'
+                        },
+                        color: '#333'
+                    }
+                }
+            }
+        }
+    });
+}
+
+// Update Reading by Decade Published bar chart
+function updateDecadeChart() {
+    if (!currentDecadeData) return;
+
+    const ctx = document.getElementById('decadeBarChart').getContext('2d');
+
+    if (decadeChart) {
+        decadeChart.destroy();
+    }
+
+    const metricData = currentDecadeData[currentDecadeMetric];
+    const labels = metricData.map(item => item.decade);
+    const audioData = metricData.map(item => item.Audio || 0);
+    const ebookData = metricData.map(item => item.Ebook || 0);
+    const physicalData = metricData.map(item => item.Physical || 0);
+
+    decadeChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: 'Audio',
+                    data: audioData,
+                    backgroundColor: COLORS.Audio,
+                    borderColor: COLORS.Audio,
+                    borderWidth: 2,
+                    borderRadius: 4
+                },
+                {
+                    label: 'Ebook',
+                    data: ebookData,
+                    backgroundColor: COLORS.Ebook,
+                    borderColor: COLORS.Ebook,
+                    borderWidth: 2,
+                    borderRadius: 4
+                },
+                {
+                    label: 'Physical',
+                    data: physicalData,
+                    backgroundColor: COLORS.Physical,
+                    borderColor: COLORS.Physical,
+                    borderWidth: 2,
+                    borderRadius: 4
+                }
+            ]
+        },
+        options: {
+            ...commonChartOptions,
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'top'
+                }
+            },
+            scales: {
+                x: {
+                    stacked: true,
+                    ticks: {
+                        font: {
+                            size: 12,
+                            weight: '500'
+                        },
+                        color: '#333'
+                    }
+                },
+                y: {
+                    stacked: true,
+                    beginAtZero: true,
+                    ticks: {
+                        stepSize: 1,
+                        font: {
+                            size: 12,
+                            weight: '500'
+                        },
+                        color: '#333'
+                    }
+                }
+            }
+        }
+    });
+}
+
+// Update Author Gender Chart (horizontal bar)
+function updateAuthorGenderChart(data) {
+    const ctx = document.getElementById('authorGenderChart').getContext('2d');
+
+    if (authorGenderChart) {
+        authorGenderChart.destroy();
+    }
+
+    if (!data) {
+        return;
+    }
+
+    const labels = ['Male', 'Female'];
+    const values = [data.Male || 0, data.Female || 0];
+
+    authorGenderChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Books Read',
+                data: values,
+                backgroundColor: [COLORS.Ebook, COLORS.Physical],
+                borderColor: [COLORS.Ebook, COLORS.Physical],
+                borderWidth: 2,
+                borderRadius: 4
+            }]
+        },
+        options: {
+            ...commonChartOptions,
+            indexAxis: 'y',
+            plugins: {
+                legend: {
+                    display: false
+                }
+            },
+            scales: {
+                x: {
+                    beginAtZero: true,
+                    ticks: {
+                        stepSize: 1,
+                        font: {
+                            size: 12,
+                            weight: '500'
+                        },
+                        color: '#333'
+                    }
+                },
+                y: {
+                    ticks: {
+                        font: {
+                            size: 13,
+                            weight: '500'
+                        },
+                        color: '#333'
+                    }
+                }
+            }
+        }
+    });
+}
+
+// Update Days Read After Publication Chart (horizontal bar with gradient)
+function updateDaysAfterPubChart(data) {
+    const ctx = document.getElementById('daysAfterPubChart').getContext('2d');
+
+    if (daysAfterPubChart) {
+        daysAfterPubChart.destroy();
+    }
+
+    if (!data) {
+        return;
+    }
+
+    const labels = ['<1 year', '1-5 years', '5-20 years', '20-40 years', '40+ years'];
+    const values = labels.map(label => data[label] || 0);
+
+    // Create gradient colors from purple to blue
+    const gradientColors = [
+        '#764ba2',  // Purple (darkest)
+        '#8b5fb8',  // Purple-blue
+        '#9370DB',  // Medium purple
+        '#667eea',  // Blue-purple
+        '#4a90e2'   // Blue (lightest)
+    ];
+
+    daysAfterPubChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Books Read',
+                data: values,
+                backgroundColor: gradientColors,
+                borderColor: gradientColors,
+                borderWidth: 2,
+                borderRadius: 4
+            }]
+        },
+        options: {
+            ...commonChartOptions,
+            indexAxis: 'y',
+            plugins: {
+                legend: {
+                    display: false
+                }
+            },
+            scales: {
+                x: {
+                    beginAtZero: true,
+                    ticks: {
+                        stepSize: 1,
+                        font: {
+                            size: 12,
+                            weight: '500'
+                        },
+                        color: '#333'
+                    }
+                },
+                y: {
+                    ticks: {
+                        font: {
+                            size: 13,
+                            weight: '500'
+                        },
+                        color: '#333'
+                    }
+                }
+            }
+        }
+    });
+}
+
+// Update Days to Finish Chart (horizontal bar with orange gradient)
+function updateDaysToFinishChart(data) {
+    const ctx = document.getElementById('daysToFinishChart').getContext('2d');
+
+    if (daysToFinishChart) {
+        daysToFinishChart.destroy();
+    }
+
+    if (!data) {
+        return;
+    }
+
+    const labels = ['1-2 days', '3-4 days', '5-7 days', '8-14 days', '15-30 days', '31+ days'];
+    const values = labels.map(label => data[label] || 0);
+
+    // Create gradient colors from light orange to dark orange
+    const gradientColors = [
+        '#FFB366',  // Light orange
+        '#FFA64D',  //
+        '#FF9933',  //
+        '#FF8C1A',  //
+        '#FF7F00',  //
+        '#E67300'   // Dark orange
+    ];
+
+    daysToFinishChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Books Read',
+                data: values,
+                backgroundColor: gradientColors,
+                borderColor: gradientColors,
+                borderWidth: 2,
+                borderRadius: 4
+            }]
+        },
+        options: {
+            ...commonChartOptions,
+            indexAxis: 'y',
+            plugins: {
+                legend: {
+                    display: false
+                }
+            },
+            scales: {
+                x: {
+                    beginAtZero: true,
+                    ticks: {
+                        stepSize: 1,
+                        font: {
+                            size: 12,
+                            weight: '500'
+                        },
+                        color: '#333'
+                    }
+                },
+                y: {
+                    ticks: {
+                        font: {
+                            size: 13,
+                            weight: '500'
+                        },
+                        color: '#333'
+                    }
+                }
+            }
+        }
+    });
+}
+
+// Event listeners
+document.getElementById('yearFilter').addEventListener('change', loadStats);
+document.getElementById('monthFilter').addEventListener('change', loadStats);
+
+// Load stats on page load
+document.addEventListener('DOMContentLoaded', async function() {
+    // Load chart preference first, then load stats
+    await loadChartPreference();
+    await loadStats();
+});
+</script>
+{% endblock %}

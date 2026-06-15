@@ -47,6 +47,11 @@ Thumbs.db
 # Runtime data
 backend/data/
 
+# Vendored GreatReads live data — copied DB + covers (provisioned, not committed)
+greatreads/data/
+greatreads/src/greatreads.egg-info/
+greatreads/**/__pycache__/
+
 # Audiobookshelf credentials (token) — never commit
 backend/abs.env
 

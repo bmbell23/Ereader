@@ -1,0 +1,1182 @@
+{% extends "base.html" %}
+
+{% block title %}Library - GreatReads{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <div class="page-header-bookish">
+                <div class="page-header-icon">
+                    <i class="fas fa-book"></i>
+                </div>
+                <div class="page-header-content">
+                    <h1 class="page-header-title mb-0">Library</h1>
+                </div>
+            </div>
+            <button class="btn btn-primary" onclick="addNewBook()">
+                <i class="fas fa-plus me-1"></i>Add Book
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Search Bar -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-body py-2">
+                <div class="d-flex gap-2 align-items-end flex-wrap">
+                    <div class="flex-grow-1" style="min-width: 200px;">
+                        <label for="searchInput" class="form-label mb-1 small">Search</label>
+                        <input type="text" class="form-control" id="searchInput" placeholder="Search books by title, author, or series...">
+                    </div>
+                    <div>
+                        <label for="sortSelect" class="form-label mb-1 small">Sort</label>
+                        <div class="d-flex gap-1">
+                            <select class="form-select" id="sortSelect">
+                                <option value="title">Title</option>
+                                <option value="author">Author</option>
+                                <option value="date_published">Publication Date</option>
+                                <option value="series">Series</option>
+                                <option value="word_count">Word Count</option>
+                                <option value="page_count">Page Count</option>
+                                <option value="read_count">Times Read</option>
+                            </select>
+                            <button class="btn btn-outline-secondary" id="sortDirectionBtn" onclick="toggleSortDirection()" title="Toggle sort direction">
+                                <i class="fas fa-sort-amount-down" id="sortDirectionIcon"></i>
+                            </button>
+                            <button class="btn btn-outline-secondary" onclick="clearFilters()" title="Clear search and filters">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Compact Library Statistics -->
+<div class="row mb-3">
+    <div class="col-12">
+        <div class="card compact-stats">
+            <div class="card-body py-3">
+                <div class="row text-center">
+                    <!-- Status filters (left on mobile) -->
+                    <div class="col-6 col-md-2 order-0">
+                        <div class="d-flex flex-column align-items-center stat-filter"
+                             data-filter-type="read-status"
+                             data-filter-value="all"
+                             onclick="toggleFilter(this)">
+                            <i class="fas fa-book text-primary mb-1"></i>
+                            <small class="text-muted">Total</small>
+                            <strong class="text-primary" id="totalBooks">-</strong>
+                        </div>
+                    </div>
+                    <div class="col-6 col-md-2 order-2 order-md-1">
+                        <div class="d-flex flex-column align-items-center stat-filter"
+                             data-filter-type="read-status"
+                             data-filter-value="read"
+                             onclick="toggleFilter(this)">
+                            <i class="fas fa-check-circle text-success mb-1"></i>
+                            <small class="text-muted">Read</small>
+                            <strong class="text-success" id="readBooks">-</strong>
+                        </div>
+                    </div>
+                    <div class="col-6 col-md-2 order-4 order-md-2">
+                        <div class="d-flex flex-column align-items-center stat-filter"
+                             data-filter-type="read-status"
+                             data-filter-value="unread"
+                             onclick="toggleFilter(this)">
+                            <i class="fas fa-list text-info mb-1"></i>
+                            <small class="text-muted">Unread</small>
+                            <strong class="text-info" id="unreadBooks">-</strong>
+                        </div>
+                    </div>
+                    <!-- Media filters (right on mobile) -->
+                    <div class="col-6 col-md-2 order-1 order-md-3">
+                        <div class="d-flex flex-column align-items-center stat-filter"
+                             data-filter-type="media-type"
+                             data-filter-value="kindle"
+                             onclick="toggleFilter(this)">
+                            <i class="fas fa-tablet-alt mb-1" style="color: #0066CC;"></i>
+                            <small class="text-muted">Kindle</small>
+                            <strong id="kindleCount" style="color: #0066CC;">-</strong>
+                        </div>
+                    </div>
+                    <div class="col-6 col-md-2 order-3 order-md-4">
+                        <div class="d-flex flex-column align-items-center stat-filter"
+                             data-filter-type="media-type"
+                             data-filter-value="physical"
+                             onclick="toggleFilter(this)">
+                            <i class="fas fa-book mb-1" style="color: #6B4BA3;"></i>
+                            <small class="text-muted">Physical</small>
+                            <strong id="physicalCount" style="color: #6B4BA3;">-</strong>
+                        </div>
+                    </div>
+                    <div class="col-6 col-md-2 order-5 order-md-5">
+                        <div class="d-flex flex-column align-items-center stat-filter"
+                             data-filter-type="media-type"
+                             data-filter-value="audio"
+                             onclick="toggleFilter(this)">
+                            <i class="fas fa-headphones mb-1" style="color: #FF6600;"></i>
+                            <small class="text-muted">Audio</small>
+                            <strong id="audioCount" style="color: #FF6600;">-</strong>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Books Grid -->
+<div class="row">
+    <div class="col-12">
+        <!-- Loading State -->
+        <div id="loading-state" class="text-center py-5">
+            <i class="fas fa-spinner fa-spin fa-2x text-primary"></i>
+            <p class="mt-3 text-muted">Loading your library...</p>
+        </div>
+        
+        <!-- Books Container -->
+        <div id="books-container" class="d-none">
+            <div id="books-grid" class="row">
+                <!-- Book cards will be inserted here -->
+            </div>
+        </div>
+        
+        <!-- Empty State -->
+        <div id="empty-state" class="text-center py-5 d-none">
+            <i class="fas fa-search fa-3x text-muted mb-3"></i>
+            <h3 class="text-muted">No books found</h3>
+            <p class="text-muted">Try adjusting your search criteria or add some books to your library.</p>
+        </div>
+    </div>
+</div>
+
+<!-- Add New Book Modal -->
+<div class="modal fade" id="addBookModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="fas fa-plus me-2"></i>Add New Book
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="addBookForm">
+                    <!-- Book Cover Section -->
+                    <div class="row mb-4">
+                        <div class="col-md-12">
+                            <label class="form-label">Book Cover</label>
+                            <div class="d-flex align-items-start gap-3">
+                                <div id="addBookCover" class="book-cover-container" style="width: 120px; height: 180px; position: relative; border: 2px dashed #dee2e6; border-radius: 8px; overflow: hidden; background: #f8f9fa;">
+                                    <img id="addBookCoverImg" src="" alt="Book Cover" style="width: 100%; height: 100%; object-fit: cover; display: none;">
+                                    <div class="book-cover-fallback text-center" style="display: flex; align-items: center; justify-content: center; height: 100%; color: #adb5bd;">
+                                        <i class="fas fa-book fa-3x"></i>
+                                    </div>
+                                </div>
+                                <div class="flex-grow-1">
+                                    <input type="file" class="form-control mb-2" id="addCoverUpload" accept="image/*" onchange="handleAddCoverUpload(event)">
+                                    <small class="text-muted">Upload a cover image (JPG, PNG, etc.)</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-12 mb-3">
+                            <label for="bookTitle" class="form-label">Title <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="bookTitle" name="title" required>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="authorFirst" class="form-label">Author First Name</label>
+                            <input type="text" class="form-control" id="authorFirst" name="author_name_first">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="authorLast" class="form-label">Author Last Name</label>
+                            <input type="text" class="form-control" id="authorLast" name="author_name_second">
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-4 mb-3">
+                            <label for="wordCount" class="form-label">Word Count</label>
+                            <input type="number" class="form-control" id="wordCount" name="word_count" min="0">
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label for="pageCount" class="form-label">Page Count</label>
+                            <input type="number" class="form-control" id="pageCount" name="page_count" min="0">
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label for="datePublished" class="form-label">Date Published</label>
+                            <input type="date" class="form-control" id="datePublished" name="date_published">
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-8 mb-3">
+                            <label for="series" class="form-label">Series</label>
+                            <input type="text" class="form-control" id="series" name="series">
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label for="seriesNumber" class="form-label">Series Number</label>
+                            <input type="number" class="form-control" id="seriesNumber" name="series_number" step="0.1" min="0">
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="genre" class="form-label">Genre</label>
+                            <input type="text" class="form-control" id="genre" name="genre">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="authorGender" class="form-label">Author Gender</label>
+                            <select class="form-select" id="authorGender" name="author_gender">
+                                <option value="">Select...</option>
+                                <option value="M">Male</option>
+                                <option value="F">Female</option>
+                                <option value="NB">Non-binary</option>
+                                <option value="Other">Other</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-12 mb-3">
+                            <label for="isbnId" class="form-label">ISBN</label>
+                            <input type="number" class="form-control" id="isbnId" name="isbn_id">
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="submitNewBook()">Add Book</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Edit Library Item Modal -->
+<div class="modal fade" id="editBookModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="fas fa-edit me-2"></i>Edit Library Item
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <!-- Book Information (Read-Only) -->
+                <div class="card mb-4" style="background-color: #f8f9fa;">
+                    <div class="card-body">
+                        <h6 class="card-title mb-3">
+                            <i class="fas fa-book me-2"></i>Book Information
+                            <small class="text-muted">(Read-only - Edit on Books page)</small>
+                        </h6>
+                        <div class="row">
+                            <div class="col-md-3">
+                                <div id="editBookCover" class="book-cover-container mb-3" style="width: 100%; max-width: 150px; height: 225px; position: relative; border: 2px solid #dee2e6; border-radius: 8px; overflow: hidden; background: #fff;">
+                                    <img id="editBookCoverImg" src="" alt="Book Cover" style="width: 100%; height: 100%; object-fit: cover; display: none;">
+                                    <div class="book-cover-fallback text-center" style="display: flex; align-items: center; justify-content: center; height: 100%; color: #adb5bd;">
+                                        <i class="fas fa-book fa-3x"></i>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-9">
+                                <div class="mb-2">
+                                    <strong>Title:</strong> <span id="displayBookTitle"></span>
+                                </div>
+                                <div class="mb-2">
+                                    <strong>Author:</strong> <span id="displayBookAuthor"></span>
+                                </div>
+                                <div class="mb-2">
+                                    <strong>Universe:</strong> <span id="displayBookUniverse"></span>
+                                </div>
+                                <div class="mb-2">
+                                    <strong>Series:</strong> <span id="displayBookSeries"></span>
+                                </div>
+                                <div class="mb-2">
+                                    <strong>Genre:</strong> <span id="displayBookGenre"></span>
+                                </div>
+                                <div class="mb-2">
+                                    <strong>Pages:</strong> <span id="displayBookPages"></span> |
+                                    <strong>Words:</strong> <span id="displayBookWords"></span>
+                                </div>
+                                <div class="mb-2">
+                                    <strong>Published:</strong> <span id="displayBookPublished"></span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Inventory Form (Editable) -->
+                <form id="editInventoryForm">
+                    <input type="hidden" id="editBookId" name="book_id">
+
+                    <h6 class="mb-3">
+                        <i class="fas fa-warehouse me-2"></i>Your Library Item
+                    </h6>
+
+                    <!-- Formats Owned Section -->
+                    <div class="mb-4">
+                        <label class="form-label fw-bold mb-3">
+                            <i class="fas fa-warehouse me-2"></i>Formats Owned
+                        </label>
+                        <div class="d-flex gap-3 justify-content-center">
+                            <div class="format-type-option">
+                                <input type="checkbox" class="btn-check" id="editOwnedKindle" name="owned_kindle">
+                                <label class="btn format-type-btn format-type-kindle" for="editOwnedKindle">
+                                    <i class="fas fa-tablet-alt fa-2x mb-2"></i>
+                                    <div class="fw-bold small">Kindle</div>
+                                </label>
+                            </div>
+                            <div class="format-type-option">
+                                <input type="checkbox" class="btn-check" id="editOwnedAudio" name="owned_audio">
+                                <label class="btn format-type-btn format-type-audio" for="editOwnedAudio">
+                                    <i class="fas fa-headphones fa-2x mb-2"></i>
+                                    <div class="fw-bold small">Audio</div>
+                                </label>
+                            </div>
+                            <div class="format-type-option">
+                                <input type="checkbox" class="btn-check" id="editOwnedPhysical" name="owned_physical">
+                                <label class="btn format-type-btn format-type-physical" for="editOwnedPhysical">
+                                    <i class="fas fa-book fa-2x mb-2"></i>
+                                    <div class="fw-bold small">Physical</div>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Purchase and Location Info -->
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="editDatePurchased" class="form-label">Date Purchased</label>
+                            <input type="date" class="form-control" id="editDatePurchased" name="date_purchased">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="editLocation" class="form-label">Location</label>
+                            <input type="text" class="form-control" id="editLocation" name="location" placeholder="e.g., Bedroom shelf, Kindle library">
+                        </div>
+                    </div>
+
+                    <!-- ISBN Information -->
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="editIsbn10" class="form-label">ISBN-10</label>
+                            <input type="text" class="form-control" id="editIsbn10" name="isbn_10" maxlength="10" placeholder="e.g., 1234567890">
+                            <small class="text-muted">10-digit ISBN for your specific edition</small>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="editIsbn13" class="form-label">ISBN-13</label>
+                            <input type="text" class="form-control" id="editIsbn13" name="isbn_13" maxlength="13" placeholder="e.g., 9781234567890">
+                            <small class="text-muted">13-digit ISBN for your specific edition</small>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="submitEditInventory()">Save Changes</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<style>
+/* Format Type Selection Buttons */
+.format-type-option {
+    flex: 1;
+    max-width: 120px;
+}
+
+.format-type-btn {
+    width: 100%;
+    height: 85px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    border-width: 2px;
+    transition: all 0.2s;
+    background: white;
+}
+
+.format-type-kindle {
+    border-color: #0066CC;
+    color: #0066CC;
+}
+
+.format-type-kindle i {
+    color: #0066CC;
+}
+
+.format-type-audio {
+    border-color: #FF6600;
+    color: #FF6600;
+}
+
+.format-type-audio i {
+    color: #FF6600;
+}
+
+.format-type-physical {
+    border-color: #6B4BA3;
+    color: #6B4BA3;
+}
+
+.format-type-physical i {
+    color: #6B4BA3;
+}
+
+.format-type-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+
+.btn-check:checked + .format-type-kindle {
+    background-color: #0066CC;
+    border-color: #0066CC;
+    color: white;
+}
+
+.btn-check:checked + .format-type-kindle i {
+    color: white;
+}
+
+.btn-check:checked + .format-type-audio {
+    background-color: #FF6600;
+    border-color: #FF6600;
+    color: white;
+}
+
+.btn-check:checked + .format-type-audio i {
+    color: white;
+}
+
+.btn-check:checked + .format-type-physical {
+    background-color: #6B4BA3;
+    border-color: #6B4BA3;
+    color: white;
+}
+
+.btn-check:checked + .format-type-physical i {
+    color: white;
+}
+</style>
+
+<script>
+let allBooks = [];
+let filteredBooks = [];
+let filterOptions = {};
+
+// Wait for GreatReads to be available
+function waitForGreatReads(callback, maxAttempts = 50) {
+    let attempts = 0;
+    const checkInterval = setInterval(() => {
+        attempts++;
+        if (typeof GreatReads !== 'undefined') {
+            clearInterval(checkInterval);
+            callback();
+        } else if (attempts >= maxAttempts) {
+            clearInterval(checkInterval);
+            console.error('GreatReads library failed to load after', maxAttempts, 'attempts');
+            showErrorState();
+        }
+    }, 100);
+}
+
+// Load library data on page load
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('DOM loaded, GreatReads available:', typeof GreatReads !== 'undefined');
+    console.log('API_BASE would be:', window.location.pathname.split('/').slice(0, 2).join('/') + '/api');
+
+    waitForGreatReads(() => {
+        console.log('GreatReads is now available, loading library data...');
+        loadLibraryData();
+        setupEventListeners();
+    });
+});
+
+function setupEventListeners() {
+    // Search input
+    document.getElementById('searchInput').addEventListener('input', debounce(applyFilters, 300));
+
+    // Sort select (if it exists)
+    const sortSelect = document.getElementById('sortSelect');
+    if (sortSelect) {
+        sortSelect.addEventListener('change', applyFilters);
+    }
+}
+
+async function loadLibraryData() {
+    try {
+        // Check if GreatReads is available
+        if (typeof GreatReads === 'undefined') {
+            throw new Error('GreatReads library not loaded');
+        }
+
+        // Load books and filter options in parallel
+        const [books, stats, filters] = await Promise.all([
+            GreatReads.apiCall('/library/books?limit=1000'),
+            GreatReads.apiCall('/library/stats'),
+            GreatReads.apiCall('/library/filters')
+        ]);
+
+        allBooks = books;
+        filteredBooks = books;
+        filterOptions = filters;
+
+        displayStats(stats);
+        populateFilterOptions(filters);
+        displayBooks(books);
+
+        // Initialize filters from URL parameters
+        initializeFiltersFromURL();
+
+    } catch (error) {
+        console.error('Library data loading failed:', error);
+        showErrorState();
+    }
+}
+
+function displayStats(stats) {
+    document.getElementById('totalBooks').textContent = stats.total_books;
+    document.getElementById('readBooks').textContent = stats.read_books;
+    document.getElementById('unreadBooks').textContent = stats.unread_books;
+
+    // Media ownership counts
+    document.getElementById('kindleCount').textContent = stats.media_owned.Kindle || 0;
+    document.getElementById('physicalCount').textContent = stats.media_owned.Physical || 0;
+    document.getElementById('audioCount').textContent = stats.media_owned.Audio || 0;
+}
+
+function populateFilterOptions(filters) {
+    // No longer needed - dropdowns removed
+    // Keeping function to avoid breaking the loadLibraryData call
+}
+
+function displayBooks(books) {
+    const loadingState = document.getElementById('loading-state');
+    const booksContainer = document.getElementById('books-container');
+    const emptyState = document.getElementById('empty-state');
+    const booksGrid = document.getElementById('books-grid');
+
+    loadingState.classList.add('d-none');
+
+    if (books.length === 0) {
+        emptyState.classList.remove('d-none');
+        booksContainer.classList.add('d-none');
+        return;
+    }
+
+    emptyState.classList.add('d-none');
+    booksContainer.classList.remove('d-none');
+    
+    // Generate book cards
+    let html = '';
+    books.forEach(book => {
+        html += createBookCard(book);
+    });
+    
+    booksGrid.innerHTML = html;
+}
+
+function createBookCard(book) {
+    const readStatus = book.is_read ? 'read' : 'unread';
+    const statusClass = book.is_read ? 'success' : 'secondary';
+    const statusText = book.is_read ? 'Read' : 'Unread';
+    
+    return `
+        <div class="col-md-6 col-lg-4 mb-4">
+            <div class="card h-100 book-card">
+                <div class="card-body">
+                    <div class="d-flex">
+                        <div class="me-3">
+                            <div class="book-cover">
+                                ${book.cover ?
+                                    `<img src="${window.APP_BASE_PATH}/static/covers/${book.id}.jpg" alt="${book.title}" class="book-cover-img" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
+                                     <i class="fas fa-book book-cover-fallback" style="display:none;"></i>` :
+                                    `<i class="fas fa-book book-cover-fallback"></i>`
+                                }
+                            </div>
+                            <div class="d-flex justify-content-between align-items-center mt-2 px-1">
+                                <span class="badge bg-${statusClass}">${statusText}</span>
+                                ${book.read_count > 0 ? `<span class="read-count-badge read-count-${book.read_count}">×${book.read_count}</span>` : ''}
+                            </div>
+                        </div>
+                        <div class="flex-grow-1 d-flex flex-column">
+                            <div class="mb-2">
+                                <h6 class="card-title mb-1">${book.title}</h6>
+                                <p class="text-muted small mb-1">${book.author}</p>
+                            </div>
+
+                            <div class="small text-muted mb-2">
+                                ${book.word_count ? book.word_count.toLocaleString() + ' words' : ''}
+                                ${book.page_count ? (book.word_count ? ' • ' : '') + book.page_count + ' pages' : ''}
+                            </div>
+
+                            ${book.series ? `
+                                <div class="small text-muted mb-2">
+                                    <i class="fas fa-layer-group me-1"></i>
+                                    ${book.universe ? book.universe + ': ' : ''}${book.series}${book.series_number ? ' #' + book.series_number : ''}
+                                </div>
+                            ` : ''}
+
+                            <div class="mt-auto">
+                                <!-- Media badges anchored to bottom -->
+                                ${book.media_owned.length > 0 ? `
+                                    <div class="d-flex gap-1 mb-2 media-badges-container">
+                                        ${book.media_owned.map(media => `<span class="media-badge-large ${media.toLowerCase()}">${media}</span>`).join('')}
+                                    </div>
+                                ` : ''}
+                                <div class="btn-group btn-group-sm w-100">
+                                    <button class="btn btn-outline-primary" onclick="viewBookDetails(${book.id})">
+                                        <i class="fas fa-eye"></i> View
+                                    </button>
+                                    <button class="btn btn-outline-success" onclick="addToTBR(${book.id})">
+                                        <i class="fas fa-plus"></i> TBR
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+// Fuzzy search function - returns true if search term fuzzy matches the text
+function fuzzyMatch(text, search) {
+    if (!text) return false;
+    text = text.toLowerCase();
+    search = search.toLowerCase();
+
+    // Exact substring match gets priority
+    if (text.includes(search)) return true;
+
+    // Fuzzy match: all characters of search must appear in order in text
+    let searchIndex = 0;
+    for (let i = 0; i < text.length && searchIndex < search.length; i++) {
+        if (text[i] === search[searchIndex]) {
+            searchIndex++;
+        }
+    }
+    return searchIndex === search.length;
+}
+
+function applyFilters() {
+    const search = document.getElementById('searchInput').value.toLowerCase().trim();
+    const sortSelect = document.getElementById('sortSelect');
+    const sort = sortSelect ? sortSelect.value : 'title';
+
+    // Reset sort direction to default when sort field changes
+    if (lastSortField !== sort) {
+        sortAscending = getDefaultSortDirection(sort);
+        updateSortDirectionIcon();
+        lastSortField = sort;
+    }
+
+    filteredBooks = allBooks.filter(book => {
+        // Search filter - fuzzy search across title, author, and series
+        if (search) {
+            const matchesTitle = fuzzyMatch(book.title, search);
+            const matchesAuthor = fuzzyMatch(book.author, search);
+            const matchesUniverse = book.universe ? fuzzyMatch(book.universe, search) : false;
+            const matchesSeries = book.series ? fuzzyMatch(book.series, search) : false;
+
+            if (!matchesTitle && !matchesAuthor && !matchesUniverse && !matchesSeries) {
+                return false;
+            }
+        }
+
+        // Status filter (from stat badges)
+        if (activeFilters.readStatus && activeFilters.readStatus !== 'all') {
+            if (activeFilters.readStatus === 'read' && !book.is_read) return false;
+            if (activeFilters.readStatus === 'unread' && book.is_read) return false;
+        }
+
+        // Media filter (from stat badges)
+        if (activeFilters.mediaType) {
+            const mediaOwned = book.media_owned || [];
+            const mediaType = activeFilters.mediaType.charAt(0).toUpperCase() + activeFilters.mediaType.slice(1);
+            if (!mediaOwned.includes(mediaType)) return false;
+        }
+
+        return true;
+    });
+
+    // Apply sorting
+    filteredBooks.sort((a, b) => {
+        let result = 0;
+
+        switch (sort) {
+            case 'author':
+                result = a.author_sorted.localeCompare(b.author_sorted);
+                break;
+            case 'date_published':
+                result = new Date(a.date_published || 0) - new Date(b.date_published || 0);
+                break;
+            case 'series':
+                // Sort by universe, then series, then series_number
+                // Put books with no series at the end
+                if (!a.series && !b.series) {
+                    result = a.title.localeCompare(b.title);
+                } else if (!a.series) {
+                    result = 1; // a goes after b
+                } else if (!b.series) {
+                    result = -1; // a goes before b
+                } else {
+                    // Compare universe first
+                    const aUniverse = a.universe || '';
+                    const bUniverse = b.universe || '';
+                    if (aUniverse !== bUniverse) {
+                        result = aUniverse.localeCompare(bUniverse);
+                    } else if (a.series !== b.series) {
+                        result = a.series.localeCompare(b.series);
+                    } else {
+                        result = (a.series_number || 0) - (b.series_number || 0);
+                    }
+                }
+                break;
+            case 'word_count':
+                result = (a.word_count || 0) - (b.word_count || 0);
+                break;
+            case 'page_count':
+                result = (a.page_count || 0) - (b.page_count || 0);
+                break;
+            case 'read_count':
+                result = (a.read_count || 0) - (b.read_count || 0);
+                break;
+            default: // title
+                result = a.title.localeCompare(b.title);
+                break;
+        }
+
+        // Apply sort direction
+        return sortAscending ? result : -result;
+    });
+
+    displayBooks(filteredBooks);
+}
+
+function clearFilters() {
+    // Clear search input
+    document.getElementById('searchInput').value = '';
+
+    // Clear stat badge filters
+    activeFilters.readStatus = null;
+    activeFilters.mediaType = null;
+
+    // Remove active class from all stat badges
+    document.querySelectorAll('.stat-filter').forEach(el => {
+        el.classList.remove('active');
+    });
+
+    applyFilters();
+}
+
+async function viewBookDetails(bookId) {
+    try {
+        const book = await GreatReads.apiCall(`/books/${bookId}`);
+        showEditBookModal(book);
+    } catch (error) {
+        console.error('Failed to load book details:', error);
+    }
+}
+
+async function addToTBR(bookId) {
+    try {
+        // Create a new reading for this book
+        const today = new Date().toISOString().split('T')[0];
+        const readingData = {
+            book_id: bookId,
+            date_started: null,
+            date_finished_actual: null
+        };
+
+        await GreatReads.apiCall('/readings/', {
+            method: 'POST',
+            data: readingData
+        });
+
+        GreatReads.showToast('Book added to TBR!', 'success');
+    } catch (error) {
+        console.error('Failed to add to TBR:', error);
+    }
+}
+
+// Global variables to store uploaded cover images
+let newBookCoverFile = null;
+let editBookCoverFile = null;
+
+function handleAddCoverUpload(event) {
+    const file = event.target.files[0];
+    if (file) {
+        newBookCoverFile = file;
+
+        // Preview the image
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            const img = document.getElementById('addBookCoverImg');
+            const fallback = document.querySelector('#addBookCover .book-cover-fallback');
+
+            img.src = e.target.result;
+            img.style.display = 'block';
+            fallback.style.display = 'none';
+        };
+        reader.readAsDataURL(file);
+    }
+}
+
+function handleEditCoverUpload(event) {
+    const file = event.target.files[0];
+    if (file) {
+        editBookCoverFile = file;
+
+        // Preview the image
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            const img = document.getElementById('editBookCoverImg');
+            const fallback = document.querySelector('#editBookCover .book-cover-fallback');
+
+            img.src = e.target.result;
+            img.style.display = 'block';
+            fallback.style.display = 'none';
+        };
+        reader.readAsDataURL(file);
+    }
+}
+
+async function uploadCoverImage(bookId, file) {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+        const response = await fetch(`/greatreads/api/books/${bookId}/cover`, {
+            method: 'POST',
+            body: formData
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to upload cover image');
+        }
+
+        return await response.json();
+    } catch (error) {
+        console.error('Error uploading cover:', error);
+        GreatReads.showToast('Failed to upload cover image', 'error');
+        throw error;
+    }
+}
+
+function addNewBook() {
+    // Clear the form
+    document.getElementById('addBookForm').reset();
+    newBookCoverFile = null;
+
+    // Reset cover preview
+    const img = document.getElementById('addBookCoverImg');
+    const fallback = document.querySelector('#addBookCover .book-cover-fallback');
+    img.style.display = 'none';
+    fallback.style.display = 'flex';
+
+    // Show the modal
+    const modal = new bootstrap.Modal(document.getElementById('addBookModal'));
+    modal.show();
+}
+
+async function submitNewBook() {
+    const form = document.getElementById('addBookForm');
+
+    if (!form.checkValidity()) {
+        form.reportValidity();
+        return;
+    }
+
+    const formData = new FormData(form);
+    const bookData = {
+        title: formData.get('title'),
+        author_name_first: formData.get('author_name_first') || null,
+        author_name_second: formData.get('author_name_second') || null,
+        author_gender: formData.get('author_gender') || null,
+        word_count: formData.get('word_count') ? parseInt(formData.get('word_count')) : null,
+        page_count: formData.get('page_count') ? parseInt(formData.get('page_count')) : null,
+        date_published: formData.get('date_published') || null,
+        universe: formData.get('universe') || null,
+        series: formData.get('series') || null,
+        series_number: formData.get('series_number') ? parseFloat(formData.get('series_number')) : null,
+        genre: formData.get('genre') || null,
+        isbn_id: formData.get('isbn_id') ? parseInt(formData.get('isbn_id')) : null,
+        cover: newBookCoverFile !== null
+    };
+
+    try {
+        const newBook = await GreatReads.apiCall('/books/', {
+            method: 'POST',
+            data: bookData
+        });
+
+        // Upload cover image if provided
+        if (newBookCoverFile) {
+            await uploadCoverImage(newBook.id, newBookCoverFile);
+        }
+
+        GreatReads.showToast('Book added successfully!', 'success');
+
+        // Close modal
+        const modal = bootstrap.Modal.getInstance(document.getElementById('addBookModal'));
+        modal.hide();
+
+        // Reload library data
+        await loadLibraryData();
+    } catch (error) {
+        console.error('Failed to add book:', error);
+    }
+}
+
+function showEditBookModal(book) {
+    // Store book ID
+    document.getElementById('editBookId').value = book.id;
+
+    // Populate read-only book information display
+    document.getElementById('displayBookTitle').textContent = book.title || 'N/A';
+
+    const authorName = [book.author_name_first, book.author_name_second]
+        .filter(n => n)
+        .join(' ') || 'N/A';
+    document.getElementById('displayBookAuthor').textContent = authorName;
+
+    document.getElementById('displayBookUniverse').textContent = book.universe || 'N/A';
+
+    let seriesText = book.series || 'N/A';
+    if (book.series && book.series_number) {
+        seriesText = `${book.series} #${book.series_number}`;
+    }
+    document.getElementById('displayBookSeries').textContent = seriesText;
+
+    document.getElementById('displayBookGenre').textContent = book.genre || 'N/A';
+    document.getElementById('displayBookPages').textContent = book.page_count || 'N/A';
+    document.getElementById('displayBookWords').textContent = book.word_count ? book.word_count.toLocaleString() : 'N/A';
+    document.getElementById('displayBookPublished').textContent = book.date_published || 'N/A';
+
+    // Set book cover image
+    const coverImg = document.getElementById('editBookCoverImg');
+    const fallbackIcon = document.querySelector('#editBookCover .book-cover-fallback');
+
+    if (book.cover) {
+        // Add cache-busting parameter to force reload
+        coverImg.src = `${window.APP_BASE_PATH}/static/covers/${book.id}.jpg?v=${Date.now()}`;
+        coverImg.style.display = 'block';
+        fallbackIcon.style.display = 'none';
+
+        // Handle image load error
+        coverImg.onerror = function() {
+            this.style.display = 'none';
+            fallbackIcon.style.display = 'flex';
+        };
+    } else {
+        // No cover available
+        coverImg.style.display = 'none';
+        fallbackIcon.style.display = 'flex';
+    }
+
+    // Populate inventory form fields
+    const inventory = book.inventory && book.inventory.length > 0 ? book.inventory[0] : {};
+    document.getElementById('editOwnedPhysical').checked = inventory.owned_physical || false;
+    document.getElementById('editOwnedKindle').checked = inventory.owned_kindle || false;
+    document.getElementById('editOwnedAudio').checked = inventory.owned_audio || false;
+    document.getElementById('editDatePurchased').value = inventory.date_purchased || '';
+    document.getElementById('editLocation').value = inventory.location || '';
+    document.getElementById('editIsbn10').value = inventory.isbn_10 || '';
+    document.getElementById('editIsbn13').value = inventory.isbn_13 || '';
+
+    // Show the modal
+    const modal = new bootstrap.Modal(document.getElementById('editBookModal'));
+    modal.show();
+}
+
+async function submitEditInventory() {
+    const form = document.getElementById('editInventoryForm');
+
+    if (!form.checkValidity()) {
+        form.reportValidity();
+        return;
+    }
+
+    const formData = new FormData(form);
+    const bookId = formData.get('book_id');
+
+    // Prepare inventory data
+    const inventoryData = {
+        owned_physical: document.getElementById('editOwnedPhysical').checked,
+        owned_kindle: document.getElementById('editOwnedKindle').checked,
+        owned_audio: document.getElementById('editOwnedAudio').checked,
+        date_purchased: formData.get('date_purchased') || null,
+        location: formData.get('location') || null,
+        isbn_10: formData.get('isbn_10') || null,
+        isbn_13: formData.get('isbn_13') || null
+    };
+
+    try {
+        // Update inventory data (create or update)
+        await GreatReads.apiCall(`/inventory/book/${bookId}`, {
+            method: 'PUT',
+            data: inventoryData
+        });
+
+        GreatReads.showToast('Library item updated successfully!', 'success');
+
+        // Close modal
+        const modal = bootstrap.Modal.getInstance(document.getElementById('editBookModal'));
+        modal.hide();
+
+        // Reload library data
+        await loadLibraryData();
+    } catch (error) {
+        console.error('Failed to update library item:', error);
+        GreatReads.showToast('Failed to update library item', 'error');
+    }
+}
+
+function showErrorState() {
+    document.getElementById('loading-state').classList.add('d-none');
+    document.getElementById('books-container').innerHTML = `
+        <div class="alert alert-danger text-center">
+            <i class="fas fa-exclamation-triangle me-2"></i>
+            Error loading your library. Please try refreshing the page.
+        </div>
+    `;
+    document.getElementById('books-container').classList.remove('d-none');
+}
+
+// Debounce function for search input
+function debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+        const later = () => {
+            clearTimeout(timeout);
+            func(...args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+    };
+}
+
+// Filter functionality for library stats
+let activeFilters = {
+    readStatus: null, // 'read', 'unread', or 'all'
+    mediaType: null   // 'kindle', 'physical', or 'audio'
+};
+
+// Sort direction state
+let sortAscending = true;
+let lastSortField = null;
+
+function getDefaultSortDirection(sortField) {
+    // Fields that should default to descending (high to low)
+    const descendingDefaults = ['word_count', 'page_count', 'read_count', 'date_published'];
+    return !descendingDefaults.includes(sortField);
+}
+
+function updateSortDirectionIcon() {
+    const icon = document.getElementById('sortDirectionIcon');
+    if (sortAscending) {
+        icon.className = 'fas fa-sort-amount-down';
+    } else {
+        icon.className = 'fas fa-sort-amount-up';
+    }
+}
+
+function toggleSortDirection() {
+    sortAscending = !sortAscending;
+    updateSortDirectionIcon();
+
+    // Re-apply filters with new sort direction
+    applyFilters();
+}
+
+function toggleFilter(element) {
+    const filterType = element.dataset.filterType;
+    const filterValue = element.dataset.filterValue;
+
+    // Convert hyphenated filter type to camelCase for activeFilters object
+    const filterKey = filterType === 'read-status' ? 'readStatus' :
+                      filterType === 'media-type' ? 'mediaType' : filterType;
+
+    // Toggle logic
+    if (activeFilters[filterKey] === filterValue) {
+        // Clicking the same filter again deactivates it
+        activeFilters[filterKey] = null;
+        element.classList.remove('active');
+    } else {
+        // Remove active from siblings
+        document.querySelectorAll(`[data-filter-type="${filterType}"]`).forEach(el => {
+            el.classList.remove('active');
+        });
+        activeFilters[filterKey] = filterValue;
+        element.classList.add('active');
+    }
+
+    filterBooks();
+}
+
+function filterBooks() {
+    if (!allBooks) return;
+
+    // Use the unified applyFilters function
+    applyFilters();
+
+    // Update URL to reflect filters (optional)
+    updateURL();
+}
+
+function updateURL() {
+    const params = new URLSearchParams();
+    if (activeFilters.readStatus && activeFilters.readStatus !== 'all') {
+        params.set('status', activeFilters.readStatus);
+    }
+    if (activeFilters.mediaType) {
+        params.set('media', activeFilters.mediaType);
+    }
+
+    const newURL = params.toString() ? `${window.location.pathname}?${params.toString()}` : window.location.pathname;
+    window.history.replaceState({}, '', newURL);
+}
+
+// Initialize filters from URL on page load
+function initializeFiltersFromURL() {
+    const params = new URLSearchParams(window.location.search);
+    const status = params.get('status');
+    const media = params.get('media');
+
+    if (status && ['read', 'unread', 'all'].includes(status)) {
+        const statusElement = document.querySelector(`[data-filter-value="${status}"]`);
+        if (statusElement) {
+            activeFilters.readStatus = status;
+            statusElement.classList.add('active');
+        }
+    }
+
+    if (media && ['kindle', 'physical', 'audio'].includes(media)) {
+        const mediaElement = document.querySelector(`[data-filter-value="${media}"]`);
+        if (mediaElement) {
+            activeFilters.mediaType = media;
+            mediaElement.classList.add('active');
+        }
+    }
+}
+</script>
+{% endblock %}

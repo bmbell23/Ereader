@@ -1,0 +1,989 @@
+{% extends "base.html" %}
+
+{% block title %}Bookshelves - GreatReads{% endblock %}
+
+{% block extra_head %}
+<style>
+/* ── Page Layout ── */
+.bookshelf-tabs { gap: 6px; }
+.bookshelf-tab-btn {
+    min-width: 52px; font-weight: 600; letter-spacing: .04em;
+}
+.bs-tab-count {
+    display: inline-block; font-size: .68rem; font-weight: 700;
+    padding: 1px 6px; margin-left: 3px; border-radius: 9px;
+    background: rgba(0,0,0,.12); letter-spacing: 0;
+}
+.bs-tab-wrapper { position: relative; display: inline-flex; }
+.bs-rename-btn {
+    position: absolute; top: -6px; right: -6px;
+    width: 18px; height: 18px; padding: 0; border-radius: 50%;
+    font-size: .55rem; line-height: 1; cursor: pointer;
+    background: #fff; border: 1px solid #adb5bd; color: #6c757d;
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0; transition: opacity .15s; z-index: 5;
+}
+.bs-tab-wrapper:hover .bs-rename-btn { opacity: 1; }
+
+/* ── Shelf Row ── */
+.shelf-row-wrapper { margin-bottom: 0.4rem; }
+.shelf-row {
+    display: flex; flex-wrap: wrap; gap: 6px;
+    /* Light wood: subtle horizontal grain over a warm cream gradient */
+    background-color: #ead9c0;
+    background-image:
+        repeating-linear-gradient(0deg,
+            rgba(150,110,70,.055) 0px, rgba(150,110,70,.055) 1px,
+            transparent 1px, transparent 5px),
+        linear-gradient(180deg, #f3e6d2 0%, #e4d2b4 100%);
+    border-radius: 6px;
+    padding: 10px 10px 6px 32px; min-height: 58px;
+    border: 1px solid #e0cfb2;
+    border-bottom: 5px solid #c9ad84;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.45);
+    transition: background-color .15s, box-shadow .15s;
+    position: relative;
+}
+.shelf-row.drag-over {
+    outline: 1px solid #d39e00;
+    outline-offset: 1px;
+}
+.shelf-drop-zone {
+    position: absolute; inset: 0; pointer-events: none;
+}
+
+/* ── Book Spine Cards ── */
+.book-spine {
+    display: flex; flex-direction: column; justify-content: flex-end;
+    width: 34px; min-height: 42px; border-radius: 3px 3px 0 0;
+    cursor: grab; user-select: none; position: relative;
+    background: #6c757d; transition: transform .12s, box-shadow .12s;
+    flex-shrink: 0;
+}
+.book-spine:hover { transform: translateY(-4px); box-shadow: 0 4px 12px rgba(0,0,0,.4); }
+.book-spine.dragging { opacity: .35; transform: scale(.96); cursor: grabbing; }
+
+/* ── Drop insertion indicator ── */
+.drop-indicator {
+    width: 4px; min-height: 48px; flex-shrink: 0;
+    border-radius: 2px;
+    background: repeating-linear-gradient(
+        to bottom,
+        #d39e00 0px, #d39e00 5px,
+        transparent 5px, transparent 9px
+    );
+    box-shadow: 0 0 6px rgba(211,158,0,.55);
+    pointer-events: none;
+    align-self: stretch;
+}
+.book-spine img.spine-cover {
+    width: 100%; height: 100%; object-fit: cover;
+    border-radius: 3px 3px 0 0; display: block;
+}
+.book-spine .spine-no-cover {
+    width: 34px; height: 50px; border-radius: 3px 3px 0 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: .5rem; font-weight: 700; text-align: center;
+    color: rgba(255,255,255,.85); padding: 2px; line-height: 1.1;
+    word-break: break-word; overflow: hidden;
+}
+.book-spine .spine-pos {
+    font-size: .55rem; text-align: center; color: rgba(255,255,255,.5);
+    padding-bottom: 2px; background: rgba(0,0,0,.3);
+}
+/* Colour palette for spines without cover */
+.spine-color-0{background:#6c5ce7;} .spine-color-1{background:#0984e3;}
+.spine-color-2{background:#00b894;} .spine-color-3{background:#e17055;}
+.spine-color-4{background:#fdcb6e;color:#333;} .spine-color-5{background:#d63031;}
+.spine-color-6{background:#6c5ce7;} .spine-color-7{background:#a29bfe;}
+.spine-color-8{background:#55efc4;color:#333;} .spine-color-9{background:#fd79a8;}
+
+/* ── Tooltip on hover ── */
+.book-spine .spine-tooltip {
+    display: none; position: absolute; bottom: calc(100% + 6px); left: 50%;
+    transform: translateX(-50%); background: rgba(0,0,0,.88);
+    color: #fff; font-size: .72rem; white-space: nowrap;
+    padding: 5px 9px; border-radius: 4px; z-index: 100;
+    pointer-events: none; text-align: center; line-height: 1.3;
+}
+.book-spine .spine-tooltip .tt-title { font-weight: 600; }
+.book-spine .spine-tooltip .tt-author { opacity: .85; }
+.book-spine .spine-tooltip .tt-series { font-style: italic; opacity: .7; font-size: .66rem; }
+.book-spine:hover .spine-tooltip { display: block; }
+
+/* ── Unlocated Panel ── */
+.unlocated-card { background: #fff8f0; border: 1px solid #f0d9c0; }
+.unlocated-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 8px; border-radius: 6px; background: #fff;
+    border: 1px solid #dee2e6; margin-bottom: 6px;
+}
+.unlocated-item .book-title { font-size: .85rem; font-weight: 600; flex: 1; }
+.unlocated-item .book-author { font-size: .75rem; color: #6c757d; }
+
+/* ── Shelf number (left wall) and controls (top-right, shown on hover) ── */
+.shelf-num-badge {
+    position: absolute; left: 0; top: 0; bottom: 5px; width: 26px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: .8rem; font-weight: 800; color: rgba(100,68,30,.45);
+    background: rgba(150,110,70,.10);
+    border-radius: 6px 0 0 0;
+    border-right: 1px solid rgba(150,110,70,.18);
+    pointer-events: none; z-index: 1;
+}
+.shelf-count-badge {
+    align-self: center; flex-shrink: 0;
+    font-size: .62rem; font-weight: 700; line-height: 1;
+    color: rgba(100,68,30,.6); background: rgba(255,255,255,.55);
+    border: 1px solid rgba(150,110,70,.25); border-radius: 10px;
+    padding: 2px 6px; cursor: default;
+}
+.shelf-controls {
+    position: absolute; top: 4px; right: 4px;
+    display: flex; gap: 3px; z-index: 10;
+    opacity: 0; transition: opacity .15s;
+}
+.shelf-row:hover .shelf-controls,
+.shelf-row.drag-over .shelf-controls { opacity: 1; }
+.shelf-controls .btn { padding: 1px 5px; font-size: .65rem; line-height: 1.4; }
+
+/* ── Add Book modal ── */
+.add-book-results { max-height: 55vh; overflow-y: auto; }
+.add-book-result { display: flex; align-items: center; gap: .5rem; padding: .4rem .25rem; border-bottom: 1px solid #eee; }
+.add-book-result:last-child { border-bottom: none; }
+.add-book-result .book-title { font-size: .85rem; font-weight: 600; }
+.add-book-result .book-author { font-size: .75rem; color: #6c757d; }
+.series-group { border: 1px solid #e3e3e3; border-radius: .4rem; margin-bottom: .6rem; overflow: hidden; }
+.series-group-header {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: .5rem; padding: .4rem .6rem; background: #f4efe6;
+    border-bottom: 1px solid #e3e3e3;
+}
+.series-group-name { font-size: .82rem; font-weight: 700; color: #5a4632; }
+.series-group .add-book-result { padding-left: .6rem; padding-right: .6rem; }
+.add-book-result .series-num { font-size: .7rem; }
+
+/* ── Assign Modal ── */
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row">
+  <div class="col-12">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <div class="page-header-bookish">
+        <div class="page-header-icon"><i class="fas fa-th-large"></i></div>
+        <div class="page-header-content">
+          <h1 class="page-header-title mb-0">Bookshelves</h1>
+        </div>
+      </div>
+      <a href="{{ url_for('library_page') }}" class="btn btn-outline-secondary btn-sm">
+        <i class="fas fa-arrow-left me-1"></i>Library
+      </a>
+    </div>
+  </div>
+</div>
+
+<!-- Bookshelf Tab Selector -->
+<div class="row mb-3">
+  <div class="col-12">
+    <div class="d-flex align-items-center gap-3 flex-wrap">
+      <span class="fw-semibold text-muted small">Bookshelf:</span>
+      <div id="bookshelf-tabs" class="d-flex bookshelf-tabs flex-wrap">
+        <div class="spinner-border spinner-border-sm text-secondary" role="status"></div>
+      </div>
+      <div class="d-flex gap-2 ms-auto">
+        <button class="btn btn-sm btn-outline-success" onclick="openAddBookshelf()" title="Add a new bookshelf">
+          <i class="fas fa-plus me-1"></i>Add Bookshelf
+        </button>
+        <button class="btn btn-sm btn-outline-primary d-none" id="add-shelf-btn" onclick="addShelfToCurrentBookshelf()" title="Add a shelf to the current bookshelf">
+          <i class="fas fa-layer-group me-1"></i>Add Shelf
+        </button>
+        <button class="btn btn-sm btn-outline-warning" onclick="toggleUnlocated()">
+          <i class="fas fa-map-marker-slash me-1"></i>
+          Unlocated (<span id="unlocated-count">…</span>)
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Unlocated Books Panel -->
+<div id="unlocated-panel" class="row mb-3 d-none">
+  <div class="col-12">
+    <div class="card unlocated-card">
+      <div class="card-header d-flex justify-content-between align-items-center py-2">
+        <strong><i class="fas fa-map-marker-slash me-2 text-warning"></i>Books Missing Location</strong>
+        <button class="btn btn-sm btn-outline-secondary" onclick="toggleUnlocated()">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <div class="card-body" id="unlocated-list">
+        <div class="text-center text-muted py-3"><i class="fas fa-spinner fa-spin"></i></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Main Shelf Display -->
+<div id="shelf-display">
+  <div class="text-center py-5 text-muted">
+    <i class="fas fa-book fa-2x mb-3"></i>
+    <p>Select a bookshelf above to view its contents.</p>
+  </div>
+</div>
+
+<!-- Book Detail Modal (reuse library approach) -->
+<div id="book-detail-placeholder"></div>
+
+<!-- Assign Location Modal -->
+<div class="modal fade" id="assignModal" tabindex="-1">
+  <div class="modal-dialog modal-sm">
+    <div class="modal-content">
+      <div class="modal-header py-2">
+        <h6 class="modal-title">Assign Location</h6>
+        <button type="button" class="btn-close btn-sm" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-2" id="assign-book-title" style="font-size:.85rem;font-weight:600;"></div>
+        <div class="mb-2">
+          <label class="form-label small mb-1">Bookshelf</label>
+          <select class="form-select form-select-sm" id="assign-bookshelf"></select>
+        </div>
+        <div class="mb-2">
+          <label class="form-label small mb-1">Shelf #</label>
+          <input type="number" class="form-control form-control-sm" id="assign-shelf" min="1" value="1">
+        </div>
+        <div class="mb-2">
+          <label class="form-label small mb-1">Position</label>
+          <input type="number" class="form-control form-control-sm" id="assign-position" min="1" value="1">
+        </div>
+      </div>
+      <div class="modal-footer py-2">
+        <button class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-sm btn-primary" onclick="saveAssignment()">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Add Bookshelf Modal -->
+<div class="modal fade" id="addBookshelfModal" tabindex="-1">
+  <div class="modal-dialog modal-sm">
+    <div class="modal-content">
+      <div class="modal-header py-2">
+        <h6 class="modal-title"><i class="fas fa-plus me-2 text-success"></i>New Bookshelf</h6>
+        <button type="button" class="btn-close btn-sm" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <label class="form-label small mb-1">Bookshelf name</label>
+        <input type="text" class="form-control form-control-sm" id="new-bookshelf-label"
+               maxlength="20" placeholder="e.g. Living Room, Office…" autocomplete="off">
+        <div class="form-text">A new shelf 1 will be created automatically.</div>
+      </div>
+      <div class="modal-footer py-2">
+        <button class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-sm btn-success" onclick="saveNewBookshelf()">Create</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Rename Bookshelf Modal -->
+<div class="modal fade" id="renameBookshelfModal" tabindex="-1">
+  <div class="modal-dialog modal-sm">
+    <div class="modal-content">
+      <div class="modal-header py-2">
+        <h6 class="modal-title"><i class="fas fa-pencil-alt me-2"></i>Rename Bookshelf</h6>
+        <button type="button" class="btn-close btn-sm" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="text" class="form-control form-control-sm" id="rename-bs-input"
+               maxlength="20" placeholder="New label…" autocomplete="off">
+      </div>
+      <div class="modal-footer py-2">
+        <button class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-sm btn-primary" onclick="saveRenameBookshelf()">Rename</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Add Book To Shelf Modal -->
+<div class="modal fade" id="addBookModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header py-2">
+        <h6 class="modal-title"><i class="fas fa-plus me-2 text-success"></i>Add Book to <span id="add-book-target"></span></h6>
+        <button type="button" class="btn-close btn-sm" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="text" class="form-control form-control-sm mb-2" id="add-book-search"
+               placeholder="Search by title, author, or series…" autocomplete="off">
+        <div class="form-text mb-2">Add a single book, or use “Add all” to drop a whole series onto this shelf.</div>
+        <div id="add-book-results" class="add-book-results">
+          <div class="text-center text-muted py-3 small">Start typing to search your physical books.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+/* ===================================================
+   Bookshelves page — state
+   =================================================== */
+let allBookshelves = [];
+let currentBookshelf = null;
+let currentData = null;          // {bookshelf, shelves:[{shelf, books:[]}]}
+let unlocatedBooks = [];
+let pendingAssignInvId = null;
+let addBookTargetShelf = null;
+let addBookSearchTimer = null;
+let addBookSeriesList = [];   // series names in current search results (index = onclick arg)
+
+// drag state
+let dragSrcInvId = null;
+let dragSrcBookshelf = null;
+let dragSrcShelf = null;
+
+/* ===================================================
+   Initialise
+   =================================================== */
+document.addEventListener('DOMContentLoaded', async () => {
+    const addSearch = document.getElementById('add-book-search');
+    if (addSearch) {
+        addSearch.addEventListener('input', () => {
+            clearTimeout(addBookSearchTimer);
+            addBookSearchTimer = setTimeout(runAddBookSearch, 250);
+        });
+    }
+    await Promise.all([loadBookshelves(), loadUnlocated()]);
+});
+
+let _tabsSortable = null;
+
+async function loadBookshelves(keepCurrent = false) {
+    const data = await GreatReads.apiCall('/bookshelves/');
+    allBookshelves = data.bookshelves || [];
+    const counts = data.counts || {};
+
+    const tabsEl = document.getElementById('bookshelf-tabs');
+    tabsEl.innerHTML = '';
+    for (const bs of allBookshelves) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'bs-tab-wrapper';
+        wrapper.dataset.bs = bs;
+
+        const btn = document.createElement('button');
+        btn.className = 'btn btn-sm btn-outline-secondary bookshelf-tab-btn';
+        const n = counts[bs] || 0;
+        btn.innerHTML = `${escHtml(bs)} <span class="bs-tab-count">${n}</span>`;
+        btn.title = `${n} book${n === 1 ? '' : 's'} on ${bs}`;
+        btn.id = `tab-${bs}`;
+        btn.dataset.bs = bs;
+        btn.onclick = () => selectBookshelf(bs);
+
+        const pencil = document.createElement('button');
+        pencil.className = 'bs-rename-btn';
+        pencil.title = 'Rename bookshelf';
+        pencil.innerHTML = '<i class="fas fa-pencil-alt"></i>';
+        pencil.onclick = (e) => { e.stopPropagation(); openRenameBookshelf(bs); };
+
+        wrapper.appendChild(btn);
+        wrapper.appendChild(pencil);
+        tabsEl.appendChild(wrapper);
+    }
+
+    // Destroy and recreate SortableJS so it picks up new DOM
+    if (_tabsSortable) { _tabsSortable.destroy(); _tabsSortable = null; }
+    _tabsSortable = new Sortable(tabsEl, {
+        animation: 150,
+        ghostClass: 'sortable-ghost',
+        chosenClass: 'sortable-chosen',
+        onEnd: async () => {
+            const newOrder = [...tabsEl.querySelectorAll('.bs-tab-wrapper')].map(w => w.dataset.bs);
+            allBookshelves = newOrder;
+            try {
+                await GreatReads.apiCall('/bookshelves/reorder-bookshelves', {
+                    method: 'PUT',
+                    data: { order: newOrder }
+                });
+            } catch (e) {
+                showToast('Failed to save bookshelf order.', 'danger');
+            }
+        }
+    });
+
+    // Populate assign modal dropdown
+    const sel = document.getElementById('assign-bookshelf');
+    sel.innerHTML = allBookshelves.map(bs => `<option>${bs}</option>`).join('');
+
+    // Auto-select: keep current if requested, otherwise first
+    const target = (keepCurrent && currentBookshelf && allBookshelves.includes(currentBookshelf))
+        ? currentBookshelf
+        : allBookshelves[0];
+    if (target) selectBookshelf(target);
+}
+
+/* ===================================================
+   Rename bookshelf
+   =================================================== */
+let renamingBookshelf = null;
+
+function openRenameBookshelf(label) {
+    renamingBookshelf = label;
+    const input = document.getElementById('rename-bs-input');
+    input.value = label;
+    new bootstrap.Modal(document.getElementById('renameBookshelfModal')).show();
+    document.getElementById('renameBookshelfModal').addEventListener('shown.bs.modal', () => {
+        input.select();
+    }, { once: true });
+}
+
+async function saveRenameBookshelf() {
+    const newLabel = document.getElementById('rename-bs-input').value.trim();
+    if (!newLabel || !renamingBookshelf) return;
+    if (newLabel === renamingBookshelf) {
+        bootstrap.Modal.getInstance(document.getElementById('renameBookshelfModal')).hide();
+        return;
+    }
+    try {
+        await GreatReads.apiCall(`/bookshelves/bookshelf/${renamingBookshelf}/rename`, {
+            method: 'PUT',
+            data: { new_label: newLabel }
+        });
+        bootstrap.Modal.getInstance(document.getElementById('renameBookshelfModal')).hide();
+        showToast(`Renamed to ${newLabel}`, 'success');
+        if (currentBookshelf === renamingBookshelf) currentBookshelf = newLabel;
+        renamingBookshelf = null;
+        await loadBookshelves(true);
+    } catch (err) {
+        const msg = err?.response?.data?.detail || 'Failed to rename bookshelf.';
+        showToast(msg, 'danger');
+    }
+}
+
+async function loadUnlocated() {
+    unlocatedBooks = await GreatReads.apiCall('/bookshelves/unlocated');
+    document.getElementById('unlocated-count').textContent = unlocatedBooks.length;
+    renderUnlocated();
+}
+
+/* ===================================================
+   Bookshelf selection
+   =================================================== */
+async function selectBookshelf(bs, { preserveScroll = false } = {}) {
+    currentBookshelf = bs;
+    // Highlight active tab
+    document.querySelectorAll('.bookshelf-tab-btn').forEach(b => {
+        b.classList.toggle('btn-secondary', b.dataset.bs === bs);
+        b.classList.toggle('btn-outline-secondary', b.dataset.bs !== bs);
+    });
+    // Show the Add Shelf button now that a bookshelf is selected
+    document.getElementById('add-shelf-btn').classList.remove('d-none');
+    // Capture scroll before wiping content (only when doing a silent refresh)
+    const savedScroll = preserveScroll ? window.scrollY : null;
+    // Load data
+    const display = document.getElementById('shelf-display');
+    display.innerHTML = '<div class="text-center py-4"><i class="fas fa-spinner fa-spin fa-2x text-secondary"></i></div>';
+    try {
+        currentData = await GreatReads.apiCall(`/bookshelves/${bs}`);
+        renderShelves();
+        updateTabCount(bs, currentData.shelves.reduce((sum, s) => sum + s.books.length, 0));
+        if (savedScroll !== null) window.scrollTo({ top: savedScroll, behavior: 'instant' });
+    } catch (e) {
+        display.innerHTML = '<div class="alert alert-danger">Failed to load bookshelf data.</div>';
+    }
+}
+
+function updateTabCount(bs, count) {
+    const btn = document.getElementById(`tab-${bs}`);
+    if (!btn) return;
+    const badge = btn.querySelector('.bs-tab-count');
+    if (badge) badge.textContent = count;
+    btn.title = `${count} book${count === 1 ? '' : 's'} on ${bs}`;
+}
+
+/* ===================================================
+   Render shelves
+   =================================================== */
+function renderShelves() {
+    const display = document.getElementById('shelf-display');
+    if (!currentData || !currentData.shelves.length) {
+        display.innerHTML = '<div class="text-muted text-center py-4">No shelves yet — click <strong>Add Shelf</strong> to create one.</div>';
+        return;
+    }
+    const total = currentData.shelves.length;
+    display.innerHTML = currentData.shelves.map((s, i) => renderShelfRow(s, i, total)).join('');
+    // Attach drag events
+    display.querySelectorAll('.book-spine').forEach(attachDrag);
+    display.querySelectorAll('.shelf-row').forEach(attachShelfDrop);
+}
+
+function spineColor(title) {
+    let h = 0;
+    for (const c of (title || '')) h = (h * 31 + c.charCodeAt(0)) & 0xffff;
+    return `spine-color-${h % 10}`;
+}
+
+function renderShelfRow(shelfData, idx, total) {
+    const books = shelfData.books.map(b => renderSpine(b)).join('');
+    const upBtn = idx > 0
+        ? `<button class="btn btn-sm btn-outline-secondary" onclick="moveShelf(${idx},-1)" title="Move shelf up"><i class="fas fa-arrow-up"></i></button>`
+        : `<button class="btn btn-sm btn-outline-secondary" disabled style="visibility:hidden"></button>`;
+    const downBtn = idx < total - 1
+        ? `<button class="btn btn-sm btn-outline-secondary" onclick="moveShelf(${idx},1)" title="Move shelf down"><i class="fas fa-arrow-down"></i></button>`
+        : `<button class="btn btn-sm btn-outline-secondary" disabled style="visibility:hidden"></button>`;
+    const addBtn = `<button class="btn btn-sm btn-outline-success" onclick="openAddBookToShelf(${shelfData.shelf})" title="Add a book to this shelf"><i class="fas fa-plus"></i></button>`;
+    const others = allBookshelves.filter(b => b !== currentData.bookshelf);
+    const moveMenu = others.length
+        ? `<div class="dropdown d-inline-block">
+             <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" title="Move this shelf to another bookshelf"><i class="fas fa-share-square"></i></button>
+             <ul class="dropdown-menu dropdown-menu-end">
+               <li><h6 class="dropdown-header">Move shelf to…</h6></li>
+               ${others.map(b => `<li><a class="dropdown-item" href="#" onclick="moveShelfToBookshelf(${shelfData.shelf}, '${escHtml(b)}'); return false;">Bookshelf ${escHtml(b)}</a></li>`).join('')}
+             </ul>
+           </div>`
+        : '';
+    return `
+    <div class="shelf-row-wrapper">
+      <div class="shelf-row" data-shelf="${shelfData.shelf}" data-bookshelf="${currentData.bookshelf}">
+        <span class="shelf-num-badge">${shelfData.shelf}</span>
+        <span class="shelf-count-badge" title="${shelfData.books.length} book${shelfData.books.length === 1 ? '' : 's'} on this shelf">${shelfData.books.length}</span>
+        ${books}
+        <div class="shelf-drop-zone"></div>
+        <span class="shelf-controls">${addBtn}${upBtn}${downBtn}${moveMenu}</span>
+      </div>
+    </div>`;
+}
+
+function renderSpine(book) {
+    const col = spineColor(book.title);
+    const coverUrl = book.cover ? `${BASE_PATH}/api/covers/thumb/${book.book_id}` : null;
+    const imgHtml = coverUrl
+        ? `<img class="spine-cover" src="${coverUrl}" alt="" loading="lazy" decoding="async" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+           <div class="spine-no-cover ${col}" style="display:none">${escHtml(book.title)}</div>`
+        : `<div class="spine-no-cover ${col}">${escHtml(book.title)}</div>`;
+
+    const tooltip = `<div class="tt-title">${escHtml(book.title)}</div>`
+        + (book.author ? `<div class="tt-author">${escHtml(book.author)}</div>` : '')
+        + (book.series ? `<div class="tt-series">${escHtml(book.series)}${book.series_number ? ' #' + book.series_number : ''}</div>` : '');
+
+    return `<div class="book-spine"
+         draggable="true"
+         data-inv-id="${book.inventory_id}"
+         data-bookshelf="${book.shelf_bookshelf}"
+         data-shelf="${book.shelf_shelf}"
+         data-pos="${book.shelf_position}">
+      ${imgHtml}
+      <div class="spine-pos">${book.shelf_position}</div>
+      <div class="spine-tooltip">${tooltip}</div>
+    </div>`;
+}
+
+/* ===================================================
+   Drag and Drop
+   =================================================== */
+function attachDrag(el) {
+    el.addEventListener('dragstart', e => {
+        dragSrcInvId = parseInt(el.dataset.invId);
+        dragSrcBookshelf = el.dataset.bookshelf;
+        dragSrcShelf = parseInt(el.dataset.shelf);
+        el.classList.add('dragging');
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', dragSrcInvId);
+    });
+    el.addEventListener('dragend', () => {
+        el.classList.remove('dragging');
+        // Clean up any indicator left behind if the drop was cancelled
+        document.querySelectorAll('.drop-indicator').forEach(i => i.remove());
+        document.querySelectorAll('.shelf-row.drag-over').forEach(r => r.classList.remove('drag-over'));
+    });
+}
+
+function _getDropInsertPos(shelfEl, clientX) {
+    const spines = [...shelfEl.querySelectorAll('.book-spine:not(.dragging)')];
+    for (let i = 0; i < spines.length; i++) {
+        const rect = spines[i].getBoundingClientRect();
+        if (clientX < rect.left + rect.width / 2) return { insertPos: i + 1, beforeSpine: spines[i] };
+    }
+    return { insertPos: spines.length + 1, beforeSpine: null };
+}
+
+function _ensureDropIndicator(shelfEl) {
+    let ind = shelfEl.querySelector('.drop-indicator');
+    if (!ind) {
+        ind = document.createElement('div');
+        ind.className = 'drop-indicator';
+        shelfEl.appendChild(ind);
+    }
+    return ind;
+}
+
+function _removeDropIndicator(shelfEl) {
+    shelfEl.querySelector('.drop-indicator')?.remove();
+}
+
+function attachShelfDrop(shelfEl) {
+    shelfEl.addEventListener('dragover', e => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        shelfEl.classList.add('drag-over');
+
+        const { beforeSpine } = _getDropInsertPos(shelfEl, e.clientX);
+        const ind = _ensureDropIndicator(shelfEl);
+        const zone = shelfEl.querySelector('.shelf-drop-zone');
+        // Insert the indicator at the correct flex position
+        if (beforeSpine) {
+            shelfEl.insertBefore(ind, beforeSpine);
+        } else {
+            shelfEl.insertBefore(ind, zone || null);
+        }
+    });
+
+    shelfEl.addEventListener('dragleave', e => {
+        // Only clean up when the pointer truly leaves the shelf (not just enters a child)
+        if (!shelfEl.contains(e.relatedTarget)) {
+            shelfEl.classList.remove('drag-over');
+            _removeDropIndicator(shelfEl);
+        }
+    });
+
+    shelfEl.addEventListener('drop', async e => {
+        e.preventDefault();
+        shelfEl.classList.remove('drag-over');
+        _removeDropIndicator(shelfEl);
+
+        const targetBookshelf = shelfEl.dataset.bookshelf;
+        const targetShelf = parseInt(shelfEl.dataset.shelf);
+        const { insertPos } = _getDropInsertPos(shelfEl, e.clientX);
+
+        try {
+            await GreatReads.apiCall('/bookshelves/move', {
+                method: 'PUT',
+                data: {
+                    inventory_id: dragSrcInvId,
+                    shelf_bookshelf: targetBookshelf,
+                    shelf_shelf: targetShelf,
+                    shelf_position: insertPos
+                }
+            });
+            await selectBookshelf(currentBookshelf, { preserveScroll: true });
+        } catch (err) {
+            showToast('Failed to move book.', 'danger');
+        }
+    });
+}
+
+/* ===================================================
+   Unlocated panel
+   =================================================== */
+function toggleUnlocated() {
+    const panel = document.getElementById('unlocated-panel');
+    panel.classList.toggle('d-none');
+}
+
+function renderUnlocated() {
+    const el = document.getElementById('unlocated-list');
+    if (!unlocatedBooks.length) {
+        el.innerHTML = '<p class="text-success mb-0"><i class="fas fa-check-circle me-1"></i>All physical books have a location assigned!</p>';
+        return;
+    }
+    el.innerHTML = unlocatedBooks.map(b => `
+        <div class="unlocated-item">
+          <div>
+            <div class="book-title">${escHtml(b.title)}</div>
+            <div class="book-author">${escHtml(b.author || '')}</div>
+          </div>
+          <button class="btn btn-sm btn-outline-primary ms-auto" onclick="openAssign(${b.inventory_id}, '${escHtml(b.title).replace(/'/g, "\\'")}')">
+            <i class="fas fa-map-marker-alt"></i> Assign
+          </button>
+        </div>`).join('');
+}
+
+/* ===================================================
+   Assign location
+   =================================================== */
+function openAssign(invId, title) {
+    pendingAssignInvId = invId;
+    document.getElementById('assign-book-title').textContent = title;
+    // Default position: end of shelf 1 of first bookshelf
+    if (allBookshelves.length) {
+        document.getElementById('assign-bookshelf').value = allBookshelves[0];
+    }
+    document.getElementById('assign-shelf').value = 1;
+    document.getElementById('assign-position').value = 999; // append to end
+    new bootstrap.Modal(document.getElementById('assignModal')).show();
+}
+
+async function saveAssignment() {
+    if (!pendingAssignInvId) return;
+    const bs = document.getElementById('assign-bookshelf').value;
+    const shelf = parseInt(document.getElementById('assign-shelf').value);
+    const pos = parseInt(document.getElementById('assign-position').value);
+    try {
+        await GreatReads.apiCall('/bookshelves/move', {
+            method: 'PUT',
+            data: {
+                inventory_id: pendingAssignInvId,
+                shelf_bookshelf: bs,
+                shelf_shelf: shelf,
+                shelf_position: pos
+            }
+        });
+        bootstrap.Modal.getInstance(document.getElementById('assignModal')).hide();
+        showToast('Location assigned!', 'success');
+        await Promise.all([loadUnlocated(), selectBookshelf(bs)]);
+    } catch (err) {
+        showToast('Failed to assign location.', 'danger');
+    }
+}
+
+/* ===================================================
+   Add a book to a shelf (search modal)
+   =================================================== */
+function openAddBookToShelf(shelfNumber) {
+    addBookTargetShelf = shelfNumber;
+    document.getElementById('add-book-target').textContent = `Shelf ${shelfNumber}`;
+    const input = document.getElementById('add-book-search');
+    input.value = '';
+    document.getElementById('add-book-results').innerHTML =
+        '<div class="text-center text-muted py-3 small">Start typing to search your physical books.</div>';
+    const modalEl = document.getElementById('addBookModal');
+    modalEl.addEventListener('shown.bs.modal', () => input.focus(), { once: true });
+    new bootstrap.Modal(modalEl).show();
+}
+
+async function runAddBookSearch() {
+    const q = document.getElementById('add-book-search').value.trim();
+    const resultsEl = document.getElementById('add-book-results');
+    try {
+        const books = await GreatReads.apiCall('/bookshelves/search/books', {
+            params: {
+                q: q,
+                exclude_bookshelf: currentBookshelf,
+                exclude_shelf: addBookTargetShelf
+            }
+        });
+        renderAddBookResults(books);
+    } catch (err) {
+        resultsEl.innerHTML = '<div class="text-center text-danger py-3 small">Search failed.</div>';
+    }
+}
+
+function bookRowHtml(b) {
+    const loc = b.shelf_bookshelf
+        ? `<span class="badge bg-secondary">${escHtml(b.shelf_bookshelf)}-${b.shelf_shelf}</span>`
+        : `<span class="badge bg-warning text-dark">Unlocated</span>`;
+    const num = (b.series && b.series_number != null)
+        ? `<span class="badge bg-light text-dark me-1 series-num">#${b.series_number}</span>`
+        : '';
+    return `
+    <div class="add-book-result">
+      <div class="flex-grow-1">
+        <div class="book-title">${num}${escHtml(b.title)}</div>
+        <div class="book-author">${escHtml(b.author || '')}</div>
+      </div>
+      ${loc}
+      <button class="btn btn-sm btn-outline-success" onclick="addBookToShelf(${b.inventory_id})" title="Add to this shelf">
+        <i class="fas fa-plus"></i>
+      </button>
+    </div>`;
+}
+
+function renderAddBookResults(books) {
+    const el = document.getElementById('add-book-results');
+    if (!books.length) {
+        el.innerHTML = '<div class="text-center text-muted py-3 small">No matching physical books.</div>';
+        return;
+    }
+    // Group by series; standalone books (no series) render individually below.
+    const seriesGroups = new Map();
+    const standalone = [];
+    for (const b of books) {
+        if (b.series) {
+            if (!seriesGroups.has(b.series)) seriesGroups.set(b.series, []);
+            seriesGroups.get(b.series).push(b);
+        } else {
+            standalone.push(b);
+        }
+    }
+    addBookSeriesList = [...seriesGroups.keys()];
+
+    let html = '';
+    let gi = 0;
+    for (const [series, items] of seriesGroups) {
+        const idx = gi++;
+        html += `
+        <div class="series-group">
+          <div class="series-group-header">
+            <div class="series-group-name"><i class="fas fa-layer-group me-1"></i>${escHtml(series)} <span class="text-muted">(${items.length})</span></div>
+            <button class="btn btn-sm btn-success" onclick="addSeriesToShelf(${idx})" title="Add the whole series to this shelf">
+              <i class="fas fa-plus me-1"></i>Add all ${items.length}
+            </button>
+          </div>
+          ${items.map(bookRowHtml).join('')}
+        </div>`;
+    }
+    html += standalone.map(bookRowHtml).join('');
+    el.innerHTML = html;
+}
+
+async function addSeriesToShelf(idx) {
+    const series = addBookSeriesList[idx];
+    if (!currentBookshelf || addBookTargetShelf == null || series == null) return;
+    try {
+        const books = await GreatReads.apiCall('/bookshelves/series/books', {
+            params: {
+                series: series,
+                exclude_bookshelf: currentBookshelf,
+                exclude_shelf: addBookTargetShelf
+            }
+        });
+        if (!books.length) {
+            showToast('Every book in that series is already on this shelf.', 'secondary');
+            return;
+        }
+        const res = await GreatReads.apiCall('/bookshelves/move-bulk', {
+            method: 'PUT',
+            data: {
+                inventory_ids: books.map(b => b.inventory_id),
+                shelf_bookshelf: currentBookshelf,
+                shelf_shelf: addBookTargetShelf
+            }
+        });
+        showToast(`Added ${res.moved} book${res.moved === 1 ? '' : 's'} from "${series}".`, 'success');
+        // Clear search, refocus, and refresh in the background — modal stays open.
+        const searchInput = document.getElementById('add-book-search');
+        searchInput.value = '';
+        document.getElementById('add-book-results').innerHTML =
+            '<div class="text-center text-muted py-3 small">Start typing to search your physical books.</div>';
+        searchInput.focus();
+        await Promise.all([
+            loadUnlocated(),
+            selectBookshelf(currentBookshelf, { preserveScroll: true })
+        ]);
+    } catch (err) {
+        showToast('Failed to add the series to this shelf.', 'danger');
+    }
+}
+
+async function addBookToShelf(invId) {
+    if (!currentBookshelf || addBookTargetShelf == null) return;
+    try {
+        await GreatReads.apiCall('/bookshelves/move', {
+            method: 'PUT',
+            data: {
+                inventory_id: invId,
+                shelf_bookshelf: currentBookshelf,
+                shelf_shelf: addBookTargetShelf,
+                shelf_position: 999  // append to end of shelf
+            }
+        });
+        showToast('Book added to shelf.', 'success');
+        // Clear search, refocus, and refresh in the background — modal stays open.
+        const searchInput = document.getElementById('add-book-search');
+        searchInput.value = '';
+        document.getElementById('add-book-results').innerHTML =
+            '<div class="text-center text-muted py-3 small">Start typing to search your physical books.</div>';
+        searchInput.focus();
+        await Promise.all([
+            loadUnlocated(),
+            selectBookshelf(currentBookshelf, { preserveScroll: true })
+        ]);
+    } catch (err) {
+        showToast('Failed to add book to shelf.', 'danger');
+    }
+}
+
+/* ===================================================
+   Add Bookshelf
+   =================================================== */
+function openAddBookshelf() {
+    document.getElementById('new-bookshelf-label').value = '';
+    new bootstrap.Modal(document.getElementById('addBookshelfModal')).show();
+    // Focus the input after modal opens
+    document.getElementById('addBookshelfModal').addEventListener('shown.bs.modal', () => {
+        document.getElementById('new-bookshelf-label').focus();
+    }, { once: true });
+}
+
+async function saveNewBookshelf() {
+    const label = document.getElementById('new-bookshelf-label').value.trim();
+    if (!label) { showToast('Enter a bookshelf label.', 'warning'); return; }
+    try {
+        await GreatReads.apiCall('/bookshelves/bookshelf', { method: 'POST', data: { label } });
+        bootstrap.Modal.getInstance(document.getElementById('addBookshelfModal')).hide();
+        showToast(`Bookshelf ${label} created!`, 'success');
+        await loadBookshelves();
+        selectBookshelf(label);
+    } catch (err) {
+        const msg = err?.response?.data?.detail || 'Failed to create bookshelf.';
+        showToast(msg, 'danger');
+    }
+}
+
+/* ===================================================
+   Add Shelf
+   =================================================== */
+async function addShelfToCurrentBookshelf() {
+    if (!currentBookshelf) return;
+    try {
+        const result = await GreatReads.apiCall(`/bookshelves/${currentBookshelf}/shelf`, { method: 'POST' });
+        showToast(`Shelf ${result.shelf_number} added to bookshelf ${currentBookshelf}!`, 'success');
+        await selectBookshelf(currentBookshelf, { preserveScroll: true });
+    } catch (err) {
+        showToast('Failed to add shelf.', 'danger');
+    }
+}
+
+/* ===================================================
+   Reorder shelves (move up / down)
+   =================================================== */
+async function moveShelf(idx, direction) {
+    if (!currentData) return;
+    const swapIdx = idx + direction;
+    if (swapIdx < 0 || swapIdx >= currentData.shelves.length) return;
+    const shelfA = currentData.shelves[idx].shelf;
+    const shelfB = currentData.shelves[swapIdx].shelf;
+    try {
+        await GreatReads.apiCall(`/bookshelves/${currentBookshelf}/reorder-shelves`, {
+            method: 'PUT',
+            data: { shelf_a: shelfA, shelf_b: shelfB }
+        });
+        await selectBookshelf(currentBookshelf, { preserveScroll: true });
+    } catch (err) {
+        showToast('Failed to reorder shelves.', 'danger');
+    }
+}
+
+/* ===================================================
+   Move a whole shelf to another bookshelf
+   =================================================== */
+async function moveShelfToBookshelf(shelfNumber, targetBookshelf) {
+    if (!currentBookshelf) return;
+    try {
+        const result = await GreatReads.apiCall(`/bookshelves/${currentBookshelf}/move-shelf`, {
+            method: 'PUT',
+            data: { shelf_number: shelfNumber, target_bookshelf: targetBookshelf }
+        });
+        showToast(`Shelf moved to bookshelf ${targetBookshelf} (now shelf ${result.shelf_number}).`, 'success');
+        await selectBookshelf(currentBookshelf, { preserveScroll: true });
+    } catch (err) {
+        const msg = err?.response?.data?.detail || 'Failed to move shelf.';
+        showToast(msg, 'danger');
+    }
+}
+
+/* ===================================================
+   Utility
+   =================================================== */
+function escHtml(s) {
+    return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+</script>
+{% endblock %}

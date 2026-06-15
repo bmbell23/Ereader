@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Git
+.git/
+.gitignore
+
+# Data and logs (will be mounted as volumes)
+data/
+logs/
+*.db
+*.db-journal
+
+# Documentation
+docs/
+*.md
+!README.md
+
+# Config files for VM deployment
+config/
+scripts/deploy.sh
+scripts/restart_server.sh
+
+# Workspace files
+*.code-workspace
+
+# Environment files
+.env
+.env.local
+
+# Temporary files
+*.tmp
+*.log
+word_count_cache.json
+
+# Analysis and migration scripts
+analyze_*.py
+fix_*.py
+inspect_*.py
+discover_books.py
+migrations/
+

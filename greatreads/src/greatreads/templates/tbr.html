@@ -1,0 +1,2731 @@
+{% extends "base.html" %}
+
+{% block title %}TBR - GreatReads{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <div class="page-header-bookish">
+                <div class="page-header-icon">
+                    <i class="fas fa-list"></i>
+                </div>
+                <div class="page-header-content">
+                    <h1 class="page-header-title mb-0">To Be Read</h1>
+                </div>
+            </div>
+            <div>
+                <button class="btn btn-outline-primary me-2" onclick="showReorderModal()">
+                    <i class="fas fa-sort me-1"></i>Reorder
+                </button>
+                <button class="btn btn-primary" onclick="addNewReading()">
+                    <i class="fas fa-plus me-1"></i>Add Reading
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Search Bar -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-body py-2">
+                <div class="d-flex gap-2 align-items-end flex-wrap">
+                    <div class="flex-grow-1" style="min-width: 200px;">
+                        <label for="searchInput" class="form-label mb-1 small">Search</label>
+                        <input type="text" class="form-control" id="searchInput" placeholder="Search books by title, author, or series...">
+                    </div>
+                    <div>
+                        <label for="sortSelect" class="form-label mb-1 small">Sort</label>
+                        <select class="form-select" id="sortSelect">
+                            <option value="order">Reading Order</option>
+                            <option value="title">Title</option>
+                            <option value="author">Author</option>
+                            <option value="series">Series</option>
+                            <option value="word_count">Word Count</option>
+                            <option value="page_count">Page Count</option>
+                        </select>
+                    </div>
+                    <button class="btn btn-outline-secondary btn-sm px-2" onclick="clearFilters()" title="Clear all filters">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Compact Statistics -->
+<div class="row mb-3">
+    <div class="col-12">
+        <div class="card compact-stats">
+            <div class="card-body py-3">
+                <div class="row text-center">
+                    <!-- Status filters (left on mobile) -->
+                    <div class="col-6 col-md-2 order-0">
+                        <div class="d-flex flex-column align-items-center stat-filter"
+                             data-filter-type="read-status"
+                             data-filter-value="all"
+                             onclick="toggleFilter(this)">
+                            <i class="fas fa-book text-primary mb-1"></i>
+                            <small class="text-muted">Total</small>
+                            <strong class="text-primary" id="totalBooks">-</strong>
+                        </div>
+                    </div>
+                    <div class="col-6 col-md-2 order-2 order-md-1">
+                        <div class="d-flex flex-column align-items-center stat-filter"
+                             data-filter-type="read-status"
+                             data-filter-value="in_progress"
+                             onclick="toggleFilter(this)">
+                            <i class="fas fa-book-open text-warning mb-1"></i>
+                            <small class="text-muted">In Progress</small>
+                            <strong class="text-warning" id="inProgressBooks">-</strong>
+                        </div>
+                    </div>
+                    <div class="col-6 col-md-2 order-4 order-md-2">
+                        <div class="d-flex flex-column align-items-center stat-filter"
+                             data-filter-type="read-status"
+                             data-filter-value="not_started"
+                             onclick="toggleFilter(this)">
+                            <i class="fas fa-circle text-secondary mb-1"></i>
+                            <small class="text-muted">Not Started</small>
+                            <strong class="text-secondary" id="notStartedBooks">-</strong>
+                        </div>
+                    </div>
+                    <!-- Media filters (right on mobile) -->
+                    <div class="col-6 col-md-2 order-1 order-md-3">
+                        <div class="d-flex flex-column align-items-center stat-filter"
+                             data-filter-type="media-type"
+                             data-filter-value="ebook"
+                             onclick="toggleFilter(this)">
+                            <i class="fas fa-tablet-alt mb-1" style="color: #0066CC;"></i>
+                            <small class="text-muted">Ebook</small>
+                            <strong id="ebookCount" style="color: #0066CC;">-</strong>
+                        </div>
+                    </div>
+                    <div class="col-6 col-md-2 order-3 order-md-4">
+                        <div class="d-flex flex-column align-items-center stat-filter"
+                             data-filter-type="media-type"
+                             data-filter-value="physical"
+                             onclick="toggleFilter(this)">
+                            <i class="fas fa-book mb-1" style="color: #6B4BA3;"></i>
+                            <small class="text-muted">Physical</small>
+                            <strong id="physicalCount" style="color: #6B4BA3;">-</strong>
+                        </div>
+                    </div>
+                    <div class="col-6 col-md-2 order-5 order-md-5">
+                        <div class="d-flex flex-column align-items-center stat-filter"
+                             data-filter-type="media-type"
+                             data-filter-value="audio"
+                             onclick="toggleFilter(this)">
+                            <i class="fas fa-headphones mb-1" style="color: #FF6600;"></i>
+                            <small class="text-muted">Audio</small>
+                            <strong id="audioCount" style="color: #FF6600;">-</strong>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-12">
+        <!-- Loading State -->
+        <div id="loading-state" class="text-center py-5">
+            <i class="fas fa-spinner fa-spin fa-2x text-primary"></i>
+            <p class="mt-3 text-muted">Loading your reading list...</p>
+        </div>
+
+        <!-- TBR List -->
+        <div id="tbr-container" class="d-none">
+            <div class="alert alert-info">
+                <i class="fas fa-info-circle me-2"></i>
+                <strong>Drag and drop</strong> to reorder your reading queue.
+                <strong>Click on any card</strong> to edit reading details.
+            </div>
+
+            <div id="tbr-list" class="sortable-list">
+                <!-- Reading cards will be inserted here -->
+            </div>
+        </div>
+
+        <!-- Empty State -->
+        <div id="empty-state" class="text-center py-5 d-none">
+            <i class="fas fa-book-open fa-3x text-muted mb-3"></i>
+            <h3 class="text-muted">No books in your TBR</h3>
+            <p class="text-muted">Add some books to start tracking your reading journey!</p>
+            <button class="btn btn-primary" onclick="addNewReading()">
+                <i class="fas fa-plus me-1"></i>Add Your First Book
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Add Reading Modal -->
+<div class="modal fade" id="addReadingModal" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-fullscreen-sm-down">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Add New Reading</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="addReadingForm">
+                    <!-- Book Search -->
+                    <div class="mb-4">
+                        <label for="bookSearch" class="form-label fs-5 fw-bold mb-3">
+                            <i class="fas fa-search me-2"></i>Search Books
+                        </label>
+                        <div class="position-relative">
+                            <input type="text" class="form-control form-control-lg" id="bookSearch" placeholder="Type to search books..." autocomplete="off">
+                            <input type="hidden" id="selectedBookId" required>
+                            <div id="bookSearchResults" class="book-search-results list-group position-absolute w-100" style="display: none;"></div>
+                        </div>
+                    </div>
+
+                    <!-- Media Type Selection -->
+                    <div class="mb-4">
+                        <label class="form-label fs-5 fw-bold mb-3">
+                            <i class="fas fa-bookmark me-2"></i>Media Type
+                        </label>
+                        <div class="d-flex gap-2 gap-sm-3 justify-content-center flex-wrap">
+                            <div class="media-type-option">
+                                <input type="radio" class="btn-check" name="mediaType" id="mediaEbook" value="Ebook" required>
+                                <label class="btn media-type-btn media-type-ebook" for="mediaEbook">
+                                    <i class="fas fa-tablet-alt fa-2x mb-2"></i>
+                                    <div class="fw-bold small">Ebook</div>
+                                </label>
+                            </div>
+                            <div class="media-type-option">
+                                <input type="radio" class="btn-check" name="mediaType" id="mediaAudio" value="Audio" required>
+                                <label class="btn media-type-btn media-type-audio" for="mediaAudio">
+                                    <i class="fas fa-headphones fa-2x mb-2"></i>
+                                    <div class="fw-bold small">Audio</div>
+                                </label>
+                            </div>
+                            <div class="media-type-option">
+                                <input type="radio" class="btn-check" name="mediaType" id="mediaPhysical" value="Physical" required>
+                                <label class="btn media-type-btn media-type-physical" for="mediaPhysical">
+                                    <i class="fas fa-book fa-2x mb-2"></i>
+                                    <div class="fw-bold small">Physical</div>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Placement Options -->
+                    <div class="mb-3">
+                        <label class="form-label fs-5 fw-bold mb-3">
+                            <i class="fas fa-map-marker-alt me-2"></i>Where to add this book?
+                        </label>
+                        <div class="placement-options">
+                            <div class="placement-option">
+                                <input type="radio" class="btn-check" name="placement" id="placementEnd" value="end" checked>
+                                <label class="btn btn-outline-secondary placement-btn" for="placementEnd">
+                                    <i class="fas fa-arrow-down me-2"></i>Add to end of TBR
+                                </label>
+                            </div>
+                            <div class="placement-option">
+                                <input type="radio" class="btn-check" name="placement" id="placementNext" value="next">
+                                <label class="btn btn-outline-secondary placement-btn" for="placementNext">
+                                    <i class="fas fa-fast-forward me-2"></i>Read next (after current book)
+                                </label>
+                            </div>
+                            <div class="placement-option">
+                                <input type="radio" class="btn-check" name="placement" id="placementNextMonth" value="next-month">
+                                <label class="btn btn-outline-secondary placement-btn" for="placementNextMonth">
+                                    <i class="fas fa-calendar-alt me-2"></i>First book next month
+                                </label>
+                            </div>
+                            <div class="placement-option">
+                                <input type="radio" class="btn-check" name="placement" id="placementNextYear" value="next-year">
+                                <label class="btn btn-outline-secondary placement-btn" for="placementNextYear">
+                                    <i class="fas fa-calendar me-2"></i>First book next year
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="submitNewReading()">Add Reading</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Edit Reading Modal -->
+<div class="modal fade" id="editReadingModal" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-fullscreen-sm-down">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="fas fa-edit me-2"></i>Edit Reading
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="editReadingForm">
+                    <input type="hidden" id="editReadingId" name="reading_id">
+
+                    <!-- Book Info (Read-only) -->
+                    <div class="row mb-3">
+                        <div class="col-12 col-md-8">
+                            <h6 class="text-muted">Book</h6>
+                            <h5 id="editBookTitle" class="mb-1">Book Title</h5>
+                            <p id="editAuthor" class="text-muted mb-0">Author Name</p>
+                        </div>
+                        <div class="col-12 col-md-4 mt-2 mt-md-0">
+                            <div class="book-cover mx-auto" id="editBookCover">
+                                <img id="editBookCoverImg" src="" alt="Book cover" class="book-cover-img" style="display: none;">
+                                <i class="fas fa-book fa-2x book-cover-fallback"></i>
+                            </div>
+                        </div>
+                    </div>
+
+                    <hr>
+
+                    <!-- Reading Details -->
+                    <div class="row mb-3">
+                        <div class="col-12 col-md-4 mb-2 mb-md-0">
+                            <label for="editMedia" class="form-label">Media Type</label>
+                            <select class="form-select" id="editMedia" name="media">
+                                <option value="">Select media...</option>
+                                <option value="Ebook">Ebook</option>
+                                <option value="Physical">Physical</option>
+                                <option value="Audio">Audio</option>
+                            </select>
+                        </div>
+                        <div class="col-12 col-md-4 mb-2 mb-md-0">
+                            <label for="editDateStarted" class="form-label">Date Started</label>
+                            <input type="date" class="form-control" id="editDateStarted" name="date_started">
+                        </div>
+                        <div class="col-12 col-md-4">
+                            <label for="editDateFinished" class="form-label">Date Finished</label>
+                            <input type="date" class="form-control" id="editDateFinished" name="date_finished_actual">
+                        </div>
+                    </div>
+
+                    <!-- Progress Tracking (for In Progress books) -->
+                    <div class="row mb-3" id="progressSection" style="display: none;">
+                        <div class="col-12">
+                            <div class="card bg-light">
+                                <div class="card-body">
+                                    <h6 class="card-title mb-3">
+                                        <i class="fas fa-chart-line me-2"></i>Current Progress
+                                    </h6>
+                                    <div class="row">
+                                        <div class="col-12 col-md-6 mb-2 mb-md-0">
+                                            <label for="editCurrentPercent" class="form-label">Percentage</label>
+                                            <div class="input-group">
+                                                <input type="number" class="form-control" id="editCurrentPercent"
+                                                       min="0" max="100" step="0.1" placeholder="e.g., 23">
+                                                <span class="input-group-text">%</span>
+                                            </div>
+                                        </div>
+                                        <div class="col-12 col-md-6">
+                                            <label for="editCurrentPage" class="form-label">Page</label>
+                                            <div class="input-group">
+                                                <input type="number" class="form-control" id="editCurrentPage"
+                                                       min="0" placeholder="e.g., 151">
+                                                <span class="input-group-text" id="totalPages">/ --</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <small class="text-muted mt-2 d-block">
+                                        Set either percentage or page to realign your progress. Auto-calculation continues from there.
+                                    </small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Ratings -->
+                    <h6 class="text-muted mb-3">Ratings</h6>
+                    <div class="row mb-3">
+                        <div class="col-12 col-md-6 mb-3">
+                            <label class="form-label">Enjoyment</label>
+                            <div class="emoji-rating" data-rating-type="enjoyment" data-emoji="star">
+                                <input type="hidden" id="editRatingEnjoyment" name="rating_enjoyment" value="0">
+                                <div class="emoji-rating-display"></div>
+                            </div>
+                        </div>
+                        <div class="col-12 col-md-6 mb-3">
+                            <label class="form-label">Writing Quality</label>
+                            <div class="emoji-rating" data-rating-type="writing" data-emoji="star">
+                                <input type="hidden" id="editRatingWriting" name="rating_writing" value="0">
+                                <div class="emoji-rating-display"></div>
+                            </div>
+                        </div>
+                        <div class="col-12 col-md-6 mb-3">
+                            <label class="form-label">Characters</label>
+                            <div class="emoji-rating" data-rating-type="characters" data-emoji="star">
+                                <input type="hidden" id="editRatingCharacters" name="rating_characters" value="0">
+                                <div class="emoji-rating-display"></div>
+                            </div>
+                        </div>
+                        <div class="col-12 col-md-6 mb-3">
+                            <label class="form-label">World Building</label>
+                            <div class="emoji-rating" data-rating-type="world_building" data-emoji="star">
+                                <input type="hidden" id="editRatingWorldBuilding" name="rating_world_building" value="0">
+                                <div class="emoji-rating-display"></div>
+                            </div>
+                        </div>
+                        <div class="col-12 col-md-6 mb-3">
+                            <label class="form-label">Readability</label>
+                            <div class="emoji-rating" data-rating-type="readability" data-emoji="star">
+                                <input type="hidden" id="editRatingReadability" name="rating_readability" value="0">
+                                <div class="emoji-rating-display"></div>
+                            </div>
+                        </div>
+                        <div class="col-12 col-md-6 mb-3">
+                            <label class="form-label">Horror Rating</label>
+                            <div class="emoji-rating" data-rating-type="horror" data-emoji="blood">
+                                <input type="hidden" id="editRatingHorror" name="rating_horror" value="0">
+                                <div class="emoji-rating-display"></div>
+                            </div>
+                        </div>
+                        <div class="col-12 col-md-6 mb-3">
+                            <label class="form-label">Spice Rating</label>
+                            <div class="emoji-rating" data-rating-type="spice" data-emoji="pepper">
+                                <input type="hidden" id="editRatingSpice" name="rating_spice" value="0">
+                                <div class="emoji-rating-display"></div>
+                            </div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer flex-wrap">
+                <button type="button" class="btn btn-danger me-auto mb-2 mb-sm-0" onclick="deleteReadingFromModal()">
+                    <i class="fas fa-trash me-1"></i>Delete
+                </button>
+                <button type="button" class="btn btn-secondary mb-2 mb-sm-0" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-info mb-2 mb-sm-0" id="startReadingManualBtn" onclick="startReadingManualFromModal()" style="display: none;">
+                    <i class="fas fa-calendar-plus me-1"></i>Start with Date
+                </button>
+                <button type="button" class="btn btn-success mb-2 mb-sm-0" id="startReadingBtn" onclick="startReadingFromModal()" style="display: none;">
+                    <i class="fas fa-play me-1"></i>Start Reading
+                </button>
+                <button type="button" class="btn btn-warning mb-2 mb-sm-0" id="pauseReadingBtn" onclick="pauseReadingFromModal()" style="display: none;">
+                    <i class="fas fa-pause me-1"></i>Pause
+                </button>
+                <button type="button" class="btn btn-info mb-2 mb-sm-0" id="unpauseReadingBtn" onclick="unpauseReadingFromModal()" style="display: none;">
+                    <i class="fas fa-play me-1"></i>Unpause
+                </button>
+                <button type="button" class="btn btn-success mb-2 mb-sm-0" id="finishReadingBtn" onclick="finishReadingFromModal()">
+                    <i class="fas fa-check me-1"></i>Mark as Finished
+                </button>
+                <button type="button" class="btn btn-primary mb-2 mb-sm-0" onclick="GreatReads.saveReadingChanges()">
+                    <i class="fas fa-save me-1"></i>Save Changes
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Reorder Modal -->
+<div class="modal fade" id="reorderModal" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-fullscreen-sm-down reorder-modal-fullheight">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="fas fa-sort me-2"></i>Reorder TBR
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <!-- Search Box -->
+                <div class="mb-3">
+                    <div class="input-group">
+                        <span class="input-group-text">
+                            <i class="fas fa-search"></i>
+                        </span>
+                        <input type="text" class="form-control" id="reorderSearchInput" placeholder="Search by title, author, or series...">
+                        <button class="btn btn-outline-primary" type="button" id="selectAllReorder">
+                            <i class="fas fa-check-double me-1"></i>Select All
+                        </button>
+                        <button class="btn btn-outline-secondary" type="button" id="clearReorderSearch">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Media Type Tabs -->
+                <ul class="nav nav-tabs mb-3" id="reorderTabs" role="tablist">
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link active" id="ebook-tab" data-bs-toggle="tab" data-bs-target="#ebook-reorder" type="button" role="tab">
+                            <i class="fas fa-tablet-alt me-1" style="color: #0066CC;"></i>Ebook
+                        </button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="audio-tab" data-bs-toggle="tab" data-bs-target="#audio-reorder" type="button" role="tab">
+                            <i class="fas fa-headphones me-1" style="color: #FF6600;"></i>Audio
+                        </button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="physical-tab" data-bs-toggle="tab" data-bs-target="#physical-reorder" type="button" role="tab">
+                            <i class="fas fa-book me-1" style="color: #6B4BA3;"></i>Physical
+                        </button>
+                    </li>
+                </ul>
+
+                <!-- Tab Content -->
+                <div class="tab-content" id="reorderTabContent">
+                    <div class="tab-pane fade show active" id="ebook-reorder" role="tabpanel">
+                        <div id="ebook-list" class="reorder-list">
+                            <!-- Ebook books will be inserted here -->
+                        </div>
+                    </div>
+                    <div class="tab-pane fade" id="audio-reorder" role="tabpanel">
+                        <div id="audio-list" class="reorder-list">
+                            <!-- Audio books will be inserted here -->
+                        </div>
+                    </div>
+                    <div class="tab-pane fade" id="physical-reorder" role="tabpanel">
+                        <div id="physical-list" class="reorder-list">
+                            <!-- Physical books will be inserted here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <div class="dropdown me-auto">
+                    <button type="button" class="btn btn-outline-primary dropdown-toggle" id="bulkFormatBtn"
+                            data-bs-toggle="dropdown" aria-expanded="false" disabled>
+                        <i class="fas fa-exchange-alt me-1"></i>Change Format<span id="bulkFormatCount"></span>
+                    </button>
+                    <ul class="dropdown-menu">
+                        <li><h6 class="dropdown-header">Convert selected to&hellip;</h6></li>
+                        <li><a class="dropdown-item" href="#" onclick="bulkConvertFormat('Ebook'); return false;">
+                            <i class="fas fa-tablet-alt me-2" style="color: #0066CC;"></i>Ebook</a></li>
+                        <li><a class="dropdown-item" href="#" onclick="bulkConvertFormat('Audio'); return false;">
+                            <i class="fas fa-headphones me-2" style="color: #FF6600;"></i>Audio</a></li>
+                        <li><a class="dropdown-item" href="#" onclick="bulkConvertFormat('Physical'); return false;">
+                            <i class="fas fa-book me-2" style="color: #6B4BA3;"></i>Physical</a></li>
+                    </ul>
+                </div>
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="saveReorder()">
+                    <i class="fas fa-save me-1"></i>Save Order
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Update Progress Modal -->
+<div class="modal fade" id="updateProgressModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="fas fa-chart-line me-2"></i>Update Progress
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="updateProgressReadingId">
+                <p class="text-muted mb-3" id="updateProgressBookTitle" style="font-weight: 600;"></p>
+                <div class="card bg-light">
+                    <div class="card-body">
+                        <div class="row g-3">
+                            <div class="col-6">
+                                <label for="updateProgressPercent" class="form-label">Percentage</label>
+                                <div class="input-group">
+                                    <input type="number" class="form-control" id="updateProgressPercent"
+                                           min="0" max="100" step="0.1" placeholder="0">
+                                    <span class="input-group-text">%</span>
+                                </div>
+                            </div>
+                            <div class="col-6">
+                                <label for="updateProgressPage" class="form-label">Page</label>
+                                <div class="input-group">
+                                    <input type="number" class="form-control" id="updateProgressPage"
+                                           min="0" placeholder="0">
+                                    <span class="input-group-text" id="updateProgressTotalPages">/ --</span>
+                                </div>
+                            </div>
+                        </div>
+                        <small class="text-muted mt-2 d-block">
+                            Set percentage or page — they sync automatically. Setting to 100% will prompt you to rate the book.
+                        </small>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-info text-white" onclick="saveUpdateProgress()">
+                    <i class="fas fa-save me-1"></i>Save Progress
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Rate Your Read Modal (shown after setting 100%) -->
+<div class="modal fade" id="rateAfterFinishModal" tabindex="-1" data-bs-backdrop="static">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="fas fa-star me-2 text-warning"></i>You Finished It! Rate Your Read
+                </h5>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="rateAfterFinishReadingId">
+                <p class="text-muted mb-4" id="rateAfterFinishBookTitle" style="font-weight: 600;"></p>
+                <div class="row">
+                    <div class="col-12 col-md-6 mb-3">
+                        <label class="form-label">Enjoyment</label>
+                        <div class="emoji-rating" data-rating-type="enjoyment" data-emoji="star">
+                            <input type="hidden" id="finishRatingEnjoyment" value="0">
+                            <div class="emoji-rating-display"></div>
+                        </div>
+                    </div>
+                    <div class="col-12 col-md-6 mb-3">
+                        <label class="form-label">Writing Quality</label>
+                        <div class="emoji-rating" data-rating-type="writing" data-emoji="star">
+                            <input type="hidden" id="finishRatingWriting" value="0">
+                            <div class="emoji-rating-display"></div>
+                        </div>
+                    </div>
+                    <div class="col-12 col-md-6 mb-3">
+                        <label class="form-label">Characters</label>
+                        <div class="emoji-rating" data-rating-type="characters" data-emoji="star">
+                            <input type="hidden" id="finishRatingCharacters" value="0">
+                            <div class="emoji-rating-display"></div>
+                        </div>
+                    </div>
+                    <div class="col-12 col-md-6 mb-3">
+                        <label class="form-label">World Building</label>
+                        <div class="emoji-rating" data-rating-type="world_building" data-emoji="star">
+                            <input type="hidden" id="finishRatingWorldBuilding" value="0">
+                            <div class="emoji-rating-display"></div>
+                        </div>
+                    </div>
+                    <div class="col-12 col-md-6 mb-3">
+                        <label class="form-label">Readability</label>
+                        <div class="emoji-rating" data-rating-type="readability" data-emoji="star">
+                            <input type="hidden" id="finishRatingReadability" value="0">
+                            <div class="emoji-rating-display"></div>
+                        </div>
+                    </div>
+                    <div class="col-12 col-md-6 mb-3">
+                        <label class="form-label">Horror Rating</label>
+                        <div class="emoji-rating" data-rating-type="horror" data-emoji="blood">
+                            <input type="hidden" id="finishRatingHorror" value="0">
+                            <div class="emoji-rating-display"></div>
+                        </div>
+                    </div>
+                    <div class="col-12 col-md-6 mb-3">
+                        <label class="form-label">Spice Rating</label>
+                        <div class="emoji-rating" data-rating-type="spice" data-emoji="pepper">
+                            <input type="hidden" id="finishRatingSpice" value="0">
+                            <div class="emoji-rating-display"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="skipRatingsAndFinish()">
+                    Skip Ratings
+                </button>
+                <button type="button" class="btn btn-success" onclick="saveRatingsAndFinish()">
+                    <i class="fas fa-check me-1"></i>Finish &amp; Save Ratings
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+/* Book Search Results Dropdown */
+.book-search-results {
+    max-height: 300px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    z-index: 1050;
+    background: white;
+    border: 2px solid #667eea;
+    border-radius: 0.5rem;
+    box-shadow: 0 8px 24px rgba(102, 126, 234, 0.3), 0 0 0 100vmax rgba(0, 0, 0, 0.3);
+    margin-top: 0.5rem;
+}
+
+.book-search-results .list-group-item {
+    border: none;
+    border-bottom: 1px solid #e9ecef;
+    transition: all 0.2s;
+}
+
+.book-search-results .list-group-item:last-child {
+    border-bottom: none;
+}
+
+.book-search-results .list-group-item:hover {
+    background: linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%);
+    transform: translateX(4px);
+}
+
+/* Media Type Selection Buttons */
+.media-type-option {
+    flex: 1;
+    max-width: 120px;
+}
+
+.media-type-btn {
+    width: 100%;
+    height: 85px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    border-width: 2px;
+    transition: all 0.2s;
+    background: white;
+}
+
+.media-type-ebook {
+    border-color: #0066CC;
+    color: #0066CC;
+}
+
+.media-type-ebook i {
+    color: #0066CC;
+}
+
+.media-type-audio {
+    border-color: #FF6600;
+    color: #FF6600;
+}
+
+.media-type-audio i {
+    color: #FF6600;
+}
+
+.media-type-physical {
+    border-color: #6B4BA3;
+    color: #6B4BA3;
+}
+
+.media-type-physical i {
+    color: #6B4BA3;
+}
+
+.media-type-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+
+.btn-check:checked + .media-type-ebook {
+    background-color: #0066CC;
+    border-color: #0066CC;
+    color: white;
+}
+
+.btn-check:checked + .media-type-ebook i {
+    color: white;
+}
+
+.btn-check:checked + .media-type-audio {
+    background-color: #FF6600;
+    border-color: #FF6600;
+    color: white;
+}
+
+.btn-check:checked + .media-type-audio i {
+    color: white;
+}
+
+.btn-check:checked + .media-type-physical {
+    background-color: #6B4BA3;
+    border-color: #6B4BA3;
+    color: white;
+}
+
+.btn-check:checked + .media-type-physical i {
+    color: white;
+}
+
+/* Placement Options */
+.placement-options {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.placement-option {
+    flex: 1;
+}
+
+.placement-btn {
+    width: 100%;
+    padding: 0.75rem 1rem;
+    text-align: left;
+    border-width: 2px;
+    transition: all 0.2s;
+    font-weight: 500;
+}
+
+.placement-btn:hover {
+    transform: translateX(4px);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+.btn-check:checked + .placement-btn {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    border-color: #667eea;
+    color: white;
+}
+
+/* Reorder Modal Styles */
+.reorder-modal-fullheight {
+    height: 100vh;
+    margin: 0 auto;
+    max-width: 800px;
+    display: flex;
+    align-items: center;
+}
+
+.reorder-modal-fullheight .modal-content {
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.reorder-modal-fullheight .modal-body {
+    flex: 1;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.reorder-modal-fullheight #reorderTabContent {
+    flex: 1;
+    overflow: hidden;
+}
+
+.reorder-modal-fullheight .tab-pane {
+    height: 100%;
+    overflow: hidden;
+}
+
+.reorder-list {
+    height: 100%;
+    overflow-y: auto;
+    padding-right: 0.5rem;
+}
+
+.reorder-item {
+    background: white;
+    border: 1px solid #dee2e6;
+    border-radius: 0.375rem;
+    padding: 0.75rem;
+    margin-bottom: 0.5rem;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    cursor: move;
+    transition: all 0.2s;
+    user-select: none;
+}
+
+.reorder-item:hover {
+    background: #f8f9fa;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.reorder-item.sortable-ghost {
+    opacity: 0.4;
+    background: #e9ecef;
+}
+
+.reorder-item.sortable-chosen {
+    background: #e7f1ff;
+    border-color: #0d6efd;
+}
+
+.reorder-item.selected {
+    background: #fff3cd;
+    border-color: #ffc107;
+}
+
+.reorder-item-checkbox {
+    flex-shrink: 0;
+}
+
+.reorder-item-checkbox input[type="checkbox"] {
+    width: 1.2rem;
+    height: 1.2rem;
+    cursor: pointer;
+}
+
+.reorder-drag-handle {
+    color: #6c757d;
+    cursor: grab;
+    font-size: 1.2rem;
+    flex-shrink: 0;
+}
+
+.reorder-item-content {
+    flex: 1;
+    min-width: 0;
+}
+
+.reorder-item-title {
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.reorder-item-author {
+    font-size: 0.875rem;
+    color: #6c757d;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.reorder-item-series {
+    font-size: 0.75rem;
+    color: #9b59b6;
+    font-style: italic;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-top: 0.125rem;
+}
+
+.reorder-drag-handle:active {
+    cursor: grabbing;
+}
+
+.reorder-item-content {
+    flex: 1;
+    min-width: 0;
+}
+
+.reorder-item-title {
+    font-weight: 500;
+    margin: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.reorder-item-author {
+    color: #6c757d;
+    font-size: 0.875rem;
+    margin: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+</style>
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+// Helper function to build API URLs with base path
+function apiUrl(path) {
+    const basePath = window.APP_BASE_PATH || '';
+    return basePath + path;
+}
+
+let currentReadings = [];
+const STATIC_BASE = "{{ url_for('static', path='') }}";
+
+// Effective WPD for each format (loaded from settings API)
+let effectiveWpd = { ebook: null, physical: null, audio: null };
+
+async function loadEffectiveWpd() {
+    try {
+        const modeResp = await GreatReads.apiCall('/settings/wpd-mode');
+        if (modeResp.mode === 'auto') {
+            const autoResp = await GreatReads.apiCall('/settings/auto-wpd');
+            // Fall back to manual speeds for formats with no historical data
+            const manualResp = await GreatReads.apiCall('/settings/reading-speeds');
+            effectiveWpd = {
+                ebook: autoResp.ebook || manualResp.ebook_wpd,
+                physical: autoResp.physical || manualResp.physical_wpd,
+                audio: autoResp.audio || manualResp.audio_wpd,
+            };
+        } else {
+            const manualResp = await GreatReads.apiCall('/settings/reading-speeds');
+            effectiveWpd = {
+                ebook: manualResp.ebook_wpd,
+                physical: manualResp.physical_wpd,
+                audio: manualResp.audio_wpd,
+            };
+        }
+    } catch (e) {
+        // Non-critical – leave nulls, WPD badge simply won't show
+    }
+}
+
+function getWpdForMedia(media) {
+    if (!media) return null;
+    const m = media.toLowerCase();
+    if (m === 'ebook') return effectiveWpd.ebook;
+    if (m === 'physical') return effectiveWpd.physical;
+    if (m === 'audio') return effectiveWpd.audio;
+    return null;
+}
+
+// Load TBR data on page load
+// Global variables for filtering
+let allReadings = [];
+let filteredReadings = [];
+let activeFilters = {
+    readStatus: null,
+    mediaType: null
+};
+
+// Fuzzy search function
+function fuzzyMatch(text, search) {
+    if (!text) return false;
+    text = text.toLowerCase();
+    search = search.toLowerCase();
+
+    if (text.includes(search)) return true;
+
+    let searchIndex = 0;
+    for (let i = 0; i < text.length && searchIndex < search.length; i++) {
+        if (text[i] === search[searchIndex]) {
+            searchIndex++;
+        }
+    }
+    return searchIndex === search.length;
+}
+
+// Toggle filter function
+function toggleFilter(element) {
+    const filterType = element.dataset.filterType;
+    const filterValue = element.dataset.filterValue;
+
+    console.log('Toggle filter:', filterType, filterValue);
+
+    const filterKey = filterType === 'read-status' ? 'readStatus' :
+                      filterType === 'media-type' ? 'mediaType' : filterType;
+
+    if (activeFilters[filterKey] === filterValue) {
+        // Clicking the same filter again - deactivate it
+        console.log('Deactivating filter:', filterKey);
+        activeFilters[filterKey] = null;
+        element.classList.remove('active');
+    } else {
+        // Activating a new filter - deactivate others in the same group
+        console.log('Activating filter:', filterKey, '=', filterValue);
+        document.querySelectorAll(`[data-filter-type="${filterType}"]`).forEach(el => {
+            el.classList.remove('active');
+        });
+        activeFilters[filterKey] = filterValue;
+        element.classList.add('active');
+    }
+
+    console.log('Active filters:', activeFilters);
+    applyFilters();
+}
+
+// Apply filters and sorting
+function applyFilters() {
+    const search = document.getElementById('searchInput').value.toLowerCase().trim();
+    const sortSelect = document.getElementById('sortSelect');
+    const sort = sortSelect ? sortSelect.value : 'order';
+
+    filteredReadings = allReadings.filter(reading => {
+        const book = reading.book;
+
+        // Search filter
+        if (search) {
+            const matchesTitle = fuzzyMatch(book.title, search);
+            const matchesAuthor = fuzzyMatch(book.author, search);
+            const matchesUniverse = book.universe ? fuzzyMatch(book.universe, search) : false;
+            const matchesSeries = book.series ? fuzzyMatch(book.series, search) : false;
+
+            if (!matchesTitle && !matchesAuthor && !matchesUniverse && !matchesSeries) {
+                return false;
+            }
+        }
+
+        // Status filter
+        if (activeFilters.readStatus && activeFilters.readStatus !== 'all') {
+            if (activeFilters.readStatus === 'in_progress' && !reading.date_started) return false;
+            if (activeFilters.readStatus === 'not_started' && reading.date_started) return false;
+        }
+
+        // Media filter
+        if (activeFilters.mediaType) {
+            const mediaType = activeFilters.mediaType.charAt(0).toUpperCase() + activeFilters.mediaType.slice(1);
+            if (reading.media !== mediaType) return false;
+        }
+
+        return true;
+    });
+
+    // Apply sorting
+    filteredReadings.sort((a, b) => {
+        switch (sort) {
+            case 'order':
+                return a.reading_order - b.reading_order;
+            case 'title':
+                return a.book.title.localeCompare(b.book.title);
+            case 'author':
+                return a.book.author_sorted.localeCompare(b.book.author_sorted);
+            case 'series':
+                // Sort by universe, then series, then series_number
+                const aUniverse = a.book.universe || '';
+                const bUniverse = b.book.universe || '';
+                if (aUniverse !== bUniverse) {
+                    return aUniverse.localeCompare(bUniverse);
+                }
+                if (a.book.series !== b.book.series) {
+                    return (a.book.series || '').localeCompare(b.book.series || '');
+                }
+                return (a.book.series_number || 0) - (b.book.series_number || 0);
+            case 'word_count':
+                return (b.book.word_count || 0) - (a.book.word_count || 0);
+            case 'page_count':
+                return (b.book.page_count || 0) - (a.book.page_count || 0);
+            default:
+                return a.reading_order - b.reading_order;
+        }
+    });
+
+    displayReadings(filteredReadings);
+}
+
+// Clear filters
+function clearFilters() {
+    console.log('Clearing filters');
+
+    // Clear search input
+    const searchInput = document.getElementById('searchInput');
+    if (searchInput) searchInput.value = '';
+
+    // Reset all filter states
+    activeFilters.readStatus = null;
+    activeFilters.mediaType = null;
+
+    // Remove active class from all filter badges
+    document.querySelectorAll('.stat-filter').forEach(el => {
+        el.classList.remove('active');
+    });
+
+    console.log('Filters cleared, applying filters');
+    applyFilters();
+}
+
+// Update stats
+function updateStats(readings) {
+    const total = readings.length;
+    const inProgress = readings.filter(r => r.date_started && !r.is_finished).length;
+    const notStarted = readings.filter(r => !r.date_started).length;
+    const ebook = readings.filter(r => r.media === 'Ebook').length;
+    const physical = readings.filter(r => r.media === 'Physical').length;
+    const audio = readings.filter(r => r.media === 'Audio').length;
+
+    document.getElementById('totalBooks').textContent = total;
+    document.getElementById('inProgressBooks').textContent = inProgress;
+    document.getElementById('notStartedBooks').textContent = notStarted;
+    document.getElementById('ebookCount').textContent = ebook;
+    document.getElementById('physicalCount').textContent = physical;
+    document.getElementById('audioCount').textContent = audio;
+}
+
+// Debounce function
+function debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+        const later = () => {
+            clearTimeout(timeout);
+            func(...args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+    };
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    // Load WPD speeds first, then readings (so WPD shows immediately)
+    loadEffectiveWpd().then(() => loadTBRReadings());
+
+    // Setup event listeners
+    document.getElementById('searchInput').addEventListener('input', debounce(applyFilters, 300));
+    const sortSelect = document.getElementById('sortSelect');
+    if (sortSelect) {
+        sortSelect.addEventListener('change', applyFilters);
+    }
+});
+
+async function loadTBRReadings() {
+    try {
+        const readings = await GreatReads.apiCall('/readings/tbr');
+        allReadings = readings;
+        currentReadings = readings;
+        updateStats(readings);
+        // Apply current filters instead of showing all readings
+        applyFilters();
+    } catch (error) {
+        showErrorState();
+    }
+}
+
+// Store the current Sortable instance
+let sortableInstance = null;
+
+function displayReadings(readings) {
+    const loadingState = document.getElementById('loading-state');
+    const tbrContainer = document.getElementById('tbr-container');
+    const emptyState = document.getElementById('empty-state');
+    const tbrList = document.getElementById('tbr-list');
+
+    loadingState.classList.add('d-none');
+
+    if (readings.length === 0) {
+        emptyState.classList.remove('d-none');
+        tbrContainer.classList.add('d-none');
+        return;
+    }
+
+    emptyState.classList.add('d-none');
+    tbrContainer.classList.remove('d-none');
+
+    // Generate reading cards
+    let html = '';
+    readings.forEach((reading, index) => {
+        html += createReadingCard(reading, index);
+    });
+
+    tbrList.innerHTML = html;
+
+    // Destroy existing Sortable instance if it exists
+    if (sortableInstance) {
+        sortableInstance.destroy();
+    }
+
+    // Reinitialize drag-and-drop with the current filtered list
+    sortableInstance = new Sortable(tbrList, {
+        animation: 150,
+        ghostClass: 'sortable-ghost',
+        chosenClass: 'sortable-chosen',
+        dragClass: 'sortable-drag',
+        handle: '.tbr-book-cover',
+        onEnd: async function(evt) {
+            const readingId = parseInt(evt.item.dataset.readingId);
+            const newIndexInFiltered = evt.newIndex;
+
+            console.log('Reordering reading', readingId, 'to filtered position', newIndexInFiltered);
+
+            // Build the new order based on the current DOM state
+            // Get all reading IDs in their new order from the DOM
+            const newOrderIds = Array.from(evt.to.children).map(el => parseInt(el.dataset.readingId));
+
+            console.log('New order in filtered view:', newOrderIds);
+
+            // Now we need to figure out where to insert in the full list
+            // Find what reading comes before and after in the filtered view
+            let targetReadingIdBefore = null;
+            let targetReadingIdAfter = null;
+
+            if (newIndexInFiltered > 0) {
+                targetReadingIdBefore = newOrderIds[newIndexInFiltered - 1];
+            }
+            if (newIndexInFiltered < newOrderIds.length - 1) {
+                targetReadingIdAfter = newOrderIds[newIndexInFiltered + 1];
+            }
+
+            console.log('Reading before:', targetReadingIdBefore, 'Reading after:', targetReadingIdAfter);
+
+            // Find positions in the full list
+            let newPositionInFullList;
+
+            if (targetReadingIdBefore) {
+                // Insert right after the reading before
+                const positionBefore = allReadings.findIndex(r => r.id === targetReadingIdBefore);
+                newPositionInFullList = positionBefore + 1;
+            } else if (targetReadingIdAfter) {
+                // Insert right before the reading after
+                newPositionInFullList = allReadings.findIndex(r => r.id === targetReadingIdAfter);
+            } else {
+                // Only one item, put at beginning
+                newPositionInFullList = 0;
+            }
+
+            console.log('New position in full list:', newPositionInFullList);
+
+            try {
+                const response = await fetch(apiUrl(`/api/readings/reorder?reading_id=${readingId}&new_position=${newPositionInFullList}`), {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to reorder reading');
+                }
+
+                GreatReads.showToast('Reading reordered successfully!', 'success');
+                await loadTBRReadings(); // Refresh to show updated order
+            } catch (error) {
+                console.error('Error reordering:', error);
+                GreatReads.showToast('Error reordering reading', 'error');
+                // Revert the change
+                if (evt.oldIndex < evt.newIndex) {
+                    evt.to.insertBefore(evt.item, evt.to.children[evt.oldIndex]);
+                } else {
+                    evt.to.insertBefore(evt.item, evt.to.children[evt.oldIndex + 1]);
+                }
+            }
+        }
+    });
+}
+
+function createProgressSection(reading, book) {
+    const startDate = reading.date_started || reading.date_est_start;
+    const endDate = reading.date_finished_actual || reading.date_est_end;
+    const totalDays = reading.effective_days_estimate;
+
+    // Helper function to format date without year if current year
+    const formatDateSmart = (dateStr) => {
+        if (!dateStr) return 'TBD';
+        // Parse date as local time to avoid timezone issues
+        const parts = dateStr.split('-');
+        const date = new Date(parts[0], parts[1] - 1, parts[2]);
+        const today = new Date();
+        const options = { month: 'short', day: 'numeric' };
+        if (date.getFullYear() !== today.getFullYear()) {
+            options.year = 'numeric';
+        }
+        return date.toLocaleDateString('en-US', options);
+    };
+
+    // WPD badge helper
+    const wpd = getWpdForMedia(reading.media);
+    const wpdBadge = wpd
+        ? `<span class="text-muted" title="Words per day (${reading.media})">
+               <i class="fas fa-tachometer-alt" style="width:14px;font-size:0.7rem;"></i>
+               <span style="font-size:0.7rem;">${(wpd/1000).toFixed(1)}k WPD</span>
+           </span>`
+        : '';
+
+    // For not-started books, show date info but no progress bar
+    if (!reading.date_started) {
+        return `
+            <div class="mt-2 pt-2" style="border-top: 1px solid #dee2e6;">
+                <div class="d-flex justify-content-between align-items-center text-sm">
+                    <div class="text-muted">
+                        <i class="fas fa-calendar-alt" style="width: 16px;"></i>
+                        ${startDate ? formatDateSmart(startDate) : 'Not scheduled'}
+                    </div>
+                    <div class="text-muted">
+                        <i class="fas fa-flag-checkered" style="width: 16px;"></i>
+                        ${endDate ? formatDateSmart(endDate) : 'TBD'}
+                    </div>
+                    <div class="text-muted d-flex align-items-center gap-2">
+                        <span><i class="fas fa-calendar-day" style="width: 16px;"></i>${totalDays ? Math.round(totalDays) : 'TBD'}</span>
+                        ${wpdBadge}
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    if (!endDate || !totalDays) {
+        // Fallback to simple date display if we don't have enough data for progress bar
+        return `
+            <div class="mt-2 pt-2" style="border-top: 1px solid #dee2e6;">
+                <div class="d-flex justify-content-between align-items-center text-sm">
+                    <div class="text-muted">
+                        <i class="fas fa-calendar-alt" style="width: 16px;"></i>
+                        ${formatDateSmart(startDate)}
+                    </div>
+                    <div class="text-muted">
+                        <i class="fas fa-flag-checkered" style="width: 16px;"></i>
+                        ${endDate ? formatDateSmart(endDate) : 'TBD'}
+                    </div>
+                    <div class="text-muted d-flex align-items-center gap-2">
+                        <span><i class="fas fa-calendar-day" style="width: 16px;"></i>${totalDays ? Math.round(totalDays) : 'TBD'}</span>
+                        ${wpdBadge}
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    // Use the current_progress_percent from the API (which handles manual overrides)
+    const targetProgress = reading.current_progress_percent || 0;
+
+    // Target page number
+    const totalPages = book.page_count || 0;
+    const targetPage = reading.current_progress_page || 0;
+
+    // Determine if we're on track, ahead, or behind (placeholder for now - would need actual current page)
+    const isStarted = reading.date_started && !reading.date_finished_actual;
+
+    // Get media color
+    const mediaColors = {
+        'Ebook': '#0066CC',
+        'Physical': '#6B4BA3',
+        'Audio': '#FF6600'
+    };
+    const mediaColor = mediaColors[reading.media] || '#28a745';
+
+    return `
+        <div class="mt-2 pt-2" style="border-top: 1px solid #dee2e6;">
+            <!-- Date info row -->
+            <div class="d-flex justify-content-between align-items-center text-sm mb-2">
+                <div class="text-muted">
+                    <i class="fas fa-play-circle" style="width: 16px; color: #28a745;"></i>
+                    ${formatDateSmart(startDate)}
+                </div>
+                <div class="text-muted d-flex align-items-center gap-2">
+                    <span><i class="fas fa-calendar-day" style="width: 16px;"></i>${Math.round(totalDays)}</span>
+                    ${wpdBadge}
+                </div>
+                <div class="text-muted">
+                    <i class="fas fa-flag-checkered" style="width: 16px;"></i>
+                    ${formatDateSmart(endDate)}
+                </div>
+            </div>
+
+            <!-- Progress bar -->
+            <div style="position: relative; height: 28px; background-color: #e9ecef; border-radius: 4px; overflow: hidden;">
+                <!-- Filled progress (actual completion) -->
+                <div style="position: absolute; left: 0; top: 0; height: 100%; background-color: ${mediaColor}; border-radius: 4px; width: ${targetProgress}%; transition: width 0.3s ease;"></div>
+
+                <!-- Progress bar label -->
+                ${targetProgress > 0 ? `
+                    <div style="position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); font-size: 0.7rem; font-weight: 600; color: #212529; z-index: 1; white-space: nowrap; background-color: rgba(255, 255, 255, 0.85); padding: 1px 6px; border-radius: 2px;">
+                        ${targetProgress.toFixed(1)}% p. ${targetPage}
+                    </div>
+                ` : `
+                    <div style="position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); font-size: 0.75rem; font-weight: 600; color: #495057; z-index: 1;">
+                        ${reading.status === 'paused' ? 'Paused' : (isStarted ? 'In Progress' : 'Not Started')}
+                    </div>
+                `}
+            </div>
+        </div>
+    `;
+}
+
+function createReadingCard(reading, index) {
+    const book = reading.book;
+    const statusClass = GreatReads.getStatusClass(reading);
+    const statusBadge = GreatReads.getStatusBadge(reading);
+
+    // Get format info and colors
+    const formatClass = getFormatClass(reading.media);
+    const formatBadge = getFormatBadge(reading.media);
+
+    // For in-progress books, wrap the entire border; for paused books, no border; otherwise just left border
+    const isInProgress = reading.date_started && !reading.is_finished && reading.status !== 'paused';
+    const isPaused = reading.status === 'paused';
+    const borderClass = isPaused ? '' : (formatClass ? (isInProgress ? `border-${formatClass}-full` : `border-${formatClass}`) : '');
+
+    return `
+        <div class="card reading-card ${statusClass} ${borderClass} mb-3 fade-in tbr-draggable-card" data-reading-id="${reading.id}" onclick="editReading(${reading.id})">
+            <div class="card-body">
+                <div class="row align-items-center">
+                    <div class="col-auto">
+                        <div class="tbr-book-cover tbr-book-cover-large" title="Drag to reorder">
+                            ${book.cover ?
+                                `<img src="${window.APP_BASE_PATH}/static/covers/${book.id}.jpg"
+                                     alt="${book.title} cover"
+                                     class="tbr-book-cover-img"
+                                     onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
+                                 <i class="fas fa-book book-cover-fallback" style="display: none;"></i>` :
+                                `<i class="fas fa-book book-cover-fallback"></i>`
+                            }
+                        </div>
+                    </div>
+                    <div class="col">
+                        <h5 class="card-title mb-1">${book.title}</h5>
+                        <p class="text-muted mb-1">${book.author}</p>
+                        ${book.series ? `<small class="text-muted">${book.universe ? book.universe + ': ' : ''}${book.series}${book.series_number ? ' #' + book.series_number : ''}</small><br>` : ''}
+                        <small class="text-muted">
+                            ${book.word_count ? book.word_count.toLocaleString() + ' words' : ''}
+                            ${book.page_count ? (book.word_count ? ' • ' : '') + book.page_count + ' pages' : ''}
+                        </small>
+
+                        ${createProgressSection(reading, book)}
+                    </div>
+                    <div class="col-auto">
+                        <div class="d-flex align-items-start gap-2">
+                            <div class="d-flex flex-column gap-1 align-items-end">
+                                ${formatBadge}
+                                ${reading.status === 'paused' ? '<span class="media-badge-large" style="background-color: #ffc107; color: #212529;">Paused</span>' : statusBadge}
+                                ${reading.reread ? '<span class="media-badge-large" style="background-color: #17a2b8; color: white;">Reread</span>' : ''}
+                            </div>
+                            <div class="btn-group-vertical btn-group-sm">
+                                <button class="btn btn-outline-primary btn-sm" onclick="event.stopPropagation(); editReading(${reading.id})" title="Edit Reading">
+                                    <i class="fas fa-edit"></i>
+                                </button>
+                                ${isInProgress ? `
+                                    <button class="btn btn-outline-info btn-sm" onclick="event.stopPropagation(); showUpdateProgressModal(${reading.id})" title="Update Progress">
+                                        <i class="fas fa-chart-line"></i>
+                                    </button>
+                                ` : (!reading.is_finished && !isInProgress ? `
+                                    <button class="btn btn-outline-success btn-sm" onclick="event.stopPropagation(); finishReading(${reading.id})" title="Mark as Finished">
+                                        <i class="fas fa-check"></i>
+                                    </button>
+                                ` : '')}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function editReading(readingId) {
+    const reading = currentReadings.find(r => r.id === readingId);
+    if (reading) {
+        GreatReads.showEditModal(reading);
+    }
+}
+
+async function finishReading(readingId) {
+    if (!confirm('Mark this reading as finished with today\'s date?')) {
+        return;
+    }
+
+    try {
+        await GreatReads.finishReading(readingId);
+        GreatReads.showToast('Reading marked as finished!', 'success');
+        await loadTBRReadings(); // Refresh the list
+    } catch (error) {
+        // Error already handled by apiCall
+    }
+}
+
+async function startReadingFromModal() {
+    const readingId = document.getElementById('editReadingId').value;
+
+    if (!confirm('Start this reading with today\'s date?')) {
+        return;
+    }
+
+    try {
+        const today = new Date().toISOString().split('T')[0];
+
+        await GreatReads.apiCall(`/readings/${readingId}`, {
+            method: 'PUT',
+            data: {
+                date_started: today,
+                status: 'In Progress'
+            }
+        });
+
+        GreatReads.showToast('Reading started!', 'success');
+
+        // Close modal
+        const modal = bootstrap.Modal.getInstance(document.getElementById('editReadingModal'));
+        modal.hide();
+
+        await loadTBRReadings(); // Refresh the list
+    } catch (error) {
+        // Error already handled by apiCall
+    }
+}
+
+async function startReadingManualFromModal() {
+    const readingId = document.getElementById('editReadingId').value;
+
+    // Prompt for start date
+    const startDate = prompt('Enter start date (YYYY-MM-DD):', new Date().toISOString().split('T')[0]);
+    if (!startDate) {
+        return;
+    }
+
+    try {
+        await GreatReads.startReading(readingId, startDate);
+        GreatReads.showToast('Reading started with custom date!', 'success');
+
+        // Close modal
+        const modal = bootstrap.Modal.getInstance(document.getElementById('editReadingModal'));
+        modal.hide();
+
+        await loadTBRReadings(); // Refresh the list
+    } catch (error) {
+        // Error already handled by apiCall
+    }
+}
+
+async function pauseReadingFromModal() {
+    const readingId = document.getElementById('editReadingId').value;
+
+    if (!confirm('Pause this reading? Progress will be frozen at the current point.')) {
+        return;
+    }
+
+    try {
+        await GreatReads.pauseReading(readingId);
+        GreatReads.showToast('Reading paused!', 'success');
+
+        // Close modal
+        const modal = bootstrap.Modal.getInstance(document.getElementById('editReadingModal'));
+        modal.hide();
+
+        await loadTBRReadings(); // Refresh the list
+    } catch (error) {
+        // Error already handled by apiCall
+    }
+}
+
+async function unpauseReadingFromModal() {
+    const readingId = document.getElementById('editReadingId').value;
+
+    if (!confirm('Unpause this reading? Progress will resume from where it was paused.')) {
+        return;
+    }
+
+    try {
+        await GreatReads.unpauseReading(readingId);
+        GreatReads.showToast('Reading unpaused!', 'success');
+
+        // Close modal
+        const modal = bootstrap.Modal.getInstance(document.getElementById('editReadingModal'));
+        modal.hide();
+
+        await loadTBRReadings(); // Refresh the list
+    } catch (error) {
+        // Error already handled by apiCall
+    }
+}
+
+async function finishReadingFromModal() {
+    const readingId = document.getElementById('editReadingId').value;
+
+    if (!confirm('Mark this reading as finished with today\'s date?')) {
+        return;
+    }
+
+    try {
+        await GreatReads.finishReading(readingId);
+        GreatReads.showToast('Reading marked as finished!', 'success');
+
+        // Close modal
+        const modal = bootstrap.Modal.getInstance(document.getElementById('editReadingModal'));
+        modal.hide();
+
+        await loadTBRReadings(); // Refresh the list
+    } catch (error) {
+        // Error already handled by apiCall
+    }
+}
+
+// ── Update Progress Modal ────────────────────────────────────────────────────
+
+function showUpdateProgressModal(readingId) {
+    const reading = currentReadings.find(r => r.id === readingId);
+    if (!reading) return;
+
+    const totalPages = reading.book?.page_count || 0;
+    const currentPercent = reading.current_progress_percent || 0;
+    const currentPage = reading.current_progress_page || 0;
+
+    document.getElementById('updateProgressReadingId').value = readingId;
+    document.getElementById('updateProgressBookTitle').textContent = reading.book.title;
+
+    const percentField = document.getElementById('updateProgressPercent');
+    const pageField = document.getElementById('updateProgressPage');
+    const totalSpan = document.getElementById('updateProgressTotalPages');
+
+    percentField.value = currentPercent.toFixed(1);
+    percentField.dataset.totalPages = totalPages;
+    pageField.value = currentPage;
+    pageField.max = totalPages;
+    totalSpan.textContent = `/ ${totalPages || '--'}`;
+
+    // Remove old listeners by replacing the nodes
+    const newPercent = percentField.cloneNode(true);
+    const newPage = pageField.cloneNode(true);
+    percentField.parentNode.replaceChild(newPercent, percentField);
+    pageField.parentNode.replaceChild(newPage, pageField);
+
+    if (totalPages > 0) {
+        newPercent.addEventListener('input', function () {
+            const p = parseFloat(this.value) || 0;
+            newPage.value = Math.round((p / 100) * totalPages);
+        });
+        newPage.addEventListener('input', function () {
+            const pg = parseInt(this.value) || 0;
+            newPercent.value = ((pg / totalPages) * 100).toFixed(1);
+        });
+    }
+
+    const modal = new bootstrap.Modal(document.getElementById('updateProgressModal'));
+    modal.show();
+}
+
+async function saveUpdateProgress() {
+    const readingId = document.getElementById('updateProgressReadingId').value;
+    const percentField = document.getElementById('updateProgressPercent');
+    const newPercent = parseFloat(percentField.value);
+
+    if (isNaN(newPercent) || newPercent < 0 || newPercent > 100) {
+        GreatReads.showToast('Please enter a valid percentage (0–100).', 'error');
+        return;
+    }
+
+    try {
+        await GreatReads.apiCall(`/readings/${readingId}/progress`, {
+            method: 'PUT',
+            params: { current_percent: newPercent }
+        });
+
+        // Close update-progress modal
+        const upModal = bootstrap.Modal.getInstance(document.getElementById('updateProgressModal'));
+        upModal.hide();
+
+        if (newPercent >= 100) {
+            // Show ratings prompt before finishing
+            await loadTBRReadings(); // refresh so card data is fresh
+            showRatingsAfterFinishModal(parseInt(readingId));
+        } else {
+            GreatReads.showToast('Progress updated!', 'success');
+            await loadTBRReadings();
+        }
+    } catch (error) {
+        // Error already handled by apiCall
+    }
+}
+
+// ── Rate Your Read Modal ─────────────────────────────────────────────────────
+
+function showRatingsAfterFinishModal(readingId) {
+    const reading = currentReadings.find(r => r.id === readingId);
+    document.getElementById('rateAfterFinishReadingId').value = readingId;
+    document.getElementById('rateAfterFinishBookTitle').textContent =
+        reading ? reading.book.title : '';
+
+    // Reset all rating inputs then initialise emoji widgets
+    const ratingIds = ['finishRatingEnjoyment', 'finishRatingWriting', 'finishRatingCharacters',
+                       'finishRatingWorldBuilding', 'finishRatingReadability',
+                       'finishRatingHorror', 'finishRatingSpice'];
+    ratingIds.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '0';
+    });
+
+    // Initialise emoji widgets inside this modal only
+    document.querySelectorAll('#rateAfterFinishModal .emoji-rating').forEach(container => {
+        GreatReads.initEmojiRating(container);
+    });
+
+    const modal = new bootstrap.Modal(document.getElementById('rateAfterFinishModal'));
+    modal.show();
+}
+
+async function skipRatingsAndFinish() {
+    const readingId = document.getElementById('rateAfterFinishReadingId').value;
+    try {
+        await GreatReads.finishReading(readingId);
+        GreatReads.showToast('Reading marked as finished!', 'success');
+        const modal = bootstrap.Modal.getInstance(document.getElementById('rateAfterFinishModal'));
+        modal.hide();
+        await loadTBRReadings();
+    } catch (error) {
+        // Error already handled
+    }
+}
+
+async function saveRatingsAndFinish() {
+    const readingId = document.getElementById('rateAfterFinishReadingId').value;
+
+    const ratingMap = {
+        enjoyment:     'finishRatingEnjoyment',
+        writing:       'finishRatingWriting',
+        characters:    'finishRatingCharacters',
+        world_building:'finishRatingWorldBuilding',
+        readability:   'finishRatingReadability',
+        horror:        'finishRatingHorror',
+        spice:         'finishRatingSpice'
+    };
+
+    const updateData = {};
+    Object.entries(ratingMap).forEach(([key, id]) => {
+        const val = parseInt(document.getElementById(id)?.value || '0');
+        updateData[`rating_${key}`] = val > 0 ? Math.min(5, val) : null;
+    });
+
+    try {
+        // Save ratings first
+        await GreatReads.apiCall(`/readings/${readingId}`, {
+            method: 'PUT',
+            data: updateData
+        });
+        // Then mark as finished
+        await GreatReads.finishReading(readingId);
+
+        GreatReads.showToast('Reading finished and ratings saved!', 'success');
+        const modal = bootstrap.Modal.getInstance(document.getElementById('rateAfterFinishModal'));
+        modal.hide();
+        await loadTBRReadings();
+    } catch (error) {
+        // Error already handled
+    }
+}
+
+// ── End Update Progress / Rate Modal helpers ─────────────────────────────────
+
+async function deleteReadingFromModal() {
+    const readingId = document.getElementById('editReadingId').value;
+
+    if (!confirm('Are you sure you want to delete this reading? This cannot be undone.')) {
+        return;
+    }
+
+    try {
+        await GreatReads.apiCall(`/readings/${readingId}`, {
+            method: 'DELETE'
+        });
+
+        GreatReads.showToast('Reading deleted successfully!', 'success');
+
+        // Close modal
+        const modal = bootstrap.Modal.getInstance(document.getElementById('editReadingModal'));
+        modal.hide();
+
+        await loadTBRReadings(); // Refresh the list
+    } catch (error) {
+        console.error('Error deleting reading:', error);
+        GreatReads.showToast('Error deleting reading: ' + error.message, 'error');
+    }
+}
+
+function refreshReadings() {
+    loadTBRReadings();
+}
+
+function showErrorState() {
+    document.getElementById('loading-state').classList.add('d-none');
+    document.getElementById('tbr-container').innerHTML = `
+        <div class="alert alert-danger text-center">
+            <i class="fas fa-exclamation-triangle me-2"></i>
+            Error loading your TBR list. Please try refreshing the page.
+        </div>
+    `;
+    document.getElementById('tbr-container').classList.remove('d-none');
+}
+
+async function addNewReading() {
+    console.log('addNewReading called');
+
+    // Reset form first
+    const form = document.getElementById('addReadingForm');
+    form.reset();
+
+    // Show the add reading modal
+    const modal = new bootstrap.Modal(document.getElementById('addReadingModal'));
+    modal.show();
+
+    console.log('Modal shown, loading books...');
+
+    // Load books for selection
+    await loadBooksForSelection();
+
+    // Clear the search box AFTER loading books
+    const bookSearch = document.getElementById('bookSearch');
+    if (bookSearch) {
+        bookSearch.value = '';
+        // Trigger the input event to reset the filter
+        bookSearch.dispatchEvent(new Event('input'));
+    }
+
+    console.log('Books loaded');
+}
+
+async function recalculateChains() {
+    try {
+        await GreatReads.recalculateChains();
+        GreatReads.showToast('Chains recalculated successfully!', 'success');
+        await loadTBRReadings(); // Refresh the list
+    } catch (error) {
+        // Error already handled by apiCall
+    }
+}
+
+// Reorder modal functionality
+let reorderSortables = {};
+let reorderReadingsByMedia = {};
+let checkedReadingIds = new Set(); // Track checked items across filters
+
+function showReorderModal() {
+    const modal = new bootstrap.Modal(document.getElementById('reorderModal'));
+
+    // Reset checked state when opening modal
+    checkedReadingIds.clear();
+
+    // Group readings by media type and store for filtering
+    reorderReadingsByMedia = {
+        'ebook': allReadings.filter(r => r.media === 'Ebook'),
+        'audio': allReadings.filter(r => r.media === 'Audio'),
+        'physical': allReadings.filter(r => r.media === 'Physical')
+    };
+
+    // Populate each list
+    populateReorderList('ebook-list', reorderReadingsByMedia['ebook']);
+    populateReorderList('audio-list', reorderReadingsByMedia['audio']);
+    populateReorderList('physical-list', reorderReadingsByMedia['physical']);
+
+    // Initialize sortable for each list
+    initializeReorderSortable('ebook-list');
+    initializeReorderSortable('audio-list');
+    initializeReorderSortable('physical-list');
+
+    // Setup search and select all
+    setupReorderSearch();
+
+    // Setup tab change listeners
+    document.querySelectorAll('#reorderTabs .nav-link').forEach(tab => {
+        tab.addEventListener('shown.bs.tab', () => {
+            updateSelectAllButton();
+        });
+    });
+
+    modal.show();
+}
+
+function setupReorderSearch() {
+    const searchInput = document.getElementById('reorderSearchInput');
+    const clearButton = document.getElementById('clearReorderSearch');
+    const selectAllButton = document.getElementById('selectAllReorder');
+
+    // Clear previous listeners
+    const newSearchInput = searchInput.cloneNode(true);
+    searchInput.parentNode.replaceChild(newSearchInput, searchInput);
+    const newClearButton = clearButton.cloneNode(true);
+    clearButton.parentNode.replaceChild(newClearButton, clearButton);
+    const newSelectAllButton = selectAllButton.cloneNode(true);
+    selectAllButton.parentNode.replaceChild(newSelectAllButton, selectAllButton);
+
+    // Add search listener
+    newSearchInput.addEventListener('input', (e) => {
+        filterReorderLists(e.target.value);
+    });
+
+    // Add clear listener
+    newClearButton.addEventListener('click', () => {
+        newSearchInput.value = '';
+        filterReorderLists('');
+    });
+
+    // Add select all listener
+    newSelectAllButton.addEventListener('click', () => {
+        toggleSelectAll();
+    });
+}
+
+function updateSelectAllButton() {
+    const selectAllButton = document.getElementById('selectAllReorder');
+    if (!selectAllButton) return;
+
+    // Get the currently active tab
+    const activeTab = document.querySelector('#reorderTabs .nav-link.active');
+    let listId = 'ebook-list';
+
+    if (activeTab.id === 'audio-tab') {
+        listId = 'audio-list';
+    } else if (activeTab.id === 'physical-tab') {
+        listId = 'physical-list';
+    }
+
+    const list = document.getElementById(listId);
+    if (!list) return;
+
+    const visibleCheckboxes = list.querySelectorAll('.reorder-checkbox');
+    const checkedCount = list.querySelectorAll('.reorder-checkbox:checked').length;
+
+    if (checkedCount > 0 && checkedCount === visibleCheckboxes.length) {
+        // All visible items are selected - show "Deselect All"
+        selectAllButton.innerHTML = '<i class="fas fa-times-circle me-1"></i>Deselect All';
+        selectAllButton.classList.remove('btn-outline-primary');
+        selectAllButton.classList.add('btn-outline-danger');
+    } else if (checkedCount > 0) {
+        // Some items selected - show "Deselect All"
+        selectAllButton.innerHTML = '<i class="fas fa-times-circle me-1"></i>Deselect All';
+        selectAllButton.classList.remove('btn-outline-primary');
+        selectAllButton.classList.add('btn-outline-danger');
+    } else {
+        // Nothing selected - show "Select All"
+        selectAllButton.innerHTML = '<i class="fas fa-check-double me-1"></i>Select All';
+        selectAllButton.classList.remove('btn-outline-danger');
+        selectAllButton.classList.add('btn-outline-primary');
+    }
+
+    updateBulkFormatButton();
+}
+
+function updateBulkFormatButton() {
+    const btn = document.getElementById('bulkFormatBtn');
+    const countEl = document.getElementById('bulkFormatCount');
+    if (!btn) return;
+
+    const count = checkedReadingIds.size;
+    btn.disabled = count === 0;
+    if (countEl) {
+        countEl.textContent = count > 0 ? ` (${count})` : '';
+    }
+}
+
+function toggleSelectAll() {
+    // Get the currently active tab
+    const activeTab = document.querySelector('#reorderTabs .nav-link.active');
+    let listId = 'ebook-list';
+
+    if (activeTab.id === 'audio-tab') {
+        listId = 'audio-list';
+    } else if (activeTab.id === 'physical-tab') {
+        listId = 'physical-list';
+    }
+
+    const list = document.getElementById(listId);
+    if (!list) return;
+
+    const visibleCheckboxes = list.querySelectorAll('.reorder-checkbox');
+    const checkedCount = list.querySelectorAll('.reorder-checkbox:checked').length;
+
+    if (checkedCount > 0) {
+        // Deselect all visible items
+        visibleCheckboxes.forEach(checkbox => {
+            if (checkbox.checked) {
+                checkbox.checked = false;
+                const readingId = parseInt(checkbox.dataset.readingId);
+                checkedReadingIds.delete(readingId);
+                checkbox.closest('.reorder-item').classList.remove('selected');
+            }
+        });
+    } else {
+        // Select all visible items
+        visibleCheckboxes.forEach(checkbox => {
+            if (!checkbox.checked) {
+                checkbox.checked = true;
+                const readingId = parseInt(checkbox.dataset.readingId);
+                checkedReadingIds.add(readingId);
+                checkbox.closest('.reorder-item').classList.add('selected');
+            }
+        });
+    }
+
+    // Update button state
+    updateSelectAllButton();
+}
+
+function filterReorderLists(searchTerm) {
+    const term = searchTerm.toLowerCase().trim();
+
+    // Filter each media type
+    const filteredEbook = term ? reorderReadingsByMedia['ebook'].filter(r =>
+        r.book.title.toLowerCase().includes(term) ||
+        (r.book.author && r.book.author.toLowerCase().includes(term)) ||
+        (r.book.series && r.book.series.toLowerCase().includes(term))
+    ) : reorderReadingsByMedia['ebook'];
+
+    const filteredAudio = term ? reorderReadingsByMedia['audio'].filter(r =>
+        r.book.title.toLowerCase().includes(term) ||
+        (r.book.author && r.book.author.toLowerCase().includes(term)) ||
+        (r.book.series && r.book.series.toLowerCase().includes(term))
+    ) : reorderReadingsByMedia['audio'];
+
+    const filteredPhysical = term ? reorderReadingsByMedia['physical'].filter(r =>
+        r.book.title.toLowerCase().includes(term) ||
+        (r.book.author && r.book.author.toLowerCase().includes(term)) ||
+        (r.book.series && r.book.series.toLowerCase().includes(term))
+    ) : reorderReadingsByMedia['physical'];
+
+    // Repopulate lists with filtered results
+    populateReorderList('ebook-list', filteredEbook);
+    populateReorderList('audio-list', filteredAudio);
+    populateReorderList('physical-list', filteredPhysical);
+
+    // Re-initialize sortable (but don't destroy - let it update)
+    initializeReorderSortable('ebook-list');
+    initializeReorderSortable('audio-list');
+    initializeReorderSortable('physical-list');
+
+    // Update the select/deselect all button
+    updateSelectAllButton();
+}
+
+function populateReorderList(listId, readings) {
+    const list = document.getElementById(listId);
+    if (!list) return;
+
+    if (readings.length === 0) {
+        list.innerHTML = '<div class="text-center text-muted py-4">No books found</div>';
+        return;
+    }
+
+    list.innerHTML = readings.map(reading => {
+        const seriesInfo = reading.book.series ? `<div class="reorder-item-series">${reading.book.series}${reading.book.series_number ? ' #' + reading.book.series_number : ''}</div>` : '';
+        const isChecked = checkedReadingIds.has(reading.id);
+        const checkedAttr = isChecked ? 'checked' : '';
+        const selectedClass = isChecked ? 'selected' : '';
+
+        return `
+        <div class="reorder-item ${selectedClass}" data-reading-id="${reading.id}"
+             data-title="${(reading.book.title || '').toLowerCase()}"
+             data-author="${(reading.book.author || '').toLowerCase()}"
+             data-series="${(reading.book.series || '').toLowerCase()}">
+            <div class="reorder-item-checkbox">
+                <input type="checkbox" class="reorder-checkbox" data-reading-id="${reading.id}" ${checkedAttr}>
+            </div>
+            <div class="reorder-drag-handle">
+                <i class="fas fa-grip-vertical"></i>
+            </div>
+            <div class="reorder-item-content">
+                <div class="reorder-item-title">${reading.book.title}</div>
+                <div class="reorder-item-author">${reading.book.author || 'Unknown Author'}</div>
+                ${seriesInfo}
+            </div>
+        </div>
+    `;
+    }).join('');
+
+    // Add checkbox event listeners
+    list.querySelectorAll('.reorder-checkbox').forEach(checkbox => {
+        checkbox.addEventListener('change', (e) => {
+            const readingId = parseInt(e.target.dataset.readingId);
+            const item = e.target.closest('.reorder-item');
+
+            if (e.target.checked) {
+                item.classList.add('selected');
+                checkedReadingIds.add(readingId);
+            } else {
+                item.classList.remove('selected');
+                checkedReadingIds.delete(readingId);
+            }
+
+            // Update the select/deselect all button state
+            updateSelectAllButton();
+        });
+
+        // Prevent checkbox clicks from triggering drag
+        checkbox.addEventListener('mousedown', (e) => {
+            e.stopPropagation();
+        });
+    });
+}
+
+function initializeReorderSortable(listId) {
+    const list = document.getElementById(listId);
+    if (!list) return;
+
+    // Destroy existing sortable if it exists
+    if (reorderSortables[listId]) {
+        reorderSortables[listId].destroy();
+    }
+
+    let draggedItem = null;
+    let selectedItems = [];
+
+    // Create new sortable with custom multi-drag handling
+    reorderSortables[listId] = new Sortable(list, {
+        animation: 150,
+        handle: '.reorder-drag-handle',
+        ghostClass: 'sortable-ghost',
+        chosenClass: 'sortable-chosen',
+        dragClass: 'sortable-drag',
+
+        onStart: function(evt) {
+            draggedItem = evt.item;
+            const checkbox = draggedItem.querySelector('.reorder-checkbox');
+
+            // Collect all selected items (including the one being dragged)
+            selectedItems = Array.from(list.querySelectorAll('.reorder-checkbox:checked'))
+                .map(cb => cb.closest('.reorder-item'))
+                .filter(item => item !== null);
+
+            // If the dragged item is not checked, treat it as single-item drag
+            if (!checkbox.checked) {
+                selectedItems = [draggedItem];
+            } else {
+                // Make sure dragged item is in the selected list
+                if (!selectedItems.includes(draggedItem)) {
+                    selectedItems.push(draggedItem);
+                }
+            }
+
+            // Sort selected items by their current position
+            selectedItems.sort((a, b) => {
+                const items = Array.from(list.children);
+                return items.indexOf(a) - items.indexOf(b);
+            });
+        },
+
+        onEnd: function(evt) {
+            if (selectedItems.length <= 1) {
+                // Single item drag - normal behavior
+                selectedItems = [];
+                return;
+            }
+
+            // Multi-item drag - insert all selected items consecutively at drop position
+
+            // Step 1: Remove ALL selected items from DOM (including the dragged one)
+            selectedItems.forEach(item => {
+                if (item.parentNode) {
+                    item.remove();
+                }
+            });
+
+            // Step 2: Get current list state AFTER removal
+            const currentItems = Array.from(list.children);
+
+            // Step 3: Calculate where to insert
+            // evt.newIndex tells us where the dragged item was dropped
+            // But since we removed items, we need to adjust the index
+            let targetIndex = evt.newIndex;
+
+            // Clamp to valid range
+            if (targetIndex > currentItems.length) {
+                targetIndex = currentItems.length;
+            }
+
+            // Step 4: Insert all selected items in their original order at the target position
+            if (targetIndex >= currentItems.length) {
+                // Append to end
+                selectedItems.forEach(item => {
+                    list.appendChild(item);
+                });
+            } else {
+                // Insert before the item at targetIndex
+                const referenceNode = currentItems[targetIndex];
+                selectedItems.forEach(item => {
+                    list.insertBefore(item, referenceNode);
+                });
+            }
+
+            // Uncheck all items after drag and clear from global state
+            list.querySelectorAll('.reorder-checkbox:checked').forEach(cb => {
+                const readingId = parseInt(cb.dataset.readingId);
+                cb.checked = false;
+                cb.closest('.reorder-item').classList.remove('selected');
+                checkedReadingIds.delete(readingId);
+            });
+
+            selectedItems = [];
+            updateSelectAllButton();
+        }
+    });
+}
+
+async function bulkConvertFormat(targetFormat) {
+    const ids = Array.from(checkedReadingIds);
+    if (ids.length === 0) return;
+
+    // Only convert books that aren't already in the target format
+    const toConvert = allReadings.filter(r => ids.includes(r.id) && r.media !== targetFormat);
+    if (toConvert.length === 0) {
+        GreatReads.showToast(`Selected books are already ${targetFormat}`, 'info');
+        return;
+    }
+
+    if (!confirm(`Convert ${toConvert.length} book(s) to ${targetFormat}?`)) {
+        return;
+    }
+
+    try {
+        const response = await fetch(apiUrl('/api/readings/bulk-update-format'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                reading_ids: toConvert.map(r => r.id),
+                new_format: targetFormat
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to convert formats');
+        }
+
+        GreatReads.showToast(`Converted ${toConvert.length} book(s) to ${targetFormat}`, 'success');
+
+        // Refresh underlying data and rebuild the modal lists in place
+        await loadTBRReadings();
+        refreshReorderModalLists();
+
+        // Jump to the target format's tab so the moved books are visible
+        const tabMap = { 'Ebook': 'ebook-tab', 'Audio': 'audio-tab', 'Physical': 'physical-tab' };
+        const targetTab = document.getElementById(tabMap[targetFormat]);
+        if (targetTab) {
+            bootstrap.Tab.getOrCreateInstance(targetTab).show();
+        }
+    } catch (error) {
+        console.error('Error converting formats:', error);
+        GreatReads.showToast('Error converting formats', 'error');
+    }
+}
+
+function refreshReorderModalLists() {
+    // Reset selection and search, then re-group and repopulate from current data
+    checkedReadingIds.clear();
+    const searchInput = document.getElementById('reorderSearchInput');
+    if (searchInput) searchInput.value = '';
+
+    reorderReadingsByMedia = {
+        'ebook': allReadings.filter(r => r.media === 'Ebook'),
+        'audio': allReadings.filter(r => r.media === 'Audio'),
+        'physical': allReadings.filter(r => r.media === 'Physical')
+    };
+
+    populateReorderList('ebook-list', reorderReadingsByMedia['ebook']);
+    populateReorderList('audio-list', reorderReadingsByMedia['audio']);
+    populateReorderList('physical-list', reorderReadingsByMedia['physical']);
+
+    initializeReorderSortable('ebook-list');
+    initializeReorderSortable('audio-list');
+    initializeReorderSortable('physical-list');
+
+    updateSelectAllButton();
+}
+
+async function saveReorder() {
+    try {
+        // Get the order from each list
+        const ebookOrder = getListOrder('ebook-list');
+        const audioOrder = getListOrder('audio-list');
+        const physicalOrder = getListOrder('physical-list');
+
+        // Combine all orders - we need to interleave them properly
+        // The backend expects all reading IDs in the desired global order
+        const allOrder = interleaveMediaOrders(ebookOrder, audioOrder, physicalOrder);
+
+        // Call the bulk reorder API
+        const response = await fetch(apiUrl('/api/readings/bulk-reorder'), {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(allOrder)
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to reorder readings');
+        }
+
+        GreatReads.showToast('Reading order updated successfully!', 'success');
+
+        // Close modal
+        const modal = bootstrap.Modal.getInstance(document.getElementById('reorderModal'));
+        modal.hide();
+
+        // Refresh the TBR list
+        await loadTBRReadings();
+    } catch (error) {
+        console.error('Error saving reorder:', error);
+        GreatReads.showToast('Error saving order', 'error');
+    }
+}
+
+function getListOrder(listId) {
+    const list = document.getElementById(listId);
+    if (!list) return [];
+
+    const items = list.querySelectorAll('.reorder-item');
+    return Array.from(items).map(item => parseInt(item.dataset.readingId));
+}
+
+function interleaveMediaOrders(ebookOrder, audioOrder, physicalOrder) {
+    // We need to create a global order that maintains the relative order within each media type
+    // Strategy: Use the current allReadings order as a template, but update positions based on new orders
+
+    const mediaOrders = {
+        'Ebook': ebookOrder,
+        'Audio': audioOrder,
+        'Physical': physicalOrder
+    };
+
+    const mediaPositions = {
+        'Ebook': 0,
+        'Audio': 0,
+        'Physical': 0
+    };
+
+    const result = [];
+
+    // Go through allReadings and replace each reading with the next one from its media type's new order
+    for (const reading of allReadings) {
+        const media = reading.media;
+        const order = mediaOrders[media];
+        const position = mediaPositions[media];
+
+        if (order && position < order.length) {
+            result.push(order[position]);
+            mediaPositions[media]++;
+        }
+    }
+
+    return result;
+}
+
+let booksLoadedOnce = false;
+let allBooks = [];
+
+async function loadBooksForSelection() {
+    console.log('loadBooksForSelection called');
+    try {
+        console.log('Fetching books from API...');
+        // Add cache-busting parameter to ensure fresh data
+        const timestamp = new Date().getTime();
+        const response = await fetch(apiUrl(`/api/books/?limit=10000&_t=${timestamp}`));
+        console.log('Response status:', response.status);
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        const books = await response.json();
+        console.log('Loaded books:', books.length, books);
+
+        // Store books data for reread detection and autocomplete
+        window.booksData = books;
+
+        // Sort books alphabetically by title
+        allBooks = books.sort((a, b) => a.title.localeCompare(b.title));
+
+        // Set up event listeners only once
+        if (!booksLoadedOnce) {
+            console.log('Setting up autocomplete');
+            booksLoadedOnce = true;
+            setupAutocomplete();
+        }
+
+    } catch (error) {
+        console.error('Error loading books:', error);
+        GreatReads.showToast('Error loading books: ' + error.message, 'error');
+    }
+}
+
+function setupAutocomplete() {
+    const bookSearch = document.getElementById('bookSearch');
+    const resultsDiv = document.getElementById('bookSearchResults');
+    const selectedBookId = document.getElementById('selectedBookId');
+
+    if (!bookSearch || !resultsDiv || !selectedBookId) {
+        console.error('Autocomplete elements not found!');
+        return;
+    }
+
+    // Show results when typing
+    bookSearch.addEventListener('input', (e) => {
+        const searchTerm = e.target.value.toLowerCase().trim();
+
+        // Clear selection when user types
+        selectedBookId.value = '';
+
+        if (searchTerm.length < 2) {
+            resultsDiv.style.display = 'none';
+            return;
+        }
+
+        // Filter books
+        const matches = allBooks.filter(book =>
+            book.title.toLowerCase().includes(searchTerm) ||
+            book.author.toLowerCase().includes(searchTerm)
+        ).slice(0, 50); // Limit to 50 results
+
+        if (matches.length === 0) {
+            resultsDiv.innerHTML = '<div class="list-group-item text-muted">No books found</div>';
+            resultsDiv.style.display = 'block';
+            return;
+        }
+
+        // Display results
+        resultsDiv.innerHTML = matches.map(book => `
+            <a href="#" class="list-group-item list-group-item-action" data-book-id="${book.id}" data-book-title="${book.title}" data-book-author="${book.author}">
+                <div class="fw-bold">${book.title}</div>
+                <small class="text-muted">${book.author}</small>
+            </a>
+        `).join('');
+
+        resultsDiv.style.display = 'block';
+    });
+
+    // Handle result selection
+    resultsDiv.addEventListener('click', (e) => {
+        e.preventDefault();
+        const item = e.target.closest('.list-group-item');
+        if (!item) return;
+
+        const bookId = item.dataset.bookId;
+        const bookTitle = item.dataset.bookTitle;
+        const bookAuthor = item.dataset.bookAuthor;
+
+        bookSearch.value = `${bookTitle} by ${bookAuthor}`;
+        selectedBookId.value = bookId;
+        resultsDiv.style.display = 'none';
+    });
+
+    // Hide results when clicking outside
+    document.addEventListener('click', (e) => {
+        if (!bookSearch.contains(e.target) && !resultsDiv.contains(e.target)) {
+            resultsDiv.style.display = 'none';
+        }
+    });
+
+    // Show results when focusing on search box if there's text
+    bookSearch.addEventListener('focus', (e) => {
+        if (e.target.value.length >= 2 && resultsDiv.children.length > 0) {
+            resultsDiv.style.display = 'block';
+        }
+    });
+}
+
+async function submitNewReading() {
+    const form = document.getElementById('addReadingForm');
+    const bookId = document.getElementById('selectedBookId').value;
+
+    // Get media type from radio buttons
+    const mediaRadio = document.querySelector('input[name="mediaType"]:checked');
+    const media = mediaRadio ? mediaRadio.value : null;
+
+    // Get placement option
+    const placementRadio = document.querySelector('input[name="placement"]:checked');
+    const placement = placementRadio ? placementRadio.value : 'end';
+
+    if (!bookId || !media) {
+        GreatReads.showToast('Please select a book and media type', 'error');
+        return;
+    }
+
+    try {
+        // Auto-detect if this is a reread by checking if book has been read before
+        let isReread = false;
+        try {
+            const readings = await GreatReads.apiCall('/readings/?limit=10000');
+            isReread = readings.some(r => r.book_id == bookId && r.is_finished);
+        } catch (error) {
+            console.error('Error checking for rereads:', error);
+        }
+
+        const readingData = {
+            book_id: parseInt(bookId),
+            media: media,
+            reread: isReread
+        };
+
+        const response = await fetch(apiUrl('/api/readings/'), {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(readingData)
+        });
+
+        if (response.ok) {
+            const newReading = await response.json();
+
+            // Handle different placement options
+            if (placement === 'next') {
+                await moveToNextPosition(newReading.id, media);
+            } else if (placement === 'next-month') {
+                await moveToNextMonth(newReading.id, media);
+            } else if (placement === 'next-year') {
+                await moveToNextYear(newReading.id, media);
+            }
+
+            GreatReads.showToast('Reading added successfully!', 'success');
+
+            // Close modal
+            const modal = bootstrap.Modal.getInstance(document.getElementById('addReadingModal'));
+            modal.hide();
+
+            // Reset form
+            form.reset();
+
+            // Reload TBR list
+            await loadTBRReadings();
+        } else {
+            const error = await response.json();
+            GreatReads.showToast(`Error adding reading: ${error.detail}`, 'error');
+        }
+    } catch (error) {
+        console.error('Error adding reading:', error);
+        GreatReads.showToast('Error adding reading', 'error');
+    }
+}
+
+async function moveToNextPosition(readingId, media) {
+    try {
+        // Get all TBR readings
+        const readings = await GreatReads.apiCall('/readings/tbr');
+
+        // Find the current in-progress reading of the same media type
+        const currentReading = readings.find(r =>
+            r.media === media &&
+            r.date_started &&
+            !r.is_finished
+        );
+
+        if (currentReading) {
+            // Find the position of the current reading
+            const currentPosition = readings.findIndex(r => r.id === currentReading.id);
+
+            // Move the new reading to position right after current
+            const newPosition = currentPosition + 1;
+
+            await fetch(apiUrl(`/api/readings/reorder?reading_id=${readingId}&new_position=${newPosition}`), {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            });
+        } else {
+            // No current reading, find the first not-started reading of this media type
+            const firstNotStarted = readings.find(r =>
+                r.media === media &&
+                !r.date_started
+            );
+
+            if (firstNotStarted) {
+                const position = readings.findIndex(r => r.id === firstNotStarted.id);
+
+                await fetch(apiUrl(`/api/readings/reorder?reading_id=${readingId}&new_position=${position}`), {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+            }
+        }
+    } catch (error) {
+        console.error('Error moving to next position:', error);
+        // Don't show error to user - the book was still added successfully
+    }
+}
+
+async function moveToNextMonth(readingId, media) {
+    try {
+        // Get all TBR readings
+        const readings = await GreatReads.apiCall('/readings/tbr');
+
+        // Get current date info
+        const now = new Date();
+        const currentYear = now.getFullYear();
+        const currentMonth = now.getMonth(); // 0-11
+
+        // Filter readings of the same media type
+        const mediaReadings = readings.filter(r => r.media === media);
+
+        // Find the last reading that starts in the current month
+        let lastInCurrentMonth = null;
+        let lastInCurrentMonthIndex = -1;
+
+        for (let i = 0; i < mediaReadings.length; i++) {
+            const reading = mediaReadings[i];
+            if (reading.date_est_start) {
+                const startDate = new Date(reading.date_est_start);
+                if (startDate.getFullYear() === currentYear && startDate.getMonth() === currentMonth) {
+                    lastInCurrentMonth = reading;
+                    // Find this reading's position in the full readings array
+                    lastInCurrentMonthIndex = readings.findIndex(r => r.id === reading.id);
+                }
+            }
+        }
+
+        if (lastInCurrentMonthIndex >= 0) {
+            // Place after the last book in current month
+            const newPosition = lastInCurrentMonthIndex + 1;
+
+            await fetch(apiUrl(`/api/readings/reorder?reading_id=${readingId}&new_position=${newPosition}`), {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            });
+        }
+        // If no books in current month, it will stay at the end (default position)
+    } catch (error) {
+        console.error('Error moving to next month:', error);
+        // Don't show error to user - the book was still added successfully
+    }
+}
+
+async function moveToNextYear(readingId, media) {
+    try {
+        // Get all TBR readings
+        const readings = await GreatReads.apiCall('/readings/tbr');
+
+        // Get current year
+        const now = new Date();
+        const currentYear = now.getFullYear();
+
+        // Filter readings of the same media type
+        const mediaReadings = readings.filter(r => r.media === media);
+
+        // Find the last reading that starts in the current year
+        let lastInCurrentYear = null;
+        let lastInCurrentYearIndex = -1;
+
+        for (let i = 0; i < mediaReadings.length; i++) {
+            const reading = mediaReadings[i];
+            if (reading.date_est_start) {
+                const startDate = new Date(reading.date_est_start);
+                if (startDate.getFullYear() === currentYear) {
+                    lastInCurrentYear = reading;
+                    // Find this reading's position in the full readings array
+                    lastInCurrentYearIndex = readings.findIndex(r => r.id === reading.id);
+                }
+            }
+        }
+
+        if (lastInCurrentYearIndex >= 0) {
+            // Place after the last book in current year
+            const newPosition = lastInCurrentYearIndex + 1;
+
+            await fetch(apiUrl(`/api/readings/reorder?reading_id=${readingId}&new_position=${newPosition}`), {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            });
+        }
+        // If no books in current year, it will stay at the end (default position)
+    } catch (error) {
+        console.error('Error moving to next year:', error);
+        // Don't show error to user - the book was still added successfully
+    }
+}
+
+// Helper function to normalize media types
+function normalizeMediaType(mediaType) {
+    if (!mediaType) return null;
+    const normalized = {
+        'hardcover': 'physical',
+        'audiobook': 'audio'
+    };
+    const lower = mediaType.toLowerCase();
+    return normalized[lower] || mediaType;
+}
+
+// Helper functions for format badges and borders
+function getFormatClass(mediaType) {
+    const normalized = normalizeMediaType(mediaType);
+    const formatMap = {
+        'ebook': 'ebook',
+        'physical': 'physical',
+        'audio': 'audio'
+    };
+    return formatMap[normalized?.toLowerCase()] || '';
+}
+
+function getFormatBadge(mediaType) {
+    const normalized = normalizeMediaType(mediaType);
+    const badgeMap = {
+        'ebook': '<span class="media-badge-large ebook">Ebook</span>',
+        'physical': '<span class="media-badge-large physical">Physical</span>',
+        'audio': '<span class="media-badge-large audio">Audio</span>'
+    };
+    return badgeMap[normalized?.toLowerCase()] || '';
+}
+</script>
+{% endblock %}

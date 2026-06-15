@@ -1,0 +1,2206 @@
+{% extends "base.html" %}
+
+{% block title %}Books - GreatReads{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="d-flex justify-content-between align-items-start mb-4 flex-wrap">
+            <div class="page-header-bookish mb-2 mb-md-0">
+                <div class="page-header-icon">
+                    <i class="fas fa-book-open"></i>
+                </div>
+                <div class="page-header-content">
+                    <h1 class="page-header-title mb-0">All Books</h1>
+                </div>
+            </div>
+            <div class="d-flex flex-column flex-sm-row gap-2">
+                <button class="btn btn-primary" onclick="addNewBook()">
+                    <i class="fas fa-plus me-1"></i>Add Book
+                </button>
+                <button class="btn btn-outline-primary" onclick="addNewSeries()">
+                    <i class="fas fa-layer-group me-1"></i>Add Series
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Search and Filters -->
+<div class="row mb-4">
+    <div class="col-12 col-md-4 mb-2 mb-md-0">
+        <div class="input-group">
+            <span class="input-group-text">
+                <i class="fas fa-search"></i>
+            </span>
+            <input type="text" class="form-control" id="searchInput" placeholder="Search by title, author, universe, or series..." onkeyup="applyFilters()">
+        </div>
+    </div>
+    <div class="col-6 col-md-2 mb-2 mb-md-0">
+        <select class="form-select" id="genreFilter" onchange="applyFilters()">
+            <option value="">All Genres</option>
+        </select>
+    </div>
+    <div class="col-6 col-md-2 mb-2 mb-md-0">
+        <select class="form-select" id="tagFilter" onchange="applyFilters()">
+            <option value="">All Tags</option>
+        </select>
+    </div>
+    <div class="col-6 col-md-2 mb-2 mb-md-0">
+        <button type="button" class="btn btn-outline-success w-100" onclick="toggleReadFilter()" id="readFilterBtn">
+            <i class="fas fa-book-reader me-1 d-none d-lg-inline"></i><span class="d-none d-md-inline">Read Books</span><span class="d-md-none">Read</span>
+        </button>
+    </div>
+    <div class="col-6 col-md-2">
+        <div class="d-flex gap-1">
+            <button type="button" class="btn btn-outline-danger flex-fill" onclick="toggleMissingDataFilter()" id="missingDataBtn" title="Show books with missing data">
+                <i class="fas fa-exclamation"></i>
+            </button>
+            <button type="button" class="btn btn-outline-primary flex-fill" onclick="toggleBulkEdit()" id="bulkEditToggle" title="Bulk Edit">
+                <i class="fas fa-check-square"></i>
+            </button>
+            <button type="button" class="btn btn-outline-primary flex-fill d-none" onclick="openBulkEditModal()" id="bulkEditActionsBtn" title="Edit Selected">
+                <i class="fas fa-edit"></i>
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Books Table -->
+<div class="row">
+    <div class="col-12">
+        <!-- Loading State -->
+        <div id="loading-state" class="text-center py-5">
+            <i class="fas fa-spinner fa-spin fa-2x text-primary"></i>
+            <p class="mt-3 text-muted">Loading books...</p>
+        </div>
+        
+        <!-- Books Table -->
+        <div id="books-container" class="d-none">
+            <div class="table-responsive">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th style="width: 50px;" class="bulk-edit-column d-none">
+                                <input type="checkbox" id="selectAll" onchange="toggleSelectAll()">
+                            </th>
+                            <th style="width: 80px; cursor: pointer;" onclick="sortByColumn('cover')" id="header-cover" class="d-none d-md-table-cell">
+                                Cover
+                            </th>
+                            <th style="cursor: pointer;" onclick="sortByColumn('title')" id="header-title">
+                                Title
+                            </th>
+                            <th style="cursor: pointer;" onclick="sortByColumn('author')" id="header-author" class="d-none d-lg-table-cell">
+                                Author
+                            </th>
+                            <th style="cursor: pointer;" onclick="sortByColumn('series')" id="header-series" class="d-none d-xl-table-cell">
+                                Series
+                            </th>
+                            <th style="cursor: pointer;" onclick="sortByColumn('genre')" id="header-genre" class="d-none d-xl-table-cell">
+                                Genre
+                            </th>
+                            <th style="cursor: pointer;" onclick="sortByColumn('page_count')" id="header-page_count" class="d-none d-xl-table-cell">
+                                Pages
+                            </th>
+                            <th style="cursor: pointer;" onclick="sortByColumn('word_count')" id="header-word_count" class="d-none d-xl-table-cell">
+                                Words
+                            </th>
+                            <th style="cursor: pointer;" onclick="sortByColumn('date_published')" id="header-date_published" class="d-none d-xl-table-cell">
+                                Published
+                            </th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="books-table-body">
+                        <!-- Book rows will be inserted here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        
+        <!-- Empty State -->
+        <div id="empty-state" class="text-center py-5 d-none">
+            <i class="fas fa-search fa-3x text-muted mb-3"></i>
+            <h3 class="text-muted">No books found</h3>
+            <p class="text-muted">Try adjusting your search criteria or add some books.</p>
+        </div>
+    </div>
+</div>
+
+<!-- Add New Book Modal -->
+<div class="modal fade" id="addBookModal" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-fullscreen-sm-down">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="fas fa-plus me-2"></i>Add New Book
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="addBookForm">
+                    <!-- Book Cover Section -->
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <label class="form-label">Book Cover</label>
+                            <div class="row">
+                                <div class="col-12 col-md-auto mb-3 mb-md-0 text-center text-md-start">
+                                    <div id="addBookCover" class="book-cover-container mx-auto mx-md-0" style="width: 120px; height: 180px; position: relative; border: 2px dashed #dee2e6; border-radius: 8px; overflow: hidden; background: #f8f9fa;">
+                                        <img id="addBookCoverImg" src="" alt="Book Cover" style="width: 100%; height: 100%; object-fit: cover; display: none;">
+                                        <div class="book-cover-fallback text-center" style="display: flex; align-items: center; justify-content: center; height: 100%; color: #adb5bd;">
+                                            <i class="fas fa-book fa-3x"></i>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-12 col-md">
+                                    <input type="file" class="form-control mb-2" id="addCoverUpload" accept="image/*" onchange="handleAddCoverUpload(event)">
+                                    <small class="text-muted d-block mb-2">Upload a cover image (JPG, PNG, etc.)</small>
+                                    <div class="input-group input-group-sm">
+                                        <input type="url" class="form-control" id="addCoverUrl" placeholder="Or paste image URL: https://example.com/cover.jpg">
+                                        <button class="btn btn-outline-primary" type="button" onclick="downloadCoverFromUrl('add')" title="Download from URL">
+                                            <i class="fas fa-download"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-12 mb-3">
+                            <label for="bookTitle" class="form-label">Title <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="bookTitle" name="title" required>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-12 col-md-6 mb-3">
+                            <label for="authorFirst" class="form-label">Author First Name</label>
+                            <input type="text" class="form-control" id="authorFirst" name="author_name_first">
+                        </div>
+                        <div class="col-12 col-md-6 mb-3">
+                            <label for="authorLast" class="form-label">Author Last Name</label>
+                            <input type="text" class="form-control" id="authorLast" name="author_name_second">
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-12 col-md-4 mb-3">
+                            <label for="wordCount" class="form-label">Word Count</label>
+                            <input type="number" class="form-control" id="wordCount" name="word_count" min="0">
+                        </div>
+                        <div class="col-12 col-md-4 mb-3">
+                            <label for="pageCount" class="form-label">Page Count</label>
+                            <input type="number" class="form-control" id="pageCount" name="page_count" min="0">
+                        </div>
+                        <div class="col-12 col-md-4 mb-3">
+                            <label for="datePublished" class="form-label">Date Published</label>
+                            <input type="date" class="form-control" id="datePublished" name="date_published">
+                        </div>
+                    </div>
+                    
+                    <div class="row">
+                        <div class="col-md-12 mb-3">
+                            <label for="universe" class="form-label">Universe</label>
+                            <input type="text" class="form-control" id="universe" name="universe" placeholder="e.g., Cosmere, Maasverse, Discworld">
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-8 mb-3">
+                            <label for="series" class="form-label">Series</label>
+                            <input type="text" class="form-control" id="series" name="series">
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label for="seriesNumber" class="form-label">Series Number</label>
+                            <input type="number" class="form-control" id="seriesNumber" name="series_number" step="0.1" min="0">
+                        </div>
+                    </div>
+                    
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="genre" class="form-label">Genre</label>
+                            <input type="text" class="form-control" id="genre" name="genre">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="authorGender" class="form-label">Author Gender</label>
+                            <select class="form-select" id="authorGender" name="author_gender">
+                                <option value="">Select...</option>
+                                <option value="M">Male</option>
+                                <option value="F">Female</option>
+                                <option value="NB">Non-binary</option>
+                                <option value="Other">Other</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div class="row">
+                        <div class="col-md-12 mb-3">
+                            <label for="isbnId" class="form-label">ISBN</label>
+                            <input type="number" class="form-control" id="isbnId" name="isbn_id">
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="submitNewBook()">Add Book</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Add Series Modal -->
+<div class="modal fade" id="addSeriesModal" tabindex="-1">
+    <div class="modal-dialog modal-xl modal-fullscreen-sm-down">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="fas fa-layer-group me-2"></i>Add Series
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="addSeriesForm">
+                    <!-- Series-wide fields -->
+                    <div class="card mb-4">
+                        <div class="card-header bg-light">
+                            <h6 class="mb-0">Series Information</h6>
+                        </div>
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-md-12 mb-3">
+                                    <label for="seriesName" class="form-label">Series Name <span class="text-danger">*</span></label>
+                                    <div class="position-relative">
+                                        <input type="text" class="form-control" id="seriesName" placeholder="Type to search or add new..." autocomplete="off" required>
+                                        <div id="seriesNameDropdown" class="list-group position-absolute w-100" style="max-height: 200px; overflow-y: auto; z-index: 1000; display: none; border: 1px solid #dee2e6; border-radius: 0.25rem; box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);"></div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="row">
+                                <div class="col-md-6 mb-3">
+                                    <label for="seriesAuthorFirst" class="form-label">Author First Name</label>
+                                    <input type="text" class="form-control" id="seriesAuthorFirst">
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <label for="seriesAuthorLast" class="form-label">Author Last Name</label>
+                                    <input type="text" class="form-control" id="seriesAuthorLast">
+                                </div>
+                            </div>
+
+                            <div class="row">
+                                <div class="col-md-4 mb-3">
+                                    <label for="seriesGenre" class="form-label">Genre</label>
+                                    <div class="position-relative">
+                                        <input type="text" class="form-control" id="seriesGenre" placeholder="Type to search or add new..." autocomplete="off">
+                                        <div id="seriesGenreDropdown" class="list-group position-absolute w-100" style="max-height: 200px; overflow-y: auto; z-index: 1000; display: none; border: 1px solid #dee2e6; border-radius: 0.25rem; box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);"></div>
+                                    </div>
+                                </div>
+                                <div class="col-md-4 mb-3">
+                                    <label for="seriesAuthorGender" class="form-label">Author Gender</label>
+                                    <select class="form-select" id="seriesAuthorGender">
+                                        <option value="">Select...</option>
+                                        <option value="M">Male</option>
+                                        <option value="F">Female</option>
+                                        <option value="NB">Non-binary</option>
+                                        <option value="Other">Other</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-4 mb-3">
+                                    <label for="seriesUniverse" class="form-label">Universe</label>
+                                    <div class="position-relative">
+                                        <input type="text" class="form-control" id="seriesUniverse" placeholder="Type to search or add new..." autocomplete="off">
+                                        <div id="seriesUniverseDropdown" class="list-group position-absolute w-100" style="max-height: 200px; overflow-y: auto; z-index: 1000; display: none; border: 1px solid #dee2e6; border-radius: 0.25rem; box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Books in series -->
+                    <div class="card">
+                        <div class="card-header bg-light d-flex justify-content-between align-items-center">
+                            <h6 class="mb-0">Books in Series</h6>
+                            <button type="button" class="btn btn-sm btn-primary" onclick="addSeriesBookRow()">
+                                <i class="fas fa-plus me-1"></i>Add Book
+                            </button>
+                        </div>
+                        <div class="card-body">
+                            <div id="seriesBooksList">
+                                <!-- Book rows will be added here dynamically -->
+                            </div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="submitNewSeries()">Add Series</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Edit Book Modal -->
+<div class="modal fade" id="editBookModal" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-fullscreen-sm-down">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="fas fa-edit me-2"></i>Edit Book
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="editBookForm">
+                    <input type="hidden" id="editBookId" name="book_id">
+
+                    <!-- Book Cover Section -->
+                    <div class="row mb-4">
+                        <div class="col-12">
+                            <label class="form-label">Book Cover</label>
+                            <div class="row">
+                                <div class="col-12 col-md-auto mb-3 mb-md-0 text-center text-md-start">
+                                    <div id="editBookCover" class="book-cover-container mx-auto mx-md-0" style="width: 120px; height: 180px; position: relative; border: 2px dashed #dee2e6; border-radius: 8px; overflow: hidden; background: #f8f9fa;">
+                                        <img id="editBookCoverImg" src="" alt="Book Cover" style="width: 100%; height: 100%; object-fit: cover; display: none;">
+                                        <div class="book-cover-fallback text-center" style="display: flex; align-items: center; justify-content: center; height: 100%; color: #adb5bd;">
+                                            <i class="fas fa-book fa-3x"></i>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-12 col-md">
+                                    <input type="file" class="form-control mb-2" id="editCoverUpload" accept="image/*" onchange="handleEditCoverUpload(event)">
+                                    <small class="text-muted d-block mb-2">Upload a new cover image (JPG, PNG, etc.)</small>
+                                    <div class="input-group input-group-sm">
+                                        <input type="url" class="form-control" id="editCoverUrl" placeholder="Or paste image URL: https://example.com/cover.jpg">
+                                        <button class="btn btn-outline-primary" type="button" onclick="downloadCoverFromUrl('edit')" title="Download from URL">
+                                            <i class="fas fa-download"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-12 mb-3">
+                            <label for="editBookTitle" class="form-label">Title <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control" id="editBookTitle" name="title" required>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-12 col-md-6 mb-3">
+                            <label for="editAuthorFirst" class="form-label">Author First Name</label>
+                            <input type="text" class="form-control" id="editAuthorFirst" name="author_name_first">
+                        </div>
+                        <div class="col-12 col-md-6 mb-3">
+                            <label for="editAuthorLast" class="form-label">Author Last Name</label>
+                            <input type="text" class="form-control" id="editAuthorLast" name="author_name_second">
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-12 col-md-4 mb-3">
+                            <label for="editWordCount" class="form-label">Word Count</label>
+                            <input type="number" class="form-control" id="editWordCount" name="word_count" min="0">
+                        </div>
+                        <div class="col-12 col-md-4 mb-3">
+                            <label for="editPageCount" class="form-label">Page Count</label>
+                            <input type="number" class="form-control" id="editPageCount" name="page_count" min="0">
+                        </div>
+                        <div class="col-12 col-md-4 mb-3">
+                            <label for="editDatePublished" class="form-label">Date Published</label>
+                            <input type="date" class="form-control" id="editDatePublished" name="date_published">
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-12 mb-3">
+                            <label for="editUniverse" class="form-label">Universe</label>
+                            <input type="text" class="form-control" id="editUniverse" name="universe" placeholder="e.g., Cosmere, Maasverse, Discworld">
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-12 col-md-8 mb-3">
+                            <label for="editSeries" class="form-label">Series</label>
+                            <input type="text" class="form-control" id="editSeries" name="series">
+                        </div>
+                        <div class="col-12 col-md-4 mb-3">
+                            <label for="editSeriesNumber" class="form-label">Series Number</label>
+                            <input type="number" class="form-control" id="editSeriesNumber" name="series_number" step="0.1" min="0">
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-12 col-md-6 mb-3">
+                            <label for="editGenre" class="form-label">Genre</label>
+                            <div class="position-relative">
+                                <input type="text" class="form-control" id="editGenre" name="genre" placeholder="Select or type genre" autocomplete="off">
+                                <div id="editGenreDropdown" class="genre-dropdown list-group position-absolute w-100" style="display: none;"></div>
+                            </div>
+                        </div>
+                        <div class="col-12 col-md-6 mb-3">
+                            <label for="editAuthorGender" class="form-label">Author Gender</label>
+                            <select class="form-select" id="editAuthorGender" name="author_gender">
+                                <option value="">Select...</option>
+                                <option value="M">Male</option>
+                                <option value="F">Female</option>
+                                <option value="NB">Non-binary</option>
+                                <option value="Other">Other</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-12 mb-3">
+                            <label for="editIsbnId" class="form-label">ISBN</label>
+                            <input type="number" class="form-control" id="editIsbnId" name="isbn_id">
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-12 mb-3">
+                            <label for="editTags" class="form-label">Tags</label>
+                            <div class="position-relative">
+                                <input type="text" class="form-control" id="editTags" placeholder="Type to search or add tags..." autocomplete="off">
+                                <div id="editTagsDropdown" class="tag-dropdown list-group position-absolute w-100" style="display: none; z-index: 1050; max-height: 200px; overflow-y: auto;"></div>
+                            </div>
+                            <div id="selectedTags" class="mt-2 d-flex flex-wrap gap-2"></div>
+                            <small class="text-muted">Press Enter or click to add tags. Click × to remove.</small>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-danger me-auto" onclick="deleteBook()">
+                    <i class="fas fa-trash me-1"></i>Delete
+                </button>
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" onclick="submitEditBook()">Save Changes</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Bulk Edit Modal -->
+<div class="modal fade" id="bulkEditModal" tabindex="-1">
+    <div class="modal-dialog modal-fullscreen-sm-down">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Bulk Edit <span id="bulkEditCount"></span> Books</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p class="text-muted mb-4">Select which properties to update for the selected books. Leave fields blank to keep existing values.</p>
+
+                <div class="mb-3">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="bulkEditGenreCheck" onchange="toggleBulkEditField('Genre')">
+                        <label class="form-check-label" for="bulkEditGenreCheck">
+                            Update Genre
+                        </label>
+                    </div>
+                    <div class="position-relative">
+                        <input type="text" class="form-control mt-2" id="bulkEditGenre" placeholder="Select or type genre" autocomplete="off" disabled>
+                        <div id="bulkGenreDropdown" class="genre-dropdown list-group position-absolute w-100" style="display: none;"></div>
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="bulkEditAuthorGenderCheck" onchange="toggleBulkEditField('AuthorGender')">
+                        <label class="form-check-label" for="bulkEditAuthorGenderCheck">
+                            Update Author Gender
+                        </label>
+                    </div>
+                    <select class="form-select mt-2" id="bulkEditAuthorGender" disabled>
+                        <option value="">Select...</option>
+                        <option value="M">Male</option>
+                        <option value="F">Female</option>
+                        <option value="NB">Non-binary</option>
+                        <option value="Other">Other</option>
+                    </select>
+                </div>
+
+                <hr>
+
+                <div class="mb-0">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="bulkEditDeleteCheck">
+                        <label class="form-check-label text-danger" for="bulkEditDeleteCheck">
+                            <strong>Delete selected books</strong>
+                        </label>
+                    </div>
+                    <small class="text-muted">This action cannot be undone.</small>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" title="Cancel">
+                    <i class="fas fa-times"></i>
+                </button>
+                <button type="button" class="btn btn-primary" onclick="submitBulkEdit()">Apply Changes</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+let allBooks = [];
+let filteredBooks = [];
+let filterOptions = {};
+let showReadBooksOnly = false;
+let showMissingDataOnly = false;
+
+// Toggle read books filter
+function toggleReadFilter() {
+    showReadBooksOnly = !showReadBooksOnly;
+    updateFilterButtonStates();
+    applyFilters();
+}
+
+// Toggle missing data filter
+function toggleMissingDataFilter() {
+    showMissingDataOnly = !showMissingDataOnly;
+    console.log('Missing data filter toggled:', showMissingDataOnly);
+    updateFilterButtonStates();
+    applyFilters();
+}
+
+// Check if book has missing data
+function hasMissingData(book) {
+    // Returns true if ANY of these fields are missing
+    const missing = !book.cover ||
+           !book.genre ||
+           !book.word_count ||
+           !book.page_count ||
+           !book.author_name_first ||
+           !book.author_name_second ||
+           !book.date_published ||
+           !book.author_gender;
+    return missing;
+}
+
+// Wait for GreatReads to be available
+function waitForGreatReads(callback, maxAttempts = 50) {
+    let attempts = 0;
+    const checkInterval = setInterval(() => {
+        attempts++;
+        if (typeof GreatReads !== 'undefined' && GreatReads.apiCall) {
+            clearInterval(checkInterval);
+            callback();
+        } else if (attempts >= maxAttempts) {
+            clearInterval(checkInterval);
+            console.error('GreatReads not available after maximum attempts');
+            showErrorState();
+        }
+    }, 100);
+}
+
+// Initialize when page loads
+waitForGreatReads(() => {
+    loadBooksData();
+});
+
+async function loadBooksData() {
+    try {
+        const books = await GreatReads.apiCall('/books/?limit=10000');
+        allBooks = books;
+
+        // Extract unique genres for filter
+        const genres = [...new Set(books.map(b => b.genre).filter(g => g))];
+        populateGenreFilter(genres);
+
+        // Populate tag filter
+        populateTagFilter();
+
+        applyFilters();
+
+        // Hide loading, show content
+        document.getElementById('loading-state').classList.add('d-none');
+        document.getElementById('books-container').classList.remove('d-none');
+    } catch (error) {
+        console.error('Failed to load books:', error);
+        showErrorState();
+    }
+}
+
+// Reload books data while preserving current filters
+async function reloadBooksData() {
+    try {
+        const books = await GreatReads.apiCall('/books/?limit=10000');
+        allBooks = books;
+
+        // Extract unique genres for filter
+        const genres = [...new Set(books.map(b => b.genre).filter(g => g))];
+        populateGenreFilter(genres);
+
+        // Populate tag filter
+        populateTagFilter();
+
+        // Restore button states based on current filter variables
+        updateFilterButtonStates();
+
+        // Reapply existing filters (this will filter out books that no longer match)
+        applyFilters();
+    } catch (error) {
+        console.error('Failed to reload books:', error);
+        GreatReads.showToast('Failed to reload books', 'error');
+    }
+}
+
+// Update filter button visual states to match current filter variables
+function updateFilterButtonStates() {
+    const readBtn = document.getElementById('readFilterBtn');
+    const missingDataBtn = document.getElementById('missingDataBtn');
+
+    // Update Read Books button - remove all possible classes first
+    readBtn.classList.remove('btn-success', 'btn-outline-success');
+    if (showReadBooksOnly) {
+        readBtn.classList.add('btn-success');
+    } else {
+        readBtn.classList.add('btn-outline-success');
+    }
+    // Force reflow
+    void readBtn.offsetWidth;
+
+    // Update Missing Data button - remove all possible classes first
+    missingDataBtn.classList.remove('btn-danger', 'btn-outline-danger');
+    if (showMissingDataOnly) {
+        missingDataBtn.classList.add('btn-danger');
+    } else {
+        missingDataBtn.classList.add('btn-outline-danger');
+    }
+    // Force reflow
+    void missingDataBtn.offsetWidth;
+}
+
+function populateGenreFilter(genres) {
+    const genreFilter = document.getElementById('genreFilter');
+    genres.sort().forEach(genre => {
+        const option = document.createElement('option');
+        option.value = genre;
+        option.textContent = genre;
+        genreFilter.appendChild(option);
+    });
+}
+
+function populateTagFilter() {
+    const tagFilter = document.getElementById('tagFilter');
+    // Clear existing options except the first one
+    tagFilter.innerHTML = '<option value="">All Tags</option>';
+
+    // Get unique tags from all books
+    const uniqueTags = new Set();
+    allBooks.forEach(book => {
+        if (book.tags && book.tags.length > 0) {
+            book.tags.forEach(tag => uniqueTags.add(tag));
+        }
+    });
+
+    // Sort and add to dropdown
+    Array.from(uniqueTags).sort().forEach(tag => {
+        const option = document.createElement('option');
+        option.value = tag;
+        option.textContent = tag;
+        tagFilter.appendChild(option);
+    });
+}
+
+function applyFilters() {
+    const searchTerm = document.getElementById('searchInput').value.toLowerCase();
+    const genreFilter = document.getElementById('genreFilter').value;
+    const tagFilter = document.getElementById('tagFilter').value;
+
+    // Filter books
+    filteredBooks = allBooks.filter(book => {
+        const matchesSearch = !searchTerm ||
+            book.title.toLowerCase().includes(searchTerm) ||
+            (book.author && book.author.toLowerCase().includes(searchTerm)) ||
+            (book.universe && book.universe.toLowerCase().includes(searchTerm)) ||
+            (book.series && book.series.toLowerCase().includes(searchTerm));
+
+        const matchesGenre = !genreFilter || book.genre === genreFilter;
+
+        const matchesTag = !tagFilter || (book.tags && book.tags.includes(tagFilter));
+
+        const matchesReadFilter = !showReadBooksOnly || book.is_read;
+
+        const matchesMissingDataFilter = !showMissingDataOnly || hasMissingData(book);
+
+        return matchesSearch && matchesGenre && matchesTag && matchesReadFilter && matchesMissingDataFilter;
+    });
+
+    console.log(`Filtered ${filteredBooks.length} books from ${allBooks.length} total`);
+    if (showMissingDataOnly) {
+        const booksWithMissingData = allBooks.filter(b => hasMissingData(b));
+        console.log(`Books with missing data: ${booksWithMissingData.length}`);
+        console.log('Sample book with missing data:', booksWithMissingData[0]);
+        console.log('showMissingDataOnly:', showMissingDataOnly);
+        console.log('showReadBooksOnly:', showReadBooksOnly);
+    }
+
+    // Apply current sort if one is active
+    if (currentSortColumn) {
+        sortByColumn(currentSortColumn, true);
+    } else {
+        displayBooks();
+    }
+}
+
+function displayBooks() {
+    const tbody = document.getElementById('books-table-body');
+    tbody.innerHTML = '';
+
+    if (filteredBooks.length === 0) {
+        document.getElementById('books-container').classList.add('d-none');
+        document.getElementById('empty-state').classList.remove('d-none');
+        return;
+    }
+
+    document.getElementById('books-container').classList.remove('d-none');
+    document.getElementById('empty-state').classList.add('d-none');
+
+    filteredBooks.forEach(book => {
+        const row = createBookRow(book);
+        tbody.appendChild(row);
+    });
+}
+
+function createBookRow(book) {
+    const row = document.createElement('tr');
+
+    // Build series info with universe if present
+    let seriesInfo = '-';
+    if (book.series) {
+        if (book.universe) {
+            seriesInfo = `${book.universe}: ${book.series}${book.series_number !== null && book.series_number !== undefined ? ` #${book.series_number}` : ''}`;
+        } else {
+            seriesInfo = `${book.series}${book.series_number !== null && book.series_number !== undefined ? ` #${book.series_number}` : ''}`;
+        }
+    }
+
+    const publishedYear = book.year_published || '-';
+
+    const authorName = [book.author_name_first, book.author_name_second].filter(Boolean).join(' ') || '-';
+
+    // Format tags
+    const tagsHtml = book.tags && book.tags.length > 0
+        ? `<div class="mt-1">${book.tags.map(tag => `<span class="badge bg-gradient text-white me-1" style="font-size: 0.7rem;">${tag}</span>`).join('')}</div>`
+        : '';
+
+    // Check if bulk edit mode is active
+    const bulkEditClass = bulkEditMode ? '' : 'd-none';
+
+    const coverPath = book.cover ? `${book.id}.jpg` : '0.jpg';
+    const coverVersion = book.cover_version || 0;
+    const coverUrl = `${window.APP_BASE_PATH}/static/covers/${coverPath}${coverVersion ? `?v=${coverVersion}` : ''}`;
+
+    row.innerHTML = `
+        <td class="bulk-edit-column ${bulkEditClass}">
+            <input type="checkbox" class="book-checkbox" data-book-id="${book.id}">
+        </td>
+        <td class="d-none d-md-table-cell">
+            <div class="book-cover-container" style="width: 60px; height: 90px; position: relative; border: 1px solid #dee2e6; border-radius: 4px; overflow: hidden; background: #f8f9fa;">
+                <img src="${coverUrl}" alt="${book.title}"
+                     style="width: 100%; height: 100%; object-fit: cover;"
+                     onerror="if(!this.dataset.errorHandled){this.dataset.errorHandled='true';this.src='${window.APP_BASE_PATH}/static/covers/0.jpg';}">
+            </div>
+        </td>
+        <td>
+            <strong>${book.title}</strong>
+            <div class="d-md-none text-muted small mt-1">${authorName}</div>
+        </td>
+        <td class="d-none d-lg-table-cell">${authorName}</td>
+        <td class="d-none d-xl-table-cell">${seriesInfo}</td>
+        <td class="d-none d-xl-table-cell">${book.genre || '-'}${tagsHtml}</td>
+        <td class="d-none d-xl-table-cell">${book.page_count ? book.page_count.toLocaleString() : '-'}</td>
+        <td class="d-none d-xl-table-cell">${book.word_count ? book.word_count.toLocaleString() : '-'}</td>
+        <td class="d-none d-xl-table-cell">${publishedYear}</td>
+        <td>
+            <button class="btn btn-sm btn-outline-primary" onclick="editBook(${book.id})" title="Edit" tabindex="-1">
+                <i class="fas fa-edit"></i>
+            </button>
+        </td>
+    `;
+
+    return row;
+}
+
+async function editBook(bookId) {
+    try {
+        const book = await GreatReads.apiCall(`/books/${bookId}`);
+        showEditBookModal(book);
+    } catch (error) {
+        console.error('Failed to load book details:', error);
+    }
+}
+
+// Global variables
+let newBookCoverFile = null;
+let editBookCoverFile = null;
+let currentSortColumn = 'title';
+let currentSortDirection = 'asc';
+let bulkEditMode = false;
+let selectedEditTags = [];
+let allTags = [];
+
+function handleAddCoverUpload(event) {
+    const file = event.target.files[0];
+    if (file) {
+        newBookCoverFile = file;
+
+        // Preview the image
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            const img = document.getElementById('addBookCoverImg');
+            const fallback = document.querySelector('#addBookCover .book-cover-fallback');
+
+            img.src = e.target.result;
+            img.style.display = 'block';
+            fallback.style.display = 'none';
+        };
+        reader.readAsDataURL(file);
+    }
+}
+
+function handleEditCoverUpload(event) {
+    const file = event.target.files[0];
+    if (file) {
+        editBookCoverFile = file;
+
+        // Preview the image
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            const img = document.getElementById('editBookCoverImg');
+            const fallback = document.querySelector('#editBookCover .book-cover-fallback');
+
+            img.src = e.target.result;
+            img.style.display = 'block';
+            fallback.style.display = 'none';
+        };
+        reader.readAsDataURL(file);
+    }
+}
+
+function addNewBook() {
+    // Clear the form
+    document.getElementById('addBookForm').reset();
+    newBookCoverFile = null;
+
+    // Reset cover preview
+    const img = document.getElementById('addBookCoverImg');
+    const fallback = document.querySelector('#addBookCover .book-cover-fallback');
+    img.style.display = 'none';
+    fallback.style.display = 'flex';
+
+    // Show the modal
+    const modal = new bootstrap.Modal(document.getElementById('addBookModal'));
+    modal.show();
+}
+
+async function submitNewBook() {
+    const form = document.getElementById('addBookForm');
+
+    if (!form.checkValidity()) {
+        form.reportValidity();
+        return;
+    }
+
+    const formData = new FormData(form);
+    const bookData = {
+        title: formData.get('title'),
+        author_name_first: formData.get('author_name_first') || null,
+        author_name_second: formData.get('author_name_second') || null,
+        author_gender: formData.get('author_gender') || null,
+        word_count: formData.get('word_count') ? parseInt(formData.get('word_count')) : null,
+        page_count: formData.get('page_count') ? parseInt(formData.get('page_count')) : null,
+        date_published: formData.get('date_published') || null,
+        universe: formData.get('universe') || null,
+        series: formData.get('series') || null,
+        series_number: formData.get('series_number') !== null && formData.get('series_number') !== '' ? parseFloat(formData.get('series_number')) : null,
+        genre: formData.get('genre') || null,
+        isbn_id: formData.get('isbn_id') ? parseInt(formData.get('isbn_id')) : null,
+        cover: newBookCoverFile !== null
+    };
+
+    try {
+        const newBook = await GreatReads.apiCall('/books/', {
+            method: 'POST',
+            data: bookData
+        });
+
+        // Upload cover image if provided
+        if (newBookCoverFile) {
+            try {
+                await uploadCoverImage(newBook.id, newBookCoverFile);
+                GreatReads.showToast('Book and cover added successfully!', 'success');
+            } catch (coverError) {
+                console.error('Cover upload failed:', coverError);
+                GreatReads.showToast('Book added, but cover upload failed', 'warning');
+            }
+        } else {
+            GreatReads.showToast('Book added successfully!', 'success');
+        }
+
+        // Close modal
+        const modal = bootstrap.Modal.getInstance(document.getElementById('addBookModal'));
+        modal.hide();
+
+        // Reload books data while preserving filters
+        await reloadBooksData();
+    } catch (error) {
+        console.error('Failed to add book:', error);
+        GreatReads.showToast('Failed to add book', 'error');
+    }
+}
+
+// Series management
+let seriesBookCounter = 0;
+let seriesBookCovers = {}; // Store cover files for each book row
+
+function addNewSeries() {
+    // Clear the form
+    document.getElementById('addSeriesForm').reset();
+    document.getElementById('seriesBooksList').innerHTML = '';
+    seriesBookCounter = 0;
+    seriesBookCovers = {};
+
+    // Add initial book row
+    addSeriesBookRow();
+
+    // Setup autocomplete dropdowns
+    setupSeriesAutocomplete();
+
+    // Show the modal
+    const modal = new bootstrap.Modal(document.getElementById('addSeriesModal'));
+    modal.show();
+}
+
+function setupSeriesAutocomplete() {
+    // Get unique series names, genres, and universes from existing books
+    const seriesNames = [...new Set(allBooks.map(b => b.series).filter(s => s))].sort();
+    const genres = [...new Set(allBooks.map(b => b.genre).filter(g => g))].sort();
+    const universes = [...new Set(allBooks.map(b => b.universe).filter(u => u))].sort();
+
+    // Setup series name autocomplete
+    setupDropdownAutocomplete('seriesName', 'seriesNameDropdown', seriesNames, true);
+
+    // Setup genre autocomplete
+    setupDropdownAutocomplete('seriesGenre', 'seriesGenreDropdown', genres, true);
+
+    // Setup universe autocomplete
+    setupDropdownAutocomplete('seriesUniverse', 'seriesUniverseDropdown', universes, true);
+}
+
+function setupDropdownAutocomplete(inputId, dropdownId, options, allowNew = false) {
+    const input = document.getElementById(inputId);
+    const dropdown = document.getElementById(dropdownId);
+
+    if (!input || !dropdown) return;
+
+    // Remove existing listeners by cloning
+    const newInput = input.cloneNode(true);
+    input.parentNode.replaceChild(newInput, input);
+    const inputElement = document.getElementById(inputId);
+
+    // Show dropdown on focus
+    inputElement.addEventListener('focus', () => {
+        showDropdownOptions(inputId, dropdownId, options, '', allowNew);
+    });
+
+    // Filter dropdown as user types
+    inputElement.addEventListener('input', (e) => {
+        showDropdownOptions(inputId, dropdownId, options, e.target.value, allowNew);
+    });
+
+    // Handle selection
+    dropdown.addEventListener('click', (e) => {
+        e.preventDefault();
+        const item = e.target.closest('.list-group-item');
+        if (!item) return;
+
+        const value = item.dataset.value;
+        inputElement.value = value;
+        dropdown.style.display = 'none';
+    });
+
+    // Hide dropdown when clicking outside
+    document.addEventListener('click', (e) => {
+        if (!inputElement.contains(e.target) && !dropdown.contains(e.target)) {
+            dropdown.style.display = 'none';
+        }
+    });
+}
+
+function showDropdownOptions(inputId, dropdownId, options, searchTerm, allowNew) {
+    const dropdown = document.getElementById(dropdownId);
+    const input = document.getElementById(inputId);
+
+    if (!dropdown || !input) return;
+
+    const filtered = options.filter(opt =>
+        opt.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+
+    dropdown.innerHTML = '';
+
+    // Show existing options
+    filtered.forEach(opt => {
+        const item = document.createElement('a');
+        item.href = '#';
+        item.className = 'list-group-item list-group-item-action';
+        item.textContent = opt;
+        item.dataset.value = opt;
+        dropdown.appendChild(item);
+    });
+
+    // Show "Add new" option if enabled and search term doesn't match exactly
+    if (allowNew && searchTerm && !options.some(opt => opt.toLowerCase() === searchTerm.toLowerCase())) {
+        const createItem = document.createElement('a');
+        createItem.href = '#';
+        createItem.className = 'list-group-item list-group-item-action text-primary';
+        createItem.innerHTML = `<i class="fas fa-plus me-2"></i>Add "${searchTerm}"`;
+        createItem.dataset.value = searchTerm;
+        dropdown.appendChild(createItem);
+    }
+
+    dropdown.style.display = (filtered.length > 0 || (allowNew && searchTerm)) ? 'block' : 'none';
+}
+
+function addSeriesBookRow() {
+    seriesBookCounter++;
+    const rowId = `seriesBook${seriesBookCounter}`;
+
+    const bookRow = document.createElement('div');
+    bookRow.className = 'card mb-3';
+    bookRow.id = rowId;
+    bookRow.innerHTML = `
+        <div class="card-header bg-light d-flex justify-content-between align-items-center">
+            <h6 class="mb-0">Book</h6>
+            <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeSeriesBookRow('${rowId}')">
+                <i class="fas fa-trash"></i>
+            </button>
+        </div>
+        <div class="card-body">
+            <div class="row mb-3">
+                <div class="col-md-12">
+                    <label class="form-label">Book Cover</label>
+                    <div class="d-flex align-items-start gap-3">
+                        <div id="${rowId}Cover" class="book-cover-container" style="width: 80px; height: 120px; position: relative; border: 2px dashed #dee2e6; border-radius: 8px; overflow: hidden; background: #f8f9fa;">
+                            <img id="${rowId}CoverImg" src="" alt="Book Cover" style="width: 100%; height: 100%; object-fit: cover; display: none;">
+                            <div class="book-cover-fallback text-center" style="display: flex; align-items: center; justify-content: center; height: 100%; color: #adb5bd;">
+                                <i class="fas fa-book fa-2x"></i>
+                            </div>
+                        </div>
+                        <div class="flex-grow-1">
+                            <input type="file" class="form-control form-control-sm mb-2" id="${rowId}CoverUpload" accept="image/*" onchange="handleSeriesBookCoverUpload(event, '${rowId}')">
+                            <div class="input-group input-group-sm">
+                                <input type="url" class="form-control" id="${rowId}CoverUrl" placeholder="Or paste image URL">
+                                <button class="btn btn-outline-primary" type="button" onclick="downloadSeriesBookCoverFromUrl('${rowId}')" title="Download from URL">
+                                    <i class="fas fa-download"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row">
+                <div class="col-md-10 mb-3">
+                    <label for="${rowId}Title" class="form-label">Title <span class="text-danger">*</span></label>
+                    <input type="text" class="form-control" id="${rowId}Title" required>
+                </div>
+                <div class="col-md-2 mb-3">
+                    <label for="${rowId}SeriesNumber" class="form-label">Series #</label>
+                    <input type="number" class="form-control" id="${rowId}SeriesNumber" min="0" step="0.1" placeholder="1">
+                </div>
+            </div>
+
+            <div class="row">
+                <div class="col-md-4 mb-3">
+                    <label for="${rowId}WordCount" class="form-label">Word Count</label>
+                    <input type="number" class="form-control" id="${rowId}WordCount" min="0">
+                </div>
+                <div class="col-md-4 mb-3">
+                    <label for="${rowId}PageCount" class="form-label">Page Count</label>
+                    <input type="number" class="form-control" id="${rowId}PageCount" min="0">
+                </div>
+                <div class="col-md-4 mb-3">
+                    <label for="${rowId}DatePublished" class="form-label">Date Published</label>
+                    <input type="date" class="form-control" id="${rowId}DatePublished">
+                </div>
+            </div>
+        </div>
+    `;
+
+    document.getElementById('seriesBooksList').appendChild(bookRow);
+}
+
+function removeSeriesBookRow(rowId) {
+    const row = document.getElementById(rowId);
+    if (row) {
+        row.remove();
+        delete seriesBookCovers[rowId];
+    }
+}
+
+function handleSeriesBookCoverUpload(event, rowId) {
+    const file = event.target.files[0];
+    if (file) {
+        seriesBookCovers[rowId] = file;
+
+        // Preview the image
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            const img = document.getElementById(`${rowId}CoverImg`);
+            const fallback = document.querySelector(`#${rowId}Cover .book-cover-fallback`);
+
+            img.src = e.target.result;
+            img.style.display = 'block';
+            fallback.style.display = 'none';
+        };
+        reader.readAsDataURL(file);
+    }
+}
+
+async function downloadSeriesBookCoverFromUrl(rowId) {
+    const urlInput = document.getElementById(`${rowId}CoverUrl`);
+    const url = urlInput.value.trim();
+
+    if (!url) {
+        GreatReads.showToast('Please enter an image URL', 'warning');
+        return;
+    }
+
+    const img = document.getElementById(`${rowId}CoverImg`);
+    const fallback = document.querySelector(`#${rowId}Cover .book-cover-fallback`);
+
+    try {
+        // Try to fetch the image
+        let blob;
+        try {
+            const response = await fetch(url);
+            if (!response.ok) {
+                throw new Error('Failed to fetch image from URL');
+            }
+            blob = await response.blob();
+        } catch (corsError) {
+            // If CORS fails, try loading the image directly and converting via canvas
+            console.log('CORS fetch failed, trying canvas approach:', corsError);
+
+            return new Promise((resolve, reject) => {
+                const tempImg = new Image();
+                tempImg.crossOrigin = 'anonymous';
+
+                tempImg.onload = function() {
+                    try {
+                        // Create canvas to convert image to blob
+                        const canvas = document.createElement('canvas');
+                        canvas.width = tempImg.width;
+                        canvas.height = tempImg.height;
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(tempImg, 0, 0);
+
+                        canvas.toBlob(function(canvasBlob) {
+                            if (!canvasBlob) {
+                                reject(new Error('Failed to convert image to blob'));
+                                return;
+                            }
+
+                            const file = new File([canvasBlob], 'cover.jpg', { type: 'image/jpeg' });
+                            seriesBookCovers[rowId] = file;
+
+                            // Preview the image
+                            img.src = url;
+                            img.style.display = 'block';
+                            fallback.style.display = 'none';
+
+                            // Clear the URL input
+                            urlInput.value = '';
+
+                            GreatReads.showToast('Cover downloaded successfully', 'success');
+                            resolve();
+                        }, 'image/jpeg', 0.95);
+                    } catch (canvasError) {
+                        console.error('Canvas conversion failed:', canvasError);
+                        reject(canvasError);
+                    }
+                };
+
+                tempImg.onerror = function() {
+                    reject(new Error('Failed to load image. The URL may be invalid or the server may not allow cross-origin requests.'));
+                };
+
+                tempImg.src = url;
+            });
+        }
+
+        // If we got here, fetch worked
+        const file = new File([blob], 'cover.jpg', { type: blob.type || 'image/jpeg' });
+        seriesBookCovers[rowId] = file;
+
+        // Preview the image
+        img.src = url;
+        img.style.display = 'block';
+        fallback.style.display = 'none';
+
+        // Clear the URL input
+        urlInput.value = '';
+
+        GreatReads.showToast('Cover downloaded successfully', 'success');
+    } catch (error) {
+        console.error('Failed to download cover:', error);
+        GreatReads.showToast('Failed to download cover from URL. The URL may be invalid or the server may not allow cross-origin requests.', 'error');
+    }
+}
+
+async function submitNewSeries() {
+    const form = document.getElementById('addSeriesForm');
+
+    if (!form.checkValidity()) {
+        form.reportValidity();
+        return;
+    }
+
+    // Get series-wide data
+    const seriesData = {
+        series: document.getElementById('seriesName').value,
+        author_name_first: document.getElementById('seriesAuthorFirst').value || null,
+        author_name_second: document.getElementById('seriesAuthorLast').value || null,
+        genre: document.getElementById('seriesGenre').value || null,
+        author_gender: document.getElementById('seriesAuthorGender').value || null,
+        universe: document.getElementById('seriesUniverse').value || null
+    };
+
+    // Get all book rows
+    const bookCards = document.querySelectorAll('#seriesBooksList .card');
+
+    if (bookCards.length === 0) {
+        GreatReads.showToast('Please add at least one book', 'warning');
+        return;
+    }
+
+    const books = [];
+    for (let i = 0; i < bookCards.length; i++) {
+        const card = bookCards[i];
+        const rowId = card.id;
+
+        const title = document.getElementById(`${rowId}Title`).value;
+        if (!title) {
+            GreatReads.showToast(`Please enter a title for book #${i + 1}`, 'warning');
+            return;
+        }
+
+        const wordCount = document.getElementById(`${rowId}WordCount`).value;
+        const pageCount = document.getElementById(`${rowId}PageCount`).value;
+        const datePublished = document.getElementById(`${rowId}DatePublished`).value;
+        const seriesNumber = document.getElementById(`${rowId}SeriesNumber`).value;
+
+        books.push({
+            rowId: rowId,
+            title: title,
+            word_count: wordCount ? parseInt(wordCount) : null,
+            page_count: pageCount ? parseInt(pageCount) : null,
+            date_published: datePublished || null,
+            series_number: seriesNumber !== null && seriesNumber !== '' ? parseFloat(seriesNumber) : null
+        });
+    }
+
+    try {
+        // Create each book
+        let successCount = 0;
+        for (const bookData of books) {
+            const fullBookData = {
+                ...seriesData,
+                title: bookData.title,
+                word_count: bookData.word_count,
+                page_count: bookData.page_count,
+                date_published: bookData.date_published,
+                series_number: bookData.series_number,
+                cover: seriesBookCovers[bookData.rowId] !== undefined
+            };
+
+            const newBook = await GreatReads.apiCall('/books/', {
+                method: 'POST',
+                data: fullBookData
+            });
+
+            // Upload cover if provided
+            if (seriesBookCovers[bookData.rowId]) {
+                try {
+                    await uploadCoverImage(newBook.id, seriesBookCovers[bookData.rowId]);
+                } catch (coverError) {
+                    console.error('Cover upload failed for book:', bookData.title, coverError);
+                }
+            }
+
+            successCount++;
+        }
+
+        GreatReads.showToast(`Successfully added ${successCount} book(s) to the series!`, 'success');
+
+        // Close modal
+        const modal = bootstrap.Modal.getInstance(document.getElementById('addSeriesModal'));
+        modal.hide();
+
+        // Reload books data while preserving filters
+        await reloadBooksData();
+    } catch (error) {
+        console.error('Failed to add series:', error);
+        GreatReads.showToast('Failed to add series', 'error');
+    }
+}
+
+function showEditBookModal(book) {
+    // Reset cover file
+    editBookCoverFile = null;
+
+    // Populate form fields
+    document.getElementById('editBookId').value = book.id;
+    document.getElementById('editBookTitle').value = book.title || '';
+    document.getElementById('editAuthorFirst').value = book.author_name_first || '';
+    document.getElementById('editAuthorLast').value = book.author_name_second || '';
+    document.getElementById('editWordCount').value = book.word_count || '';
+    document.getElementById('editPageCount').value = book.page_count || '';
+    document.getElementById('editDatePublished').value = book.date_published || '';
+    document.getElementById('editUniverse').value = book.universe || '';
+    document.getElementById('editSeries').value = book.series || '';
+    document.getElementById('editSeriesNumber').value = book.series_number !== null && book.series_number !== undefined ? book.series_number : '';
+    document.getElementById('editGenre').value = book.genre || '';
+    document.getElementById('editAuthorGender').value = book.author_gender || '';
+    document.getElementById('editIsbnId').value = book.isbn_id || '';
+
+    // Populate tags
+    selectedEditTags = book.tags || [];
+    renderSelectedTags();
+
+    // Set book cover image
+    const coverImg = document.getElementById('editBookCoverImg');
+    const fallbackIcon = document.querySelector('#editBookCover .book-cover-fallback');
+
+    // Use book's cover if it has one, otherwise use default cover (0.jpg)
+    const coverPath = book.cover ? `${book.id}.jpg` : '0.jpg';
+    const coverVersion = book.cover_version || 0;
+    coverImg.src = `${window.APP_BASE_PATH}/static/covers/${coverPath}${coverVersion ? `?v=${coverVersion}` : ''}`;
+    coverImg.style.display = 'block';
+    fallbackIcon.style.display = 'none';
+
+    // Handle image load error - fall back to default cover
+    coverImg.onerror = function() {
+        if (!this.src.includes('/0.jpg')) {
+            this.src = `${window.APP_BASE_PATH}/static/covers/0.jpg`;
+        } else {
+            this.style.display = 'none';
+            fallbackIcon.style.display = 'flex';
+        }
+    };
+
+    // Show the modal
+    const modal = new bootstrap.Modal(document.getElementById('editBookModal'));
+    modal.show();
+}
+
+async function submitEditBook() {
+    const form = document.getElementById('editBookForm');
+
+    if (!form.checkValidity()) {
+        form.reportValidity();
+        return;
+    }
+
+    const formData = new FormData(form);
+    const bookId = formData.get('book_id');
+
+    // Check if we have a cover (either existing or new upload)
+    const currentCoverImg = document.getElementById('editBookCoverImg');
+    const hasCover = editBookCoverFile !== null || currentCoverImg.style.display !== 'none';
+
+    const bookData = {
+        title: formData.get('title'),
+        author_name_first: formData.get('author_name_first') || null,
+        author_name_second: formData.get('author_name_second') || null,
+        author_gender: formData.get('author_gender') || null,
+        word_count: formData.get('word_count') ? parseInt(formData.get('word_count')) : null,
+        page_count: formData.get('page_count') ? parseInt(formData.get('page_count')) : null,
+        date_published: formData.get('date_published') || null,
+        universe: formData.get('universe') || null,
+        series: formData.get('series') || null,
+        series_number: formData.get('series_number') !== null && formData.get('series_number') !== '' ? parseFloat(formData.get('series_number')) : null,
+        genre: formData.get('genre') || null,
+        isbn_id: formData.get('isbn_id') ? parseInt(formData.get('isbn_id')) : null,
+        cover: hasCover,
+        tags: selectedEditTags
+    };
+
+    try {
+        await GreatReads.apiCall(`/books/${bookId}`, {
+            method: 'PUT',
+            data: bookData
+        });
+
+        // Upload cover image if a new one was provided
+        if (editBookCoverFile) {
+            try {
+                await uploadCoverImage(bookId, editBookCoverFile);
+                // Reset the cover file
+                editBookCoverFile = null;
+                GreatReads.showToast('Book and cover updated successfully!', 'success');
+            } catch (coverError) {
+                console.error('Cover upload failed:', coverError);
+                GreatReads.showToast('Book updated, but cover upload failed', 'warning');
+            }
+        } else {
+            GreatReads.showToast('Book updated successfully!', 'success');
+        }
+
+        // Close modal
+        const modal = bootstrap.Modal.getInstance(document.getElementById('editBookModal'));
+        modal.hide();
+
+        // Reload books data to show updated cover
+        await reloadBooksData();
+    } catch (error) {
+        console.error('Failed to update book:', error);
+        GreatReads.showToast('Failed to update book', 'error');
+    }
+}
+
+async function deleteBook() {
+    const bookId = document.getElementById('editBookId').value;
+
+    if (!confirm('Are you sure you want to delete this book? This action cannot be undone.')) {
+        return;
+    }
+
+    try {
+        await GreatReads.apiCall(`/books/${bookId}`, {
+            method: 'DELETE'
+        });
+
+        GreatReads.showToast('Book deleted successfully!', 'success');
+
+        // Close modal
+        const modal = bootstrap.Modal.getInstance(document.getElementById('editBookModal'));
+        modal.hide();
+
+        // Reload books data while preserving filters
+        await reloadBooksData();
+    } catch (error) {
+        console.error('Failed to delete book:', error);
+    }
+}
+
+// Tag Management Functions
+async function loadTags() {
+    try {
+        allTags = await GreatReads.apiCall('/books/search/tags');
+    } catch (error) {
+        console.error('Failed to load tags:', error);
+        allTags = [];
+    }
+}
+
+function renderSelectedTags() {
+    const container = document.getElementById('selectedTags');
+    container.innerHTML = '';
+
+    selectedEditTags.forEach(tag => {
+        const badge = document.createElement('span');
+        badge.className = 'tag-badge';
+        badge.innerHTML = `
+            ${tag}
+            <span class="remove-tag" onclick="removeTag('${tag.replace(/'/g, "\\'")}')">×</span>
+        `;
+        container.appendChild(badge);
+    });
+}
+
+function addTag(tagName) {
+    tagName = tagName.trim();
+    if (!tagName) return;
+
+    // Don't add duplicates
+    if (selectedEditTags.includes(tagName)) {
+        return;
+    }
+
+    selectedEditTags.push(tagName);
+    renderSelectedTags();
+
+    // Clear input
+    document.getElementById('editTags').value = '';
+
+    // Hide dropdown
+    document.getElementById('editTagsDropdown').style.display = 'none';
+}
+
+function removeTag(tagName) {
+    selectedEditTags = selectedEditTags.filter(t => t !== tagName);
+    renderSelectedTags();
+}
+
+function filterTags(searchTerm) {
+    if (!searchTerm) {
+        return allTags;
+    }
+
+    searchTerm = searchTerm.toLowerCase();
+    return allTags.filter(tag => tag.toLowerCase().includes(searchTerm));
+}
+
+function showTagDropdown(searchTerm) {
+    const dropdown = document.getElementById('editTagsDropdown');
+    const filteredTags = filterTags(searchTerm);
+
+    // Filter out already selected tags
+    const availableTags = filteredTags.filter(tag => !selectedEditTags.includes(tag));
+
+    dropdown.innerHTML = '';
+
+    // Show existing tags
+    availableTags.forEach(tag => {
+        const item = document.createElement('div');
+        item.className = 'list-group-item';
+        item.textContent = tag;
+        item.onclick = () => addTag(tag);
+        dropdown.appendChild(item);
+    });
+
+    // Show "Create new tag" option if search term doesn't match any existing tag
+    if (searchTerm && !allTags.some(tag => tag.toLowerCase() === searchTerm.toLowerCase())) {
+        const createItem = document.createElement('div');
+        createItem.className = 'list-group-item create-new';
+        createItem.innerHTML = `<i class="fas fa-plus me-2"></i>Create "${searchTerm}"`;
+        createItem.onclick = () => addTag(searchTerm);
+        dropdown.appendChild(createItem);
+    }
+
+    dropdown.style.display = availableTags.length > 0 || searchTerm ? 'block' : 'none';
+}
+
+async function uploadCoverImage(bookId, file) {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+        const response = await fetch(`${window.APP_BASE_PATH}/api/books/${bookId}/cover`, {
+            method: 'POST',
+            body: formData
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.detail || 'Failed to upload cover image');
+        }
+
+        const result = await response.json();
+        console.log('Cover uploaded successfully:', result);
+        return result;
+    } catch (error) {
+        console.error('Error uploading cover:', error);
+        GreatReads.showToast(`Failed to upload cover: ${error.message}`, 'error');
+        throw error;
+    }
+}
+
+async function downloadCoverFromUrl(modalType) {
+    const urlInputId = modalType === 'add' ? 'addCoverUrl' : 'editCoverUrl';
+    const urlInput = document.getElementById(urlInputId);
+    const imageUrl = urlInput.value.trim();
+
+    if (!imageUrl) {
+        GreatReads.showToast('Please enter an image URL', 'warning');
+        return;
+    }
+
+    const imgId = modalType === 'add' ? 'addBookCoverImg' : 'editBookCoverImg';
+    const fallbackSelector = modalType === 'add' ? '#addBookCover .book-cover-fallback' : '#editBookCover .book-cover-fallback';
+    const img = document.getElementById(imgId);
+    const fallback = document.querySelector(fallbackSelector);
+
+    try {
+        // Try to fetch the image with no-cors mode first (won't work for blob conversion but will test if image loads)
+        // Then try with cors mode
+        let blob;
+        try {
+            const response = await fetch(imageUrl);
+            if (!response.ok) {
+                throw new Error('Failed to fetch image from URL');
+            }
+            blob = await response.blob();
+        } catch (corsError) {
+            // If CORS fails, try loading the image directly and converting via canvas
+            console.log('CORS fetch failed, trying canvas approach:', corsError);
+
+            return new Promise((resolve, reject) => {
+                const tempImg = new Image();
+                tempImg.crossOrigin = 'anonymous';
+
+                tempImg.onload = function() {
+                    try {
+                        // Create canvas to convert image to blob
+                        const canvas = document.createElement('canvas');
+                        canvas.width = tempImg.width;
+                        canvas.height = tempImg.height;
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(tempImg, 0, 0);
+
+                        canvas.toBlob(function(canvasBlob) {
+                            if (!canvasBlob) {
+                                reject(new Error('Failed to convert image to blob'));
+                                return;
+                            }
+
+                            const file = new File([canvasBlob], 'cover.jpg', { type: 'image/jpeg' });
+
+                            // Store the file for upload
+                            if (modalType === 'add') {
+                                newBookCoverFile = file;
+                            } else {
+                                editBookCoverFile = file;
+                            }
+
+                            // Preview the image
+                            img.src = imageUrl;
+                            img.style.display = 'block';
+                            fallback.style.display = 'none';
+
+                            // Clear the URL input
+                            urlInput.value = '';
+
+                            GreatReads.showToast('Cover image loaded successfully', 'success');
+                            resolve();
+                        }, 'image/jpeg', 0.95);
+                    } catch (canvasError) {
+                        console.error('Canvas conversion failed:', canvasError);
+                        reject(canvasError);
+                    }
+                };
+
+                tempImg.onerror = function() {
+                    reject(new Error('Failed to load image. The URL may be invalid or the server may not allow cross-origin requests.'));
+                };
+
+                tempImg.src = imageUrl;
+            });
+        }
+
+        // If we got here, fetch worked
+        const filename = imageUrl.split('/').pop().split('?')[0] || 'cover.jpg';
+        const file = new File([blob], filename, { type: blob.type || 'image/jpeg' });
+
+        // Preview the image
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            img.src = e.target.result;
+            img.style.display = 'block';
+            fallback.style.display = 'none';
+        };
+        reader.readAsDataURL(file);
+
+        // Store the file for upload
+        if (modalType === 'add') {
+            newBookCoverFile = file;
+        } else {
+            editBookCoverFile = file;
+        }
+
+        // Clear the URL input
+        urlInput.value = '';
+
+        GreatReads.showToast('Cover image loaded successfully', 'success');
+    } catch (error) {
+        console.error('Error downloading cover from URL:', error);
+        GreatReads.showToast('Failed to download image from URL. The URL may be invalid or the server may not allow cross-origin requests.', 'error');
+    }
+}
+
+function showErrorState() {
+    document.getElementById('loading-state').classList.add('d-none');
+    document.getElementById('books-container').classList.add('d-none');
+    document.getElementById('empty-state').classList.remove('d-none');
+}
+
+// Column sorting
+function sortByColumn(column, keepDirection = false) {
+    // Toggle direction if clicking the same column (unless keepDirection is true)
+    if (!keepDirection) {
+        if (currentSortColumn === column) {
+            currentSortDirection = currentSortDirection === 'asc' ? 'desc' : 'asc';
+        } else {
+            currentSortColumn = column;
+            currentSortDirection = 'asc';
+        }
+    }
+
+    // Update header highlighting
+    document.querySelectorAll('[id^="header-"]').forEach(header => {
+        header.style.backgroundColor = '';
+    });
+
+    const header = document.getElementById(`header-${column}`);
+    if (header) {
+        // Use purple/blue gradient colors for highlighting
+        if (currentSortDirection === 'asc') {
+            header.style.backgroundColor = '#b8c5f2'; // Light blue (from gradient)
+        } else {
+            header.style.backgroundColor = '#d4b5e8'; // Light purple (from gradient)
+        }
+    }
+
+    // Sort the filtered books
+    filteredBooks.sort((a, b) => {
+        let aVal = a[column];
+        let bVal = b[column];
+
+        // Handle cover sorting specially (books with covers first)
+        if (column === 'cover') {
+            aVal = a.cover ? 1 : 0;
+            bVal = b.cover ? 1 : 0;
+        }
+        // Handle author sorting specially
+        else if (column === 'author') {
+            aVal = [a.author_name_first, a.author_name_second].filter(Boolean).join(' ');
+            bVal = [b.author_name_first, b.author_name_second].filter(Boolean).join(' ');
+        }
+        // Handle series sorting specially - sort by universe, then series, then series_number
+        else if (column === 'series') {
+            // First compare universe
+            const aUniverse = (a.universe || '').toLowerCase();
+            const bUniverse = (b.universe || '').toLowerCase();
+            if (aUniverse !== bUniverse) {
+                if (!aUniverse) return 1; // Books without universe go last
+                if (!bUniverse) return -1;
+                return currentSortDirection === 'asc' ?
+                    aUniverse.localeCompare(bUniverse) :
+                    bUniverse.localeCompare(aUniverse);
+            }
+
+            // Then compare series
+            const aSeries = (a.series || '').toLowerCase();
+            const bSeries = (b.series || '').toLowerCase();
+            if (aSeries !== bSeries) {
+                if (!aSeries) return 1; // Books without series go last
+                if (!bSeries) return -1;
+                return currentSortDirection === 'asc' ?
+                    aSeries.localeCompare(bSeries) :
+                    bSeries.localeCompare(aSeries);
+            }
+
+            // Finally compare series_number
+            const aNum = a.series_number || 0;
+            const bNum = b.series_number || 0;
+            return currentSortDirection === 'asc' ? aNum - bNum : bNum - aNum;
+        }
+
+        // Handle null/undefined values
+        if (aVal == null) aVal = '';
+        if (bVal == null) bVal = '';
+
+        // Convert to lowercase for string comparison
+        if (typeof aVal === 'string') aVal = aVal.toLowerCase();
+        if (typeof bVal === 'string') bVal = bVal.toLowerCase();
+
+        let comparison = 0;
+        if (aVal < bVal) comparison = -1;
+        if (aVal > bVal) comparison = 1;
+
+        return currentSortDirection === 'asc' ? comparison : -comparison;
+    });
+
+    displayBooks();
+}
+
+// Bulk edit functions
+function toggleBulkEdit() {
+    bulkEditMode = !bulkEditMode;
+
+    const bulkEditColumns = document.querySelectorAll('.bulk-edit-column');
+    const bulkEditActionsBtn = document.getElementById('bulkEditActionsBtn');
+    const bulkEditToggle = document.getElementById('bulkEditToggle');
+
+    if (bulkEditMode) {
+        bulkEditColumns.forEach(col => col.classList.remove('d-none'));
+        bulkEditActionsBtn.classList.remove('d-none');
+        bulkEditToggle.classList.add('active');
+        bulkEditToggle.innerHTML = '<i class="fas fa-times"></i>';
+        bulkEditToggle.title = 'Cancel';
+    } else {
+        bulkEditColumns.forEach(col => col.classList.add('d-none'));
+        bulkEditActionsBtn.classList.add('d-none');
+        bulkEditToggle.classList.remove('active');
+        bulkEditToggle.innerHTML = '<i class="fas fa-check-square"></i>';
+        bulkEditToggle.title = 'Bulk Edit';
+        document.getElementById('selectAll').checked = false;
+    }
+}
+
+function toggleSelectAll() {
+    const selectAll = document.getElementById('selectAll');
+    const checkboxes = document.querySelectorAll('.book-checkbox');
+
+    checkboxes.forEach(checkbox => {
+        checkbox.checked = selectAll.checked;
+    });
+}
+
+function openBulkEditModal() {
+    const selectedCheckboxes = document.querySelectorAll('.book-checkbox:checked');
+
+    if (selectedCheckboxes.length === 0) {
+        GreatReads.showToast('Please select books to edit', 'warning');
+        return;
+    }
+
+    // Update count in modal
+    document.getElementById('bulkEditCount').textContent = `(${selectedCheckboxes.length})`;
+
+    // Reset form
+    document.getElementById('bulkEditGenreCheck').checked = false;
+    document.getElementById('bulkEditAuthorGenderCheck').checked = false;
+    document.getElementById('bulkEditDeleteCheck').checked = false;
+    document.getElementById('bulkEditGenre').value = '';
+    document.getElementById('bulkEditGenre').disabled = true;
+    document.getElementById('bulkEditAuthorGender').value = '';
+    document.getElementById('bulkEditAuthorGender').disabled = true;
+
+    // Show modal
+    const modal = new bootstrap.Modal(document.getElementById('bulkEditModal'));
+    modal.show();
+}
+
+function toggleBulkEditField(fieldName) {
+    const checkbox = document.getElementById(`bulkEdit${fieldName}Check`);
+    const input = document.getElementById(`bulkEdit${fieldName}`);
+    input.disabled = !checkbox.checked;
+    if (!checkbox.checked) {
+        input.value = '';
+    }
+}
+
+async function submitBulkEdit() {
+    const selectedCheckboxes = document.querySelectorAll('.book-checkbox:checked');
+    const selectedBookIds = Array.from(selectedCheckboxes).map(cb => cb.dataset.bookId);
+
+    const updateGenre = document.getElementById('bulkEditGenreCheck').checked;
+    const updateAuthorGender = document.getElementById('bulkEditAuthorGenderCheck').checked;
+    const deleteBooks = document.getElementById('bulkEditDeleteCheck').checked;
+
+    // Validate that at least one action is selected
+    if (!updateGenre && !updateAuthorGender && !deleteBooks) {
+        GreatReads.showToast('Please select at least one action to perform', 'warning');
+        return;
+    }
+
+    // If deleting, confirm
+    if (deleteBooks) {
+        if (!confirm(`Are you sure you want to DELETE ${selectedBookIds.length} book(s)? This cannot be undone.`)) {
+            return;
+        }
+    }
+
+    try {
+        let successCount = 0;
+        let failCount = 0;
+
+        // If deleting, just delete and skip updates
+        if (deleteBooks) {
+            const deletePromises = selectedBookIds.map(bookId =>
+                GreatReads.apiCall(`/books/${bookId}`, { method: 'DELETE' })
+                    .then(() => successCount++)
+                    .catch(() => failCount++)
+            );
+            await Promise.all(deletePromises);
+
+            GreatReads.showToast(`Successfully deleted ${successCount} book(s)`, 'success');
+        } else {
+            // Update books
+            const updates = {};
+            if (updateGenre) {
+                const genre = document.getElementById('bulkEditGenre').value.trim();
+                if (genre) updates.genre = genre;
+            }
+            if (updateAuthorGender) {
+                const authorGender = document.getElementById('bulkEditAuthorGender').value;
+                if (authorGender) updates.author_gender = authorGender;
+            }
+
+            // Validate we have something to update
+            if (Object.keys(updates).length === 0) {
+                GreatReads.showToast('Please enter values for the selected fields', 'warning');
+                return;
+            }
+
+            const updatePromises = selectedBookIds.map(bookId =>
+                GreatReads.apiCall(`/books/${bookId}`, {
+                    method: 'PUT',
+                    data: updates
+                })
+                    .then(() => successCount++)
+                    .catch(() => failCount++)
+            );
+            await Promise.all(updatePromises);
+
+            GreatReads.showToast(`Successfully updated ${successCount} book(s)`, 'success');
+        }
+
+        if (failCount > 0) {
+            GreatReads.showToast(`Failed to process ${failCount} book(s)`, 'error');
+        }
+
+        // Close modal
+        const modal = bootstrap.Modal.getInstance(document.getElementById('bulkEditModal'));
+        modal.hide();
+
+        // Reload books while preserving filters
+        await reloadBooksData();
+
+        // Exit bulk edit mode
+        toggleBulkEdit();
+    } catch (error) {
+        console.error('Failed to process bulk edit:', error);
+        GreatReads.showToast('Failed to process bulk edit', 'error');
+    }
+}
+
+// Genre dropdown autocomplete
+const genreOptions = [
+    'Adventure',
+    'Biography',
+    'Children\'s',
+    'Comedy',
+    'Drama',
+    'Dystopian',
+    'Fantasy',
+    'Fiction',
+    'High Fantasy',
+    'Historical',
+    'Historical Fiction',
+    'Horror',
+    'LitRPG',
+    'Literary',
+    'Magical Realism',
+    'Memoir',
+    'Mystery',
+    'Mythology',
+    'Non-Fiction',
+    'Philosophy',
+    'Poetry',
+    'Politics',
+    'Post-Apocalyptic',
+    'Romance',
+    'Romantic Fantasy',
+    'Satire',
+    'Science',
+    'Sci-Fi',
+    'Self-Help',
+    'Supernatural',
+    'Thriller',
+    'Urban Fantasy',
+    'War',
+    'Western',
+    'Young Adult'
+];
+
+function setupGenreDropdown(inputId, dropdownId) {
+    const genreInput = document.getElementById(inputId);
+    const dropdown = document.getElementById(dropdownId);
+
+    if (!genreInput || !dropdown) return;
+
+    // Remove any existing listeners by cloning
+    const newInput = genreInput.cloneNode(true);
+    genreInput.parentNode.replaceChild(newInput, genreInput);
+    const input = document.getElementById(inputId);
+
+    // Show dropdown when input is focused and enabled
+    input.addEventListener('focus', () => {
+        if (!input.disabled) {
+            showGenreDropdown(dropdownId, '');
+        }
+    });
+
+    // Filter dropdown as user types
+    input.addEventListener('input', (e) => {
+        showGenreDropdown(dropdownId, e.target.value);
+    });
+
+    // Handle selection
+    dropdown.addEventListener('click', (e) => {
+        e.preventDefault();
+        const item = e.target.closest('.list-group-item');
+        if (!item) return;
+
+        input.value = item.textContent.trim();
+        dropdown.style.display = 'none';
+    });
+
+    // Hide dropdown when clicking outside
+    document.addEventListener('click', (e) => {
+        if (!input.contains(e.target) && !dropdown.contains(e.target)) {
+            dropdown.style.display = 'none';
+        }
+    });
+}
+
+function showGenreDropdown(dropdownId, searchTerm) {
+    const dropdown = document.getElementById(dropdownId);
+    const filtered = genreOptions.filter(genre =>
+        genre.toLowerCase().includes(searchTerm.toLowerCase())
+    );
+
+    if (filtered.length === 0) {
+        dropdown.style.display = 'none';
+        return;
+    }
+
+    dropdown.innerHTML = filtered.map(genre => `
+        <a href="#" class="list-group-item list-group-item-action">
+            ${genre}
+        </a>
+    `).join('');
+
+    dropdown.style.display = 'block';
+}
+
+// Initialize genre dropdowns when modals open
+document.getElementById('bulkEditModal')?.addEventListener('shown.bs.modal', () => {
+    setupGenreDropdown('bulkEditGenre', 'bulkGenreDropdown');
+});
+
+document.getElementById('editBookModal')?.addEventListener('shown.bs.modal', () => {
+    setupGenreDropdown('editGenre', 'editGenreDropdown');
+});
+
+// Tag input event listeners
+const tagInput = document.getElementById('editTags');
+if (tagInput) {
+    tagInput.addEventListener('input', (e) => {
+        showTagDropdown(e.target.value);
+    });
+
+    tagInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            const value = e.target.value.trim();
+            if (value) {
+                addTag(value);
+            }
+        }
+    });
+
+    // Hide dropdown when clicking outside
+    document.addEventListener('click', (e) => {
+        if (!tagInput.contains(e.target) && !document.getElementById('editTagsDropdown').contains(e.target)) {
+            document.getElementById('editTagsDropdown').style.display = 'none';
+        }
+    });
+}
+
+// Load tags on page load
+loadTags();
+</script>
+
+<style>
+/* Genre Dropdown Styling */
+.genre-dropdown {
+    max-height: 250px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    z-index: 1060;
+    background: white;
+    border: 1px solid #dee2e6;
+    border-radius: 0.5rem;
+    box-shadow: 0 8px 24px rgba(102, 126, 234, 0.3);
+    margin-top: 0.25rem;
+}
+
+.genre-dropdown .list-group-item {
+    border: none;
+    border-bottom: 1px solid #e9ecef;
+    transition: all 0.2s;
+    cursor: pointer;
+}
+
+.genre-dropdown .list-group-item:last-child {
+    border-bottom: none;
+}
+
+.genre-dropdown .list-group-item:hover {
+    background: linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%);
+    transform: translateX(4px);
+}
+
+/* Tag Dropdown Styling */
+.tag-dropdown {
+    max-height: 200px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    z-index: 1060;
+    background: white;
+    border: 1px solid #dee2e6;
+    border-radius: 0.5rem;
+    box-shadow: 0 8px 24px rgba(102, 126, 234, 0.3);
+    margin-top: 0.25rem;
+}
+
+.tag-dropdown .list-group-item {
+    border: none;
+    border-bottom: 1px solid #e9ecef;
+    transition: all 0.2s;
+    cursor: pointer;
+    padding: 0.5rem 0.75rem;
+}
+
+.tag-dropdown .list-group-item:last-child {
+    border-bottom: none;
+}
+
+.tag-dropdown .list-group-item:hover {
+    background: linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%);
+    transform: translateX(4px);
+}
+
+.tag-dropdown .list-group-item.create-new {
+    background: linear-gradient(135deg, rgba(102, 126, 234, 0.05) 0%, rgba(118, 75, 162, 0.05) 100%);
+    font-style: italic;
+    color: #667eea;
+}
+
+/* Tag Badge Styling */
+.tag-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4rem 0.75rem;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border-radius: 1rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    transition: all 0.2s;
+}
+
+.tag-badge:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+}
+
+.tag-badge .remove-tag {
+    cursor: pointer;
+    font-weight: bold;
+    opacity: 0.8;
+    transition: opacity 0.2s;
+}
+
+.tag-badge .remove-tag:hover {
+    opacity: 1;
+}
+</style>
+{% endblock %}
+
