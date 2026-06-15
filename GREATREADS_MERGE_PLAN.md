@@ -8,9 +8,11 @@
 we ship a single "book manager + reader + audiobook player" app, incrementally, **without
 ever breaking the working Ereader app.**
 
-> Related docs: `GREATREADS_INTEGRATION.md` (the *current remote-sync* contract, to be
-> retired in Story 2), `GREATREADS_CHAIN_REFERENCE.md` / `CHAIN_SYSTEM_ANALYSIS.md` (chain
-> internals), `OFFLINE_PLAN.md` (offline thinking), `RECOVERY.md`.
+> Related docs: **[`GREATREADS_MERGE_SCOPING.md`](GREATREADS_MERGE_SCOPING.md)** (file-level
+> execution detail for each Story — read this when implementing),
+> `GREATREADS_INTEGRATION.md` (the *current remote-sync* contract, to be retired in Story 2),
+> `GREATREADS_CHAIN_REFERENCE.md` / `CHAIN_SYSTEM_ANALYSIS.md` (chain internals),
+> `OFFLINE_PLAN.md` (offline thinking), `RECOVERY.md`.
 
 ---
 
@@ -108,6 +110,13 @@ unless noted; Stories 0+1 are the first shippable slice.
 
 **As** the maintainer **I want** GreatReads' code and data living inside this repo and running
 as its own service **so that** all further work happens in one repo with no remote dependency.
+
+> **Deployment decision (from scoping):** run it as an **isolated second Docker container**
+> on :8092 (reuse its Dockerfile; its code hardcodes container paths like `/app/data`), with a
+> **copied** DB and **read-only** Calibre/ABS mounts — never the production `greatreads_app`
+> container or its data dir. Bare-metal is the Story-4 end state, not now. Full commands and
+> the required scheduler kill-switch are in
+> [`GREATREADS_MERGE_SCOPING.md`](GREATREADS_MERGE_SCOPING.md#story-0).
 
 ### Scope / sub-tasks
 1. Copy `GreatReads/src/greatreads/`, `migrations/`, `pyproject.toml`, `scripts/`, templates
