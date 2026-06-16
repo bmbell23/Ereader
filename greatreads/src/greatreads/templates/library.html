@@ -537,20 +537,29 @@
     position: relative;
     cursor: pointer;
     background: linear-gradient(135deg, #e9ecef 0%, #dee2e6 100%);
-    aspect-ratio: 2 / 3;
-    display: flex; align-items: center; justify-content: center;
+    /* Fixed 2:3 box (padding-top hack — works everywhere). Every cover renders
+       at the same height; taller source images are cropped via object-fit. */
+    padding-top: 150%;
+    overflow: hidden;
 }
-.lib-cover-wrap img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.lib-cover-wrap .book-cover-fallback { font-size: 2.5rem; color: #adb5bd; }
+.lib-cover-wrap img {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%; object-fit: cover; display: block;
+}
+.lib-cover-wrap .book-cover-fallback {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 2.5rem; color: #adb5bd;
+}
 
 /* Read status is shown by the whole card: warm gold glow when read, muted gray
    when not — so it reads at a glance across the grid without a per-cover icon. */
 .lib-card.is-read {
-    border: 2px solid #f0b400;
-    box-shadow: 0 0 0 1px rgba(240,180,0,0.5), 0 0 16px 2px rgba(240,180,0,0.75), 0 2px 8px rgba(0,0,0,0.1);
+    border: 2px solid #198754;
+    box-shadow: 0 0 0 1px rgba(25,135,84,0.5), 0 0 16px 2px rgba(25,135,84,0.7), 0 2px 8px rgba(0,0,0,0.1);
 }
 .lib-card.is-read:hover {
-    box-shadow: 0 0 0 1px rgba(240,180,0,0.6), 0 0 24px 4px rgba(240,180,0,0.9), 0 6px 18px rgba(0,0,0,0.18);
+    box-shadow: 0 0 0 1px rgba(25,135,84,0.6), 0 0 24px 4px rgba(25,135,84,0.9), 0 6px 18px rgba(0,0,0,0.18);
 }
 .lib-card.is-unread { border: 1px solid #ced4da; }
 
@@ -576,13 +585,7 @@
 .lib-media .audio    { color: #ff9a4d; }
 .lib-media .physical { color: #b89cf0; }
 
-.lib-meta { padding: 8px 10px 10px; }
-.lib-title {
-    font-size: 0.85rem; font-weight: 600; line-height: 1.25; color: #212529;
-    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
-    min-height: 2.5em;                                    /* always reserve 2 lines so cards align */
-}
-.lib-author { font-size: 0.75rem; color: #6c757d; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Cards are cover-only now — title/author live in the cover-tap popup. */
 
 /* ---- Read/Listen picker + secondary actions (cover tap popup) ---- */
 .open-type-btn {
@@ -596,6 +599,14 @@
 .open-type-audio  { border-color: #FF6600; color: #FF6600; }
 .open-type-ebook:hover  { background: #0066CC; color: #fff; }
 .open-type-audio:hover  { background: #FF6600; color: #fff; }
+.open-type-physical { border-color: #6B4BA3; color: #6B4BA3; }
+/* Informational card (physical location) — looks like a format button but isn't
+   clickable, so no hover lift/invert, and it lays out as a compact row. */
+.open-type-static {
+    min-height: auto; flex-direction: row; justify-content: flex-start;
+    align-items: center; padding: 10px 14px; cursor: default;
+}
+.open-type-static:hover { transform: none; box-shadow: none; }
 .open-secondary { display: flex; flex-direction: column; gap: 5px; }
 .open-secondary .btn { text-align: left; }
 
@@ -847,10 +858,6 @@ function createBookCard(book) {
                     ${(book.read_count || 0) > 1 ? `<span class="read-count-badge read-count-${Math.min(book.read_count, 15)} lib-readcount" title="Read ${book.read_count}×">×${book.read_count}</span>` : ''}
                     ${mediaIcons ? `<span class="lib-media">${mediaIcons}</span>` : ''}
                 </div>
-                <div class="lib-meta">
-                    <div class="lib-title" title="${book.title}">${book.title}</div>
-                    <div class="lib-author">${book.author || ''}</div>
-                </div>
             </div>
         </div>
     `;
@@ -881,6 +888,10 @@ function openBookActions(bookId) {
     }
     if (book.word_count) rows.push(['Words', Number(book.word_count).toLocaleString()]);
     if (book.page_count) rows.push(['Pages', Number(book.page_count).toLocaleString()]);
+
+    // Physical shelf location — shown at the very top as a format-styled card
+    // (almost a "third format"), only when we own the physical copy + know where.
+    let locationCard = '';
     const phys = (book.inventory || []).find(i => i.owned_physical && (i.shelf_bookshelf || i.location));
     if (phys) {
         let loc = phys.location || '';
@@ -889,8 +900,18 @@ function openBookActions(bookId) {
                   (phys.shelf_shelf != null ? `-${phys.shelf_shelf}` : '') +
                   (phys.shelf_position != null ? `, pos ${phys.shelf_position}` : '');
         }
-        if (loc) rows.push(['Location', loc]);
+        if (loc) locationCard = `
+            <div class="col-12">
+                <div class="open-type-btn open-type-physical open-type-static">
+                    <i class="fas fa-book fa-lg me-2"></i>
+                    <div class="text-start">
+                        <div class="fw-bold">Physical</div>
+                        <div class="small">${loc}</div>
+                    </div>
+                </div>
+            </div>`;
     }
+
     const details = rows.length ? `
         <div class="col-12">
             <div class="open-details">
@@ -939,7 +960,7 @@ function openBookActions(bookId) {
             </div>
         </div>`;
 
-    document.getElementById('openBookOptions').innerHTML = big + details + secondary;
+    document.getElementById('openBookOptions').innerHTML = locationCard + big + details + secondary;
     bootstrap.Modal.getOrCreateInstance(document.getElementById('openBookModal')).show();
 }
 

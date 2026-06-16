@@ -3028,11 +3028,14 @@
 
         function saveReadingState() {
             if (!bookId || !totalPages) return;
-            // Never persist a page-0 state until the user has actually navigated.
-            // This is the guard against the open-time clobber: a fresh open sits at
-            // page 0 before/without a successful restore, and saving that would
-            // overwrite real progress already on the server with 0/0.
-            if (currentEpubPage === 0 && !_userNavigated) return;
+            // Don't persist ANY position until the user actually turns a page.
+            // Covers two cases: (1) the open-time clobber — a fresh open sits at
+            // the start before/without a successful restore, and saving that would
+            // wipe real progress; and (2) opening a book just to VIEW a highlight
+            // or bookmark — landing on that jump target must not record reading
+            // progress or mark the book "in progress". Saving resumes on the first
+            // real page-turn (nextPage/prevPage set _userNavigated).
+            if (!_userNavigated) return;
             try {
                 // Persist BOTH the anchor (word-level position, stable across
                 // font/viewport changes) AND the bare progress fraction
