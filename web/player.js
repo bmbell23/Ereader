@@ -46,6 +46,11 @@ const audio = $('audio');
 // Session state (always reflects the CURRENTLY-loaded part).
 let session = null, sid = null, chapters = [], duration = 0;
 let hls = null, lastSyncAt = 0, syncTimer = null, pendingSeek = 0;
+// True once the media has loaded and any resume seek has been applied. Until
+// then we must NOT persist progress — currentTime sits at 0 during the load
+// window, and saving it would clobber the real saved position (a big cause of
+// "lost my place"), especially if loading is slow or the user leaves early.
+let resumeApplied = false;
 let scrubbing = false, chScrubbing = false, closed = false;
 let chosenRate = 1;  // user-selected playback speed, re-applied on (re)load
 
@@ -257,6 +262,9 @@ function applyPendingSeek() {
         try { audio.currentTime = pendingSeek; } catch (_) {}
         pendingSeek = 0;
     }
+    // Media is loaded (duration known) and any resume seek is applied — saving
+    // progress is now safe.
+    if (isFinite(audio.duration)) resumeApplied = true;
     // Paint the trail immediately so the scrubber shows the correct filled
     // region before the first timeupdate fires.
     updateUI();
@@ -521,18 +529,25 @@ async function resolveEbookSibling() {
 let resumePercent = null;
 async function resolveResumePosition() {
     if (!PROGRESS_KEY) return { kind: 'none' };
-    const recs = [];
-    try {
-        const r = await fetch(`${API_URL}/progress/${encodeURIComponent(PROGRESS_KEY)}`);
-        if (r.ok) recs.push(await r.json());
-    } catch (_) {}
+    // Gather every key this book's progress could live under, de-duplicated:
+    //   - PROGRESS_KEY        (calibre id for dual-format, else abs:<id>)
+    //   - abs:<ABS_ID>        (audio progress saved before the unified-key change;
+    //                          without this, switching launch source looks like
+    //                          "lost progress")
+    //   - the linked ebook id (cross-format: a spot read in the ebook resumes audio)
+    const keys = new Set([PROGRESS_KEY]);
+    if (ABS_ID) keys.add('abs:' + ABS_ID);
     await resolveEbookSibling();
-    if (linkedEbookId) {
+    if (linkedEbookId) keys.add(linkedEbookId);
+
+    // Fetch all candidates in parallel (was sequential — a big part of slow resume).
+    const recs = await Promise.all([...keys].map(async (k) => {
         try {
-            const r = await fetch(`${API_URL}/progress/${encodeURIComponent(linkedEbookId)}`);
-            if (r.ok) recs.push(await r.json());
-        } catch (_) {}
-    }
+            const r = await fetch(`${API_URL}/progress/${encodeURIComponent(k)}`);
+            return r.ok ? await r.json() : null;
+        } catch (_) { return null; }
+    }));
+
     const valid = recs.filter(p => p && !p.error && p.updated);
     if (!valid.length) return { kind: 'none' };
     valid.sort((a, b) => (b.updated || 0) - (a.updated || 0));
@@ -746,7 +761,9 @@ function saveReadingState() {
 }
 
 function saveProgress() {
-    if (!PROGRESS_KEY) return;
+    // Don't persist until the resume seek has landed — otherwise a save fired
+    // during the load window (pause/leave/sync) writes ~0 over the real spot.
+    if (!PROGRESS_KEY || !resumeApplied) return;
     saveReadingState();
     const pos = globalTime();
     const total = bookTotal();

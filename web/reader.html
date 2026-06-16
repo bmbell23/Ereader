@@ -417,17 +417,18 @@
             border-radius: 6px;
             background: transparent;
             border: none;
-            color: rgba(160, 160, 160, 0.6);
-            font-size: 18px;
+            /* Same grey weight as the dark PNG icons (brightness(0) @ 0.5). */
+            color: rgba(0, 0, 0, 0.5);
             line-height: 1;
             display: flex;
             align-items: center;
             justify-content: center;
-            z-index: 11500;
+            z-index: 9500;  /* above page content, below all overlays (10000+) */
             cursor: pointer;
             -webkit-tap-highlight-color: transparent;
         }
-        #menu-btn:active { color: rgba(200, 200, 200, 0.9); }
+        #menu-btn svg { width: 22px; height: 22px; display: block; }
+        #menu-btn:active { color: rgba(0, 0, 0, 0.85); }
         /* Floating in-book search button (top-left corner, right of menu btn).
            EPUB only — shown by setupNavigation(). Semi-transparent so it
            doesn't fight the text; solidifies on press. Sits above content
@@ -448,11 +449,11 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            z-index: 11500;
+            z-index: 9500;  /* above page content, below all overlays (10000+) */
             cursor: pointer;
             -webkit-tap-highlight-color: transparent;
         }
-        #reader-toc-btn img { width: 20px; height: 20px; filter: brightness(0); opacity: 0.5; display: block; }
+        #reader-toc-btn img { width: 22px; height: 22px; filter: brightness(0); opacity: 0.5; display: block; }
         #reader-toc-btn:active img { opacity: 0.85; }
         #search-btn {
             position: fixed;
@@ -467,11 +468,11 @@
             display: none;
             align-items: center;
             justify-content: center;
-            z-index: 11500;
+            z-index: 9500;  /* above page content, below all overlays (10000+) */
             cursor: pointer;
             -webkit-tap-highlight-color: transparent;
         }
-        #search-btn img { width: 18px; height: 18px; filter: brightness(0); opacity: 0.5; display: block; }
+        #search-btn img { width: 22px; height: 22px; filter: brightness(0); opacity: 0.5; display: block; }
         #search-btn:active img { opacity: 0.9; }
         /* In-book search overlay rows. */
         .search-section {
@@ -1188,8 +1189,14 @@
         <div class="page-info" id="page-info"></div>
     </div>
 
-    <!-- Hamburger button (top-left). Always visible; opens Reading Options. -->
-    <button id="menu-btn" title="Reading options" onclick="toggleMenu()">☰</button>
+    <!-- Settings (gear) button (top-left). Always visible; opens Reading Options.
+         Gear icon (not the hamburger) so it reads distinct from the TOC button. -->
+    <button id="menu-btn" title="Reading options" onclick="toggleMenu()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+        </svg>
+    </button>
 
     <!-- Floating Table-of-Contents button (right of menu btn). Always visible. -->
     <button id="reader-toc-btn" title="Table of contents" onclick="toggleTOC()"><img src="assets/toc.png" alt="Contents"></button>
@@ -1426,7 +1433,7 @@
     <div id="search-overlay" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:#f8f9fa;z-index:11000;overflow-y:auto;padding:calc(env(safe-area-inset-top, 0px) + 16px) 16px 24px 16px;">
         <div style="max-width:760px;margin:0 auto;">
             <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
-                <input id="search-input" type="search" placeholder="Search this book…" autocomplete="off" autocapitalize="off" autocorrect="off"
+                <input id="search-input" type="text" placeholder="Search this book…" autocomplete="off" autocapitalize="off" autocorrect="off"
                        style="flex:1;min-width:0;padding:12px 14px;border-radius:10px;border:1px solid #ced4da;background:#fff;color:#212529;font-size:16px;">
                 <button onclick="closeSearch()" style="flex:0 0 auto;background:#f1f3f5;color:#495057;border:1px solid #e9ecef;padding:12px 14px;border-radius:10px;font-size:16px;cursor:pointer;">✕</button>
             </div>
@@ -6896,10 +6903,15 @@
             const b = document.getElementById('btn-summary');
             if (b) b.style.display = show ? '' : 'none';
         }
-        // Close the TOC, then open the chapter-summary overlay (called from the
-        // Summaries button in the TOC header).
+        // Switch from the TOC overlay straight to the chapter-summary overlay.
+        // We hide the TOC directly (NOT via toggleTOC) because toggleTOC's close
+        // path calls history.back(), whose async popstate would fire right after
+        // openSummary() and immediately close the summary again. Hiding the TOC
+        // inline keeps the single overlay history state armed, so the summary
+        // stays open and Back still closes it.
         function closeTOCThenSummary() {
-            toggleTOC();
+            const toc = document.getElementById('toc-overlay');
+            if (toc) toc.style.display = 'none';
             openSummary();
         }
 
