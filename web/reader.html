@@ -1797,6 +1797,22 @@
                     }
                 }
 
+                // Pull the EPUB's own stylesheet(s) and inject the inline-format
+                // rules (italic/bold/underline/super-sub) scoped to #epub-content.
+                // Many EPUBs (esp. Calibre-converted) mark emphasis with
+                // <span class="italic"> + a CSS rule rather than <i>/<em>, so
+                // without this their italics/bold are silently lost. We keep ONLY
+                // formatting props — never layout — so it can't fight pagination.
+                try {
+                    let epubCssText = '';
+                    for (const fn of Object.keys(zip.files)) {
+                        if (!zip.files[fn].dir && /\.css$/i.test(fn)) {
+                            try { epubCssText += '\n' + await zip.files[fn].async('text'); } catch (_) {}
+                        }
+                    }
+                    injectScopedEpubCss(epubCssText);
+                } catch (e) { console.warn('EPUB CSS extract skipped:', e); }
+
                 // Extract HTML files in order. Each spine item gets parsed
                 // and its <body> contents wrapped in a marker div carrying
                 // data-spine-href, so the TOC resolver can scope per-file
@@ -6085,6 +6101,45 @@
                     _scene: true,
                 }));
             }
+        }
+
+        // Extract just the character-formatting rules (italic/bold/underline/
+        // small-caps/super-sub) from the EPUB's CSS, scope them under
+        // #epub-content, and inject as one <style>. Uses the browser's CSS parser
+        // (a throwaway <style>.sheet) so it handles real-world CSS, and skips
+        // @media/@font-face and all layout props so publisher CSS can't break the
+        // paginated column layout. Replaces any previously-injected block.
+        function injectScopedEpubCss(cssText) {
+            const PREV = document.getElementById('epub-extracted-css');
+            if (PREV) PREV.remove();
+            if (!cssText || !cssText.trim()) return;
+            const KEEP = ['font-style', 'font-weight', 'font-variant',
+                          'text-decoration', 'vertical-align', 'text-transform', 'font-variant-caps'];
+            const out = [];
+            const probe = document.createElement('style');
+            probe.textContent = cssText;
+            document.head.appendChild(probe);
+            try {
+                const rules = probe.sheet ? probe.sheet.cssRules : [];
+                for (const rule of rules) {
+                    if (rule.type !== CSSRule.STYLE_RULE || !rule.selectorText) continue;
+                    const decls = [];
+                    for (const p of KEEP) {
+                        const v = rule.style.getPropertyValue(p);
+                        if (v) decls.push(`${p}:${v}`);
+                    }
+                    if (!decls.length) continue;
+                    const scoped = rule.selectorText.split(',')
+                        .map(s => `#epub-content ${s.trim()}`).join(', ');
+                    out.push(`${scoped}{${decls.join(';')}}`);
+                }
+            } catch (_) { /* parsing failed — leave content unstyled */ }
+            probe.remove();
+            if (!out.length) return;
+            const styleEl = document.createElement('style');
+            styleEl.id = 'epub-extracted-css';
+            styleEl.textContent = out.join('\n');
+            document.head.appendChild(styleEl);
         }
 
         // ---- In-book link navigation ------------------------------------------

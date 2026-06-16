@@ -50,7 +50,7 @@
     {% if current_user %}
     <nav class="navbar navbar-expand-lg navbar-dark bookish-header">
         <div class="container">
-            <a class="navbar-brand bookish-brand" href="/">
+            <a class="navbar-brand bookish-brand" href="{{ url_for('library_page') }}">
                 <i class="fas fa-book-open me-2"></i>
                 <span class="brand-text">GreatReads</span>
             </a>
@@ -61,25 +61,12 @@
 
             <div class="collapse navbar-collapse" id="navbarNav">
                 <ul class="navbar-nav ms-auto">
-                    <!-- Reader-side destinations (live in Ereader, served same-origin
-                         under / via the proxy). Home is THE home; Highlights/Bookmarks
-                         deep-link into the Ereader overlays with ?view=. -->
+                    <!-- Unified menu. Library is the home; Highlights deep-links into
+                         the Ereader overlay (Bookmarks live there as a sub-tab now). -->
                     <li class="nav-item">
-                        <a class="nav-link bookish-nav-link" href="/">
-                            <i class="fas fa-home"></i>
-                            <span class="nav-text">Home</span>
-                        </a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link bookish-nav-link" href="/?view=highlights">
-                            <i class="fas fa-highlighter"></i>
-                            <span class="nav-text">Highlights</span>
-                        </a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link bookish-nav-link" href="/?view=bookmarks">
-                            <i class="fas fa-bookmark"></i>
-                            <span class="nav-text">Bookmarks</span>
+                        <a class="nav-link bookish-nav-link" href="{{ url_for('library_page') }}">
+                            <i class="fas fa-book"></i>
+                            <span class="nav-text">Library</span>
                         </a>
                     </li>
                     <li class="nav-item">
@@ -95,15 +82,9 @@
                         </a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link bookish-nav-link" href="{{ url_for('library_page') }}">
-                            <i class="fas fa-book"></i>
-                            <span class="nav-text">Library</span>
-                        </a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link bookish-nav-link" href="{{ url_for('books_page') }}">
-                            <i class="fas fa-book-open"></i>
-                            <span class="nav-text">Books</span>
+                        <a class="nav-link bookish-nav-link" href="/?view=highlights">
+                            <i class="fas fa-highlighter"></i>
+                            <span class="nav-text">Highlights</span>
                         </a>
                     </li>
                     <li class="nav-item">

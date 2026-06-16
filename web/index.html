@@ -634,13 +634,10 @@
          (base.html). Reader-side items first (Home / Highlights / Bookmarks),
          then the GreatReads library-management pages, then Settings. -->
     <div class="menu-popup" id="menu-popup">
-        <button id="menu-home">🏠 Home</button>
-        <button id="menu-highlights">✏️ Highlights</button>
-        <button id="menu-bookmarks">🔖 Bookmarks</button>
+        <button id="menu-library">📚 Library</button>
         <button id="menu-tbr">📋 TBR</button>
         <button id="menu-journal">📖 Journal</button>
-        <button id="menu-library">📚 Library</button>
-        <button id="menu-books">📕 Books</button>
+        <button id="menu-highlights">✏️ Highlights</button>
         <button id="menu-stats">📊 Stats</button>
         <button id="menu-settings">⚙️ Settings</button>
     </div>
@@ -770,7 +767,11 @@
                 <button class="icon-btn" onclick="closeHighlights()" title="Back">←</button>
                 <div class="overlay-title" id="hl-title">Highlights</div>
             </div>
-            <input type="text" id="hl-search" placeholder="Search…">
+            <div class="pill-group" id="hl-subtabs" style="padding:2px 0 8px;">
+                <button class="pill active" data-hltype="highlight">✏️ Highlights</button>
+                <button class="pill" data-hltype="bookmark">🔖 Bookmarks</button>
+            </div>
+            <input type="text" id="hl-search" placeholder="Search highlights & bookmarks…">
         </div>
         <div class="overlay-list" id="hl-list">
             <div class="loading">Loading…</div>
@@ -2213,16 +2214,10 @@
             menuPopup.classList.remove('open');
             openOverlay('highlight');
         });
-        document.getElementById('menu-bookmarks').addEventListener('click', () => {
-            menuPopup.classList.remove('open');
-            openOverlay('bookmark');
-        });
         const MENU_NAV = {
-            'menu-home':     '/',
+            'menu-library':  '/greatreads/library',
             'menu-tbr':      '/greatreads/tbr',
             'menu-journal':  '/greatreads/journal',
-            'menu-library':  '/greatreads/library',
-            'menu-books':    '/greatreads/books',
             'menu-stats':    '/greatreads/stats',
             'menu-settings': '/greatreads/settings',
         };
@@ -2278,12 +2273,11 @@
         // Two entry points drive the same overlay, grouped by book, searchable.
         function openOverlay(type) {
             const ov = document.getElementById('hl-overlay');
-            ov.dataset.type = type;
-            const isBM = (type === 'bookmark');
-            document.getElementById('hl-title').textContent = isBM ? 'Bookmarks' : 'Highlights';
-            document.getElementById('hl-search').placeholder =
-                isBM ? 'Search bookmarks, books, authors…'
-                     : 'Search highlights, books, authors…';
+            const t = (type === 'bookmark') ? 'bookmark' : 'highlight';
+            ov.dataset.type = t;
+            // Highlight the matching sub-tab (the page title stays "Highlights").
+            document.querySelectorAll('#hl-subtabs .pill').forEach(p =>
+                p.classList.toggle('active', p.dataset.hltype === t));
             document.getElementById('hl-search').value = '';
             ov.classList.add('open');
             loadHighlights();
@@ -2291,6 +2285,15 @@
         function closeHighlights() {
             document.getElementById('hl-overlay').classList.remove('open');
         }
+        // Sub-tab switch (Highlights / Bookmarks) — same overlay, swap the type.
+        document.getElementById('hl-subtabs').addEventListener('click', (e) => {
+            const btn = e.target.closest('.pill[data-hltype]');
+            if (!btn) return;
+            document.getElementById('hl-overlay').dataset.type = btn.dataset.hltype;
+            document.querySelectorAll('#hl-subtabs .pill').forEach(p =>
+                p.classList.toggle('active', p === btn));
+            loadHighlights();
+        });
         let _hlDebounce = null;
         document.getElementById('hl-search').addEventListener('input', () => {
             clearTimeout(_hlDebounce);
