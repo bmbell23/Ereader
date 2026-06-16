@@ -26,8 +26,8 @@
         }
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #000;
-            color: #fff;
+            background: #f8f9fa;
+            color: #212529;
             overflow: hidden;
             width: 100%;
             height: 100vh; /* Use viewport height to match screen */
@@ -890,7 +890,7 @@
             max-width: 720px;
             margin: 0 auto;
             padding: 18px 20px calc(env(safe-area-inset-bottom,0px) + 40px) 20px;
-            color: #e6e6e6;
+            color: #212529;
             font-size: 18px;
             line-height: 1.65;
             font-family: Georgia, 'Times New Roman', serif;
@@ -899,18 +899,18 @@
         }
         .clean-reader-content h1, .clean-reader-content h2,
         .clean-reader-content h3, .clean-reader-content h4 {
-            color: #fff; line-height: 1.25; margin: 1.4em 0 0.5em;
+            color: #212529; line-height: 1.25; margin: 1.4em 0 0.5em;
             font-family: -apple-system, system-ui, sans-serif;
         }
         .clean-reader-content h1 { font-size: 1.5em; }
-        .clean-reader-content h2 { font-size: 1.3em; border-bottom: 1px solid #333; padding-bottom: 4px; }
+        .clean-reader-content h2 { font-size: 1.3em; border-bottom: 1px solid #e9ecef; padding-bottom: 4px; }
         .clean-reader-content h3 { font-size: 1.12em; }
         .clean-reader-content p { margin: 0 0 0.9em; }
-        .clean-reader-content a { color: #7aa2f7; text-decoration: none; }
+        .clean-reader-content a { color: #4067EF; text-decoration: none; }
         /* Tappable internal wiki links (loaded in-overlay). Dead links
            (external / namespaced) lose their link colour so they don't look
            clickable when they aren't. */
-        .clean-reader-content a.cr-wikilink { cursor: pointer; text-decoration: underline; text-decoration-color: rgba(122,162,247,0.5); }
+        .clean-reader-content a.cr-wikilink { cursor: pointer; text-decoration: underline; text-decoration-color: rgba(64,103,239,0.45); }
         .clean-reader-content a.cr-deadlink { color: inherit; text-decoration: none; }
         .clean-reader-content img {
             max-width: 100%; height: auto; border-radius: 6px; display: block;
@@ -918,7 +918,7 @@
         }
         .clean-reader-content figure { margin: 12px 0; }
         .clean-reader-content figcaption,
-        .clean-reader-content .lead-caption { font-size: 13px; color: #9a9a9a; text-align: center; }
+        .clean-reader-content .lead-caption { font-size: 13px; color: #6c757d; text-align: center; }
         .clean-reader-content ul, .clean-reader-content ol { padding-left: 1.4em; margin: 0 0 0.9em; }
         .clean-reader-content li { margin: 0.2em 0; }
         .clean-reader-content table {
@@ -926,24 +926,24 @@
             border-collapse: collapse; font-size: 14px; margin: 12px 0;
         }
         .clean-reader-content td, .clean-reader-content th {
-            border: 1px solid #333; padding: 5px 8px; vertical-align: top;
+            border: 1px solid #dee2e6; padding: 5px 8px; vertical-align: top;
         }
         /* Fandom/portable infobox — keep it but tame the width + colors. */
         .clean-reader-content .portable-infobox,
         .clean-reader-content .infobox {
             float: none; width: 100% !important; max-width: 100%;
-            background: #202020; border: 1px solid #333; border-radius: 8px;
+            background: #f1f3f5; border: 1px solid #e9ecef; border-radius: 8px;
             padding: 10px; margin: 0 0 16px; font-size: 14px;
         }
         .clean-reader-content blockquote {
-            margin: 0 0 0.9em; padding-left: 14px; border-left: 3px solid #444; color: #bdbdbd;
+            margin: 0 0 0.9em; padding-left: 14px; border-left: 3px solid #ced4da; color: #495057;
         }
         /* Dictionary rendering */
-        .cr-dict-word { font-size: 26px; color:#fff; font-family: -apple-system, system-ui, sans-serif; }
-        .cr-dict-phon { color:#9a9a9a; font-size: 15px; margin: 2px 0 14px; }
+        .cr-dict-word { font-size: 26px; color:#212529; font-family: -apple-system, system-ui, sans-serif; }
+        .cr-dict-phon { color:#6c757d; font-size: 15px; margin: 2px 0 14px; }
         .cr-dict-pos  { color:#C940B0; font-weight:600; margin: 16px 0 6px; font-family: -apple-system, system-ui, sans-serif; }
-        .cr-dict-ex   { color:#9a9a9a; font-style: italic; }
-        .cr-loading, .cr-empty { color:#9a9a9a; text-align:center; padding: 40px 20px; font-family: -apple-system, system-ui, sans-serif; }
+        .cr-dict-ex   { color:#6c757d; font-style: italic; }
+        .cr-loading, .cr-empty { color:#6c757d; text-align:center; padding: 40px 20px; font-family: -apple-system, system-ui, sans-serif; }
 
         /* Custom drag handles for adjusting highlight bounds.
            Positioned by JS at the visual start / end of the active
@@ -957,7 +957,7 @@
             width: 22px;
             height: 22px;
             border-radius: 50%;
-            background: #1976D2;
+            background: #8640C0;
             border: 3px solid #fff;
             box-shadow: 0 2px 8px rgba(0,0,0,0.5);
             display: none;
@@ -1028,31 +1028,33 @@
         }
         .hl-settings-modal.open { display: flex; }
         .hl-settings-modal .card {
-            background: #1f1f1f;
+            background: #ffffff;
+            border: 1px solid #e9ecef;
             border-radius: 12px;
             padding: 20px;
             max-width: 520px;
             width: 100%;
-            color: #fff;
+            color: #212529;
+            box-shadow: 0 8px 30px rgba(0,0,0,0.2);
         }
         .hl-settings-modal h3 { margin: 0 0 12px 0; }
         .hl-settings-modal label {
             display: block;
-            color: #bbb;
+            color: #495057;
             font-size: 13px;
             margin: 12px 0 4px 0;
         }
         .hl-settings-modal input[type="text"] {
             width: 100%;
             padding: 10px;
-            background: #111;
-            color: #fff;
-            border: 1px solid #444;
+            background: #fff;
+            color: #212529;
+            border: 1px solid #ced4da;
             border-radius: 6px;
             font-size: 14px;
             font-family: ui-monospace, monospace;
         }
-        .hl-settings-modal .hint { color: #888; font-size: 12px; margin-top: 4px; }
+        .hl-settings-modal .hint { color: #6c757d; font-size: 12px; margin-top: 4px; }
         .hl-settings-modal .row {
             display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px;
         }
@@ -1060,8 +1062,8 @@
             padding: 10px 16px; border-radius: 8px; border: none; font-size: 14px;
             cursor: pointer;
         }
-        .hl-settings-modal .save { background: #2196F3; color: #fff; }
-        .hl-settings-modal .cancel { background: #333; color: #ccc; }
+        .hl-settings-modal .save { background: #8640C0; color: #fff; }
+        .hl-settings-modal .cancel { background: #f1f3f5; color: #495057; border: 1px solid #e9ecef; }
 
         /* ---- TOC tree: hierarchical expand/collapse ---- */
         .toc-row {
@@ -1474,12 +1476,12 @@
          via the backend proxy (MediaWiki API / dictionaryapi.dev), stripped of
          ads/nav/cruft, and rendered here in OUR scroll container (so no site
          scroll jank). Built by openCleanReader() / renderWiki() / renderDict(). -->
-    <div id="reader-overlay" style="display:none;position:fixed;inset:0;z-index:10001;background:#181818;flex-direction:column;">
-        <div style="flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:calc(env(safe-area-inset-top,0px) + 12px) 14px 12px 14px;background:#101010;border-bottom:1px solid #2a2a2a;">
-            <button id="reader-overlay-back" onclick="wikiBack()" title="Back" style="display:none;flex:0 0 auto;align-items:center;justify-content:center;background:#333;color:#fff;border:none;padding:9px 13px;border-radius:8px;font-size:16px;cursor:pointer;">‹</button>
+    <div id="reader-overlay" style="display:none;position:fixed;inset:0;z-index:10001;background:#f8f9fa;flex-direction:column;">
+        <div style="flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:calc(env(safe-area-inset-top,0px) + 12px) 14px 12px 14px;background:#fff;border-bottom:1px solid #e9ecef;">
+            <button id="reader-overlay-back" onclick="wikiBack()" title="Back" style="display:none;flex:0 0 auto;align-items:center;justify-content:center;background:#f1f3f5;color:#495057;border:1px solid #e9ecef;padding:9px 13px;border-radius:8px;font-size:16px;cursor:pointer;">‹</button>
             <span id="reader-kind-badge" style="flex:0 0 auto;font-size:18px;">🌐</span>
-            <div id="reader-overlay-title" style="flex:1;min-width:0;color:#fff;font-size:17px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Loading…</div>
-            <button onclick="closeCleanReader()" title="Close" style="flex:0 0 auto;background:#333;color:#fff;border:none;padding:9px 15px;border-radius:8px;font-size:16px;cursor:pointer;">✕</button>
+            <div id="reader-overlay-title" style="flex:1;min-width:0;color:#212529;font-size:17px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Loading…</div>
+            <button onclick="closeCleanReader()" title="Close" style="flex:0 0 auto;background:#f1f3f5;color:#495057;border:1px solid #e9ecef;padding:9px 15px;border-radius:8px;font-size:16px;cursor:pointer;">✕</button>
         </div>
         <div id="reader-overlay-scroll" style="flex:1 1 auto;min-height:0;overflow-x:hidden;overflow-y:auto;-webkit-overflow-scrolling:touch;">
             <div id="reader-overlay-content" class="clean-reader-content"></div>
@@ -5216,7 +5218,7 @@
                     '<div class="cr-empty">Couldn’t load this ' +
                     (kind === 'dict' ? 'definition' : 'article') + '.<br><br>' +
                     '<a href="' + url.replace(/"/g, '&quot;') + '" target="_blank" rel="noopener" ' +
-                    'style="color:#7aa2f7;">Open in browser ↗</a></div>';
+                    'style="color:#4067EF;">Open in browser ↗</a></div>';
             });
         }
 
