@@ -2176,6 +2176,14 @@ function initializeReorderSortable(listId) {
         ghostClass: 'sortable-ghost',
         chosenClass: 'sortable-chosen',
         dragClass: 'sortable-drag',
+        // Use Sortable's own drag clone (consistent on mouse + touch) and append it
+        // to <body>. Inside the Bootstrap modal the dialog has a CSS transform and
+        // the list clips overflow, which traps the default clone and leaves it
+        // "stuck" skewed on screen after drop; fallbackOnBody fixes positioning and
+        // cleanup. fallbackTolerance avoids accidental drags on a tap/scroll.
+        forceFallback: true,
+        fallbackOnBody: true,
+        fallbackTolerance: 5,
         // Smooth auto-scroll when dragging toward the top/bottom of the
         // scrollable list (the modal lists are taller than the viewport).
         scroll: true,
@@ -2332,14 +2340,10 @@ function refreshReorderModalLists() {
 
 async function saveReorder() {
     try {
-        // Get the order from each list
-        const ebookOrder = getListOrder('ebook-list');
-        const audioOrder = getListOrder('audio-list');
-        const physicalOrder = getListOrder('physical-list');
-
-        // Combine all orders - we need to interleave them properly
-        // The backend expects all reading IDs in the desired global order
-        const allOrder = interleaveMediaOrders(ebookOrder, audioOrder, physicalOrder);
+        // Build the new global order. The backend requires ALL unfinished reading
+        // IDs exactly once (no dups, none missing) — otherwise it 404s — so we
+        // construct a guaranteed-clean permutation of every reading in allReadings.
+        const allOrder = buildGlobalReorder();
 
         // Call the bulk reorder API
         const response = await fetch(apiUrl('/api/readings/bulk-reorder'), {
@@ -2351,7 +2355,9 @@ async function saveReorder() {
         });
 
         if (!response.ok) {
-            throw new Error('Failed to reorder readings');
+            let detail = '';
+            try { detail = (await response.json()).detail || ''; } catch (_) {}
+            throw new Error(`Failed to reorder readings (${response.status}) ${detail}`);
         }
 
         GreatReads.showToast('Reading order updated successfully!', 'success');
@@ -2372,39 +2378,59 @@ function getListOrder(listId) {
     const list = document.getElementById(listId);
     if (!list) return [];
 
-    const items = list.querySelectorAll('.reorder-item');
-    return Array.from(items).map(item => parseInt(item.dataset.readingId));
+    // Read DOM order, dropping any non-numeric ids and de-duplicating defensively
+    // so a stray/duplicate node can never poison the bulk-reorder payload.
+    const seen = new Set();
+    const ids = [];
+    list.querySelectorAll('.reorder-item').forEach(item => {
+        const id = parseInt(item.dataset.readingId, 10);
+        if (Number.isInteger(id) && !seen.has(id)) {
+            seen.add(id);
+            ids.push(id);
+        }
+    });
+    return ids;
 }
 
-function interleaveMediaOrders(ebookOrder, audioOrder, physicalOrder) {
-    // We need to create a global order that maintains the relative order within each media type
-    // Strategy: Use the current allReadings order as a template, but update positions based on new orders
-
+function buildGlobalReorder() {
+    // New within-media orders straight from the (deduped) DOM lists.
     const mediaOrders = {
-        'Ebook': ebookOrder,
-        'Audio': audioOrder,
-        'Physical': physicalOrder
+        'Ebook': getListOrder('ebook-list'),
+        'Audio': getListOrder('audio-list'),
+        'Physical': getListOrder('physical-list')
     };
+    const pos = { 'Ebook': 0, 'Audio': 0, 'Physical': 0 };
 
-    const mediaPositions = {
-        'Ebook': 0,
-        'Audio': 0,
-        'Physical': 0
-    };
-
+    // Only real, unfinished reading IDs are valid payload entries.
+    const validIds = new Set(allReadings.map(r => r.id));
+    const used = new Set();
     const result = [];
-
-    // Go through allReadings and replace each reading with the next one from its media type's new order
-    for (const reading of allReadings) {
-        const media = reading.media;
-        const order = mediaOrders[media];
-        const position = mediaPositions[media];
-
-        if (order && position < order.length) {
-            result.push(order[position]);
-            mediaPositions[media]++;
+    const push = (id) => {
+        if (validIds.has(id) && !used.has(id)) {
+            used.add(id);
+            result.push(id);
         }
+    };
+
+    // Walk the existing global order, substituting each media slot with the next
+    // id from that media's new order. Anything without a managed list (or whose
+    // list is exhausted) falls back to its own id, keeping its relative position.
+    for (const reading of allReadings) {
+        const order = mediaOrders[reading.media];
+        if (order) {
+            while (pos[reading.media] < order.length && used.has(order[pos[reading.media]])) {
+                pos[reading.media]++;
+            }
+            if (pos[reading.media] < order.length) {
+                push(order[pos[reading.media]++]);
+                continue;
+            }
+        }
+        push(reading.id);
     }
+
+    // Safety net: guarantee every unfinished reading is present exactly once.
+    for (const reading of allReadings) push(reading.id);
 
     return result;
 }
