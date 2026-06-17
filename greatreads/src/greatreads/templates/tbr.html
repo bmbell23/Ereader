@@ -1415,7 +1415,7 @@ function createProgressSection(reading, book) {
             </div>
 
             <!-- Progress bar -->
-            <div style="position: relative; height: 28px; background-color: #e9ecef; border-radius: 4px; overflow: hidden;">
+            <div style="position: relative; height: 24px; background-color: #e9ecef; border-radius: 4px; overflow: hidden;">
                 <!-- Filled progress (actual completion) -->
                 <div style="position: absolute; left: 0; top: 0; height: 100%; background-color: ${mediaColor}; border-radius: 4px; width: ${targetProgress}%; transition: width 0.3s ease;"></div>
 
@@ -1449,56 +1449,54 @@ function createReadingCard(reading, index) {
     const borderClass = isPaused ? '' : (formatClass ? (isInProgress ? `border-${formatClass}-full` : `border-${formatClass}`) : '');
 
     return `
-        <div class="card reading-card ${statusClass} ${borderClass} mb-3 fade-in tbr-draggable-card" data-reading-id="${reading.id}" onclick="editReading(${reading.id})">
-            <div class="card-body">
-                <div class="row align-items-center">
-                    <div class="col-auto">
-                        <div class="tbr-book-cover tbr-book-cover-large" title="Drag to reorder">
-                            ${book.cover ?
-                                `<img src="${window.APP_BASE_PATH}/static/covers/${book.id}.jpg"
-                                     alt="${book.title} cover"
-                                     class="tbr-book-cover-img"
-                                     onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
-                                 <i class="fas fa-book book-cover-fallback" style="display: none;"></i>` :
-                                `<i class="fas fa-book book-cover-fallback"></i>`
-                            }
-                        </div>
+        <div class="card reading-card ${statusClass} ${borderClass} mb-2 fade-in tbr-draggable-card" data-reading-id="${reading.id}" onclick="editReading(${reading.id})">
+            <div class="card-body tbr-card-body">
+                <div class="d-flex gap-3">
+                    <div class="tbr-book-cover tbr-book-cover-large flex-shrink-0" title="Drag to reorder">
+                        ${book.cover ?
+                            `<img src="${window.APP_BASE_PATH}/static/covers/${book.id}.jpg"
+                                 alt="${book.title} cover"
+                                 class="tbr-book-cover-img"
+                                 onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
+                             <i class="fas fa-book book-cover-fallback" style="display: none;"></i>` :
+                            `<i class="fas fa-book book-cover-fallback"></i>`
+                        }
                     </div>
-                    <div class="col">
-                        <h5 class="card-title mb-1">${book.title}</h5>
-                        <p class="text-muted mb-1">${book.author}</p>
-                        ${book.series ? `<small class="text-muted">${book.universe ? book.universe + ': ' : ''}${book.series}${book.series_number ? ' #' + book.series_number : ''}</small><br>` : ''}
-                        <small class="text-muted">
-                            ${book.word_count ? book.word_count.toLocaleString() + ' words' : ''}
-                            ${book.page_count ? (book.word_count ? ' • ' : '') + book.page_count + ' pages' : ''}
-                        </small>
-
-                        ${createProgressSection(reading, book)}
-                    </div>
-                    <div class="col-auto">
-                        <div class="d-flex align-items-start gap-2">
-                            <div class="d-flex flex-column gap-1 align-items-end">
-                                ${formatBadge}
-                                ${reading.status === 'paused' ? '<span class="media-badge-large" style="background-color: #ffc107; color: #212529;">Paused</span>' : statusBadge}
-                                ${reading.reread ? '<span class="media-badge-large" style="background-color: #17a2b8; color: white;">Reread</span>' : ''}
+                    <div class="tbr-info flex-grow-1">
+                        <div class="d-flex justify-content-between align-items-start gap-2">
+                            <div class="tbr-info-text">
+                                <h5 class="card-title mb-1 text-truncate">${book.title}</h5>
+                                <p class="text-muted mb-1 text-truncate">${book.author}</p>
+                                ${book.series ? `<div class="tbr-series text-muted mb-1">${book.universe ? book.universe + ': ' : ''}${book.series}${book.series_number ? ' #' + book.series_number : ''}</div>` : ''}
+                                <div class="tbr-meta text-muted mb-2">
+                                    ${book.word_count ? book.word_count.toLocaleString() + ' words' : ''}
+                                    ${book.page_count ? (book.word_count ? ' &middot; ' : '') + book.page_count + ' pages' : ''}
+                                </div>
                             </div>
-                            <div class="btn-group-vertical btn-group-sm">
-                                <button class="btn btn-outline-primary btn-sm" onclick="event.stopPropagation(); editReading(${reading.id})" title="Edit Reading">
+                            <div class="btn-group btn-group-sm flex-shrink-0">
+                                <button class="btn btn-outline-primary" onclick="event.stopPropagation(); editReading(${reading.id})" title="Edit Reading">
                                     <i class="fas fa-edit"></i>
                                 </button>
                                 ${isInProgress ? `
-                                    <button class="btn btn-outline-info btn-sm" onclick="event.stopPropagation(); showUpdateProgressModal(${reading.id})" title="Update Progress">
+                                    <button class="btn btn-outline-info" onclick="event.stopPropagation(); showUpdateProgressModal(${reading.id})" title="Update Progress">
                                         <i class="fas fa-chart-line"></i>
                                     </button>
                                 ` : (!reading.is_finished && !isInProgress ? `
-                                    <button class="btn btn-outline-success btn-sm" onclick="event.stopPropagation(); finishReading(${reading.id})" title="Mark as Finished">
+                                    <button class="btn btn-outline-success" onclick="event.stopPropagation(); finishReading(${reading.id})" title="Mark as Finished">
                                         <i class="fas fa-check"></i>
                                     </button>
                                 ` : '')}
                             </div>
                         </div>
+                        <div class="d-flex flex-wrap gap-1">
+                            ${formatBadge}
+                            ${reading.status === 'paused' ? '<span class="media-badge-large" style="background-color: #ffc107; color: #212529;">Paused</span>' : statusBadge}
+                            ${reading.reread ? '<span class="media-badge-large" style="background-color: #17a2b8; color: white;">Reread</span>' : ''}
+                        </div>
                     </div>
                 </div>
+
+                ${createProgressSection(reading, book)}
             </div>
         </div>
     `;
