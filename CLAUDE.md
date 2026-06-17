@@ -32,3 +32,14 @@
   into the `:8092` container — see the open "Step 2" issue.**
 - `:8092` `greatreads_ereader` container — FastAPI: library/TBR/journal/stats + the canonical
   SQLite DB. Code is baked in (`COPY src`), so code changes need a rebuild (see above).
+
+## The `:8091` backend has no watchdog — restart it if audio/catalog break
+- `:8091` (`backend/app.py`) is bare-metal `uvicorn --reload` with **no supervisor**
+  (`web/keep-alive.sh` only watches `:8090`). On any reboot/crash it stays down,
+  and the reader then shows failures like *"Could not start playback. Is
+  Audiobookshelf reachable?"* or an empty/Calibre-only catalog.
+- If audiobooks, covers, downloads, highlights, or progress fail, **first check
+  `:8091` is up** (`curl -sf localhost:8091/api/health`). If not, restart it:
+  `cd backend && nohup ./run.sh >/tmp/ereader-backend.log 2>&1 &` — then re-check
+  `/api/health` (expect `{"status":"ok",...,"calibre_connected":true}`).
+- This goes away once Step 2 (#22) folds `:8091` into the `:8092` container.
