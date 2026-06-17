@@ -2176,6 +2176,12 @@ function initializeReorderSortable(listId) {
         ghostClass: 'sortable-ghost',
         chosenClass: 'sortable-chosen',
         dragClass: 'sortable-drag',
+        // Smooth auto-scroll when dragging toward the top/bottom of the
+        // scrollable list (the modal lists are taller than the viewport).
+        scroll: true,
+        scrollSensitivity: 80,
+        scrollSpeed: 12,
+        bubbleScroll: true,
 
         onStart: function(evt) {
             draggedItem = evt.item;
@@ -2204,58 +2210,52 @@ function initializeReorderSortable(listId) {
         },
 
         onEnd: function(evt) {
-            if (selectedItems.length <= 1) {
-                // Single item drag - normal behavior
-                selectedItems = [];
-                return;
-            }
+            try {
+                // Single-item drag: Sortable already moved it — nothing more to do.
+                if (selectedItems.length <= 1) return;
 
-            // Multi-item drag - insert all selected items consecutively at drop position
+                // Multi-item drag. Sortable has already placed the dragged item
+                // (evt.item) at the drop point. We must NOT remove/re-insert the
+                // dragged element itself — doing so corrupts Sortable's own drop
+                // cleanup and strands the floating drag clone on screen. Instead we
+                // leave it put and gather the OTHER selected items around it,
+                // preserving their original relative order.
+                const dragged = evt.item;
+                const draggedIdx = selectedItems.indexOf(dragged);
 
-            // Step 1: Remove ALL selected items from DOM (including the dragged one)
-            selectedItems.forEach(item => {
-                if (item.parentNode) {
-                    item.remove();
+                // Detach the other selected items from the DOM.
+                selectedItems.forEach(item => {
+                    if (item !== dragged && item.parentNode) item.remove();
+                });
+
+                // Re-insert items that were before the dragged one (in order),
+                // immediately before it.
+                for (let i = 0; i < draggedIdx; i++) {
+                    list.insertBefore(selectedItems[i], dragged);
                 }
-            });
+                // Re-insert items that were after the dragged one (in order),
+                // immediately after it.
+                let ref = dragged;
+                for (let i = draggedIdx + 1; i < selectedItems.length; i++) {
+                    ref.after(selectedItems[i]);
+                    ref = selectedItems[i];
+                }
 
-            // Step 2: Get current list state AFTER removal
-            const currentItems = Array.from(list.children);
-
-            // Step 3: Calculate where to insert
-            // evt.newIndex tells us where the dragged item was dropped
-            // But since we removed items, we need to adjust the index
-            let targetIndex = evt.newIndex;
-
-            // Clamp to valid range
-            if (targetIndex > currentItems.length) {
-                targetIndex = currentItems.length;
-            }
-
-            // Step 4: Insert all selected items in their original order at the target position
-            if (targetIndex >= currentItems.length) {
-                // Append to end
-                selectedItems.forEach(item => {
-                    list.appendChild(item);
+                // Clear selection now that the group has moved.
+                list.querySelectorAll('.reorder-checkbox:checked').forEach(cb => {
+                    const readingId = parseInt(cb.dataset.readingId);
+                    cb.checked = false;
+                    const item = cb.closest('.reorder-item');
+                    if (item) item.classList.remove('selected');
+                    checkedReadingIds.delete(readingId);
                 });
-            } else {
-                // Insert before the item at targetIndex
-                const referenceNode = currentItems[targetIndex];
-                selectedItems.forEach(item => {
-                    list.insertBefore(item, referenceNode);
-                });
+                updateSelectAllButton();
+            } catch (err) {
+                // Never let a reorder error strand the drag clone or break the modal.
+                console.error('Multi-drag reorder failed:', err);
+            } finally {
+                selectedItems = [];
             }
-
-            // Uncheck all items after drag and clear from global state
-            list.querySelectorAll('.reorder-checkbox:checked').forEach(cb => {
-                const readingId = parseInt(cb.dataset.readingId);
-                cb.checked = false;
-                cb.closest('.reorder-item').classList.remove('selected');
-                checkedReadingIds.delete(readingId);
-            });
-
-            selectedItems = [];
-            updateSelectAllButton();
         }
     });
 }

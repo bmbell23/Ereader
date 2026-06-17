@@ -285,6 +285,12 @@ html, body {
         left: 0;
         transform-origin: top left;
     }
+
+    /* Flip TBR cards so the draggable cover (the reorder drag handle) sits on the
+       right — easier to grab one-handed when left-handed mode is on. */
+    .left-handed-mode .tbr-card-body > .d-flex {
+        flex-direction: row-reverse;
+    }
 }
 
 /* Page Headers - Bookish Design */
