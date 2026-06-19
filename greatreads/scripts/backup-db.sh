@@ -5,10 +5,13 @@
 # stop the container). Keeps the last RETAIN backups and prunes older ones.
 #
 # Wire into cron (already added):
-#   30 2 * * *  /home/brandon/projects/Ereader/greatreads/scripts/backup-db.sh >> .../backup.log 2>&1
+#   30 2 * * *  /home/brandon/projects/GreatReads/greatreads/scripts/backup-db.sh >> .../backup.log 2>&1
 set -euo pipefail
 
-REPO="/home/brandon/projects/Ereader"
+# Derive REPO from this script's own location so the backup survives a repo
+# dir rename (Ereader -> GreatReads, #9) with no cron window and no hardcoded path.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO="$(cd "$SCRIPT_DIR/../.." && pwd)"
 DB="$REPO/greatreads/data/greatreads.db"
 DEST="$REPO/greatreads/data/backups"
 RETAIN=14
