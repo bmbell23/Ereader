@@ -159,6 +159,10 @@ async function init() {
     if (resume.kind === 'seconds') {
         savedPos = resume.value;
     } else if (resume.kind === 'percent') {
+        // Carry the chapter anchor (if any) for loadPart to title-match; the
+        // percent is the fallback used to pick the start part and seek when the
+        // chapter doesn't match.
+        resumeChapter = resume.chapter || null;
         const total = bookTotal();
         if (total > 0) savedPos = resume.value * total;
         else resumePercent = resume.value;
@@ -205,6 +209,16 @@ async function loadPart(i, seekTo, autoplay) {
     if (!(PARTS[i].duration > 0) && duration > 0) {
         PARTS[i].duration = duration;
         recomputeStarts();
+    }
+    // Cross-format ebook->audio resume (#25): if the ebook stamped the chapter
+    // it was in, seek to the same chapter here (matched by title) plus its
+    // fraction-through, instead of the drift-prone global percent. Resolved once
+    // chapters are loaded; a miss leaves the percent fallback below in place.
+    // Consumed only on this initial resume load, so clear it either way.
+    if (resumeChapter) {
+        const cs = chapterSeekFromTitle(resumeChapter.title, resumeChapter.fraction);
+        if (cs != null) { seekTo = cs; resumePercent = null; }
+        resumeChapter = null;
     }
     // A cross-format ebook resume may have arrived as a percent we couldn't
     // convert until this (single-part) duration was known just above. Apply it
@@ -334,6 +348,50 @@ function chapterBounds(t) {
     let end = chapters[ci].end;
     if (!(end > start)) end = (ci + 1 < chapters.length) ? (chapters[ci + 1].start || partTotal()) : partTotal();
     return { ci, start, end };
+}
+
+// Cross-format resume (#25): normalize a chapter title so ebook and audiobook
+// chapter names compare equal despite punctuation/case differences. MUST stay
+// identical to the reader's normChapterTitle() or matching silently fails.
+function normChapterTitle(t) {
+    return (t || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ')
+        .replace(/\s+/g, ' ').trim();
+}
+
+// The chapter the listener is currently in, plus how far through it (0..1).
+// Stamped into the progress record on save so the ebook can resume by chapter
+// instead of a drift-prone global percent. Null when there are no chapters
+// (then the ebook just falls back to percent). Uses part-relative time, so the
+// title is unambiguous for single-part books (the common dual-format case).
+function currentChapterStamp() {
+    if (!chapters.length) return null;
+    const t = audio.currentTime || 0;
+    const { ci, start, end } = chapterBounds(t);
+    if (ci < 0) return null;
+    const len = Math.max(0, end - start);
+    const frac = len ? Math.max(0, Math.min(1, (t - start) / len)) : 0;
+    return { title: chapters[ci].title || `Chapter ${ci + 1}`, fraction: frac };
+}
+
+// Map an ebook chapter (title + fraction-through) onto a part-relative seek time
+// by matching its normalized title against this part's loaded chapters. Returns
+// null when there's no confident title match — the caller then keeps the percent
+// fallback. Single-part only in practice: a multi-part book only has the current
+// part's chapters loaded here, so a miss cleanly defers to percent.
+function chapterSeekFromTitle(title, fraction) {
+    const want = normChapterTitle(title);
+    if (!want || !chapters.length) return null;
+    for (let i = 0; i < chapters.length; i++) {
+        if (normChapterTitle(chapters[i].title) === want) {
+            const start = chapters[i].start || 0;
+            let end = chapters[i].end;
+            if (!(end > start)) end = (i + 1 < chapters.length)
+                ? (chapters[i + 1].start || partTotal()) : partTotal();
+            const len = Math.max(0, end - start);
+            return start + (typeof fraction === 'number' ? fraction : 0) * len;
+        }
+    }
+    return null;
 }
 
 function updateUI() {
@@ -527,6 +585,10 @@ async function resolveEbookSibling() {
 // isn't known yet (single-part, duration arrives with the play session) we
 // stash the percent in `resumePercent` for loadPart to apply post-load.
 let resumePercent = null;
+// Cross-format ebook->audio resume anchor (#25): {title, fraction}. Like
+// resumePercent it's resolved in loadPart, once the part's chapters are loaded
+// and we can title-match. Takes precedence over resumePercent when it matches.
+let resumeChapter = null;
 async function resolveResumePosition() {
     if (!PROGRESS_KEY) return { kind: 'none' };
     // Gather every key this book's progress could live under, de-duplicated:
@@ -555,7 +617,16 @@ async function resolveResumePosition() {
     if (best.mediaType === 'audiobook' && typeof best.position === 'number') {
         return { kind: 'seconds', value: best.position };
     }
-    return { kind: 'percent', value: (typeof best.progress === 'number') ? best.progress : 0 };
+    // Ebook winner: prefer chapter-anchored resume (#25) — match its chapter
+    // title against our audio chapters once loaded, falling back to percent when
+    // there's no match. The chapter list isn't loaded yet here (loadPart loads
+    // it), so carry the anchor along and resolve it there.
+    return {
+        kind: 'percent',
+        value: (typeof best.progress === 'number') ? best.progress : 0,
+        chapter: best.chapterTitle
+            ? { title: best.chapterTitle, fraction: best.chapterFraction } : null,
+    };
 }
 
 function curChapterTitle() {
@@ -767,6 +838,7 @@ function saveProgress() {
     saveReadingState();
     const pos = globalTime();
     const total = bookTotal();
+    const stamp = currentChapterStamp();   // #25 cross-format resume anchor
     fetch(`${API_URL}/progress/${encodeURIComponent(PROGRESS_KEY)}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -774,6 +846,8 @@ function saveProgress() {
             absId: ABS_ID, format: 'audiobook',
             position: pos, duration: total,
             progress: total ? Math.min(1, pos / total) : 0,
+            chapterTitle: stamp ? stamp.title : undefined,
+            chapterFraction: stamp ? stamp.fraction : undefined,
         }),
         keepalive: true,
     }).catch(() => {});

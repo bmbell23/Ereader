@@ -2136,6 +2136,12 @@ async def put_progress(book_id, request: Request):
         item['duration'] = body.get('duration')
     if body.get('absId'):
         item['absId'] = body.get('absId')
+    # Cross-format resume anchor (#25) — see ereader_api.py for the rationale.
+    # Mirrored here only to keep the retired :8091 rollback at feature parity.
+    if body.get('chapterTitle'):
+        item['chapterTitle'] = body.get('chapterTitle')
+    if body.get('chapterFraction') is not None:
+        item['chapterFraction'] = body.get('chapterFraction')
     with _progress_lock:
         data = _load_progress()
         data[str(book_id)] = item

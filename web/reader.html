@@ -1935,6 +1935,12 @@
         // every calculatePages() call so the chapter-progress display is always
         // in sync with the current font / dual-page / viewport state.
         let chapterStarts = [];
+        // Cross-format resume (#25): the chapter the reader is currently in and
+        // how far through it (0..1), recomputed in updateProgress(). Stamped
+        // into the progress record on save so the audiobook can resume at the
+        // same chapter (matched by title) rather than a drift-prone percent.
+        let _curChapterTitle = '';
+        let _curChapterFraction = 0;
         // tocTree is the canonical tree used by the TOC overlay. It is either
         // parsed from the EPUB's nav.xhtml / toc.ncx (preferred — gives the
         // proper author-defined section→chapter hierarchy) or synthesised from
@@ -2975,9 +2981,15 @@
                 const chPage  = currentEpubPage - chStart + 1;
                 const chPct   = (chPage / chTotal * 100).toFixed(1);
                 chText = `${chPage}/${chTotal} ${chPct}%`;
+                // Stamp the cross-format resume anchor (#25): 0-based fraction
+                // through the chapter (first page of chapter = 0).
+                _curChapterTitle = chTitle;
+                _curChapterFraction = Math.max(0, Math.min(1, (currentEpubPage - chStart) / chTotal));
                 // End-of-chapter summary nudge: last page of this chapter.
                 updateChapterEndAffordance(chTitle, currentEpubPage >= chEnd - 1);
             } else {
+                _curChapterTitle = '';
+                _curChapterFraction = 0;
                 updateChapterEndAffordance('', false);
             }
             const chEl = document.getElementById('progress-chapter');
@@ -3083,6 +3095,8 @@
                     progress: currentEpubPage / totalPages,
                     anchor: anchor,
                     fontSize: fontSize,
+                    chapterTitle: _curChapterTitle,
+                    chapterFraction: _curChapterFraction,
                     ts: Date.now()
                 };
                 localStorage.setItem(STATE_KEY, JSON.stringify(state));
@@ -3394,6 +3408,11 @@
                 total:       _pendingState.total,
                 progress:    _pendingState.progress,
                 fontSize:    _pendingState.fontSize,
+                // Cross-format resume anchor (#25): the chapter + fraction the
+                // audiobook will match against when this is the newest record.
+                chapterTitle:    _pendingState.chapterTitle || undefined,
+                chapterFraction: (typeof _pendingState.chapterFraction === 'number')
+                    ? _pendingState.chapterFraction : undefined,
                 // Latest snapshot of the reading-speed rolling buffer (see
                 // "Reading-speed tracking" block above). Server just stores
                 // it verbatim; restored on next open via syncReadingState.
@@ -3409,6 +3428,47 @@
                     keepalive: !!useKeepalive
                 }).catch(() => {});
             } catch (_) {}
+        }
+
+        // Cross-format resume (#25): normalize a chapter title so ebook and
+        // audiobook chapter names compare equal. MUST match player.js's
+        // normChapterTitle() exactly or alignment silently fails.
+        function normChapterTitle(t) {
+            return (t || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ')
+                .replace(/\s+/g, ' ').trim();
+        }
+
+        // Map an audiobook chapter (title + fraction-through) onto an ebook
+        // anchor by matching the title against tocItems, then interpolating by
+        // anchor within the chapter. Returns null when there's no confident
+        // title match — the caller then keeps the percent fallback. Safe to call
+        // before pagination: it only needs tocItems + the annotated anchors,
+        // both of which exist by the time progress sync runs.
+        function ebookAnchorForChapter(title, fraction) {
+            const want = normChapterTitle(title);
+            if (!want || !tocItems.length) return null;
+            let k = -1;
+            for (let i = 0; i < tocItems.length; i++) {
+                if (normChapterTitle(tocItems[i].title) === want) { k = i; break; }
+            }
+            if (k < 0) return null;
+            const startA = tocItems[k].anchor;
+            if (!Number.isFinite(startA)) return null;
+            // Chapter end = next heading at the same-or-shallower level (a deeper
+            // sub-heading is still inside this chapter), else end of book.
+            const lvl = tocItems[k].level;
+            let endA = null;
+            for (let j = k + 1; j < tocItems.length; j++) {
+                if (tocItems[j].level <= lvl && Number.isFinite(tocItems[j].anchor)) {
+                    endA = tocItems[j].anchor; break;
+                }
+            }
+            if (endA == null) {
+                const n = document.querySelectorAll('[data-anchor]').length;
+                endA = n > startA ? n : startA + 1;
+            }
+            const frac = (typeof fraction === 'number') ? Math.max(0, Math.min(1, fraction)) : 0;
+            return Math.round(startA + frac * Math.max(0, endA - startA));
         }
 
         // Resolve the matching audiobook's progress (dual-format works) so a
@@ -3453,18 +3513,27 @@
                 const remote = valid[0];
                 if (remote && remote.updated > localTs) {
                     // Server wins — adopt remote position. An audiobook winner
-                    // only has a percent, so drop anchor/page/font and let
-                    // calculatePages locate the page from `progress`.
+                    // has no ebook anchor/page/font, so drop those. Prefer a
+                    // chapter-aligned anchor (#25): match its chapter title to an
+                    // ebook chapter and interpolate within it — far closer than
+                    // mapping the global percent (page-density vs narration pace
+                    // don't line up). Falls back to `progress` when no match.
                     const isAudio = remote.mediaType === 'audiobook';
+                    const audioAnchor = (isAudio && remote.chapterTitle)
+                        ? ebookAnchorForChapter(remote.chapterTitle, remote.chapterFraction)
+                        : null;
                     localStorage.setItem(STATE_KEY, JSON.stringify({
                         page:     isAudio ? null : remote.page,
                         total:    isAudio ? null : remote.total,
                         progress: remote.progress,
-                        anchor:   isAudio ? null : remote.anchor,
+                        anchor:   isAudio ? audioAnchor : remote.anchor,
                         fontSize: isAudio ? undefined : remote.fontSize,
                         ts:       remote.updated
                     }));
-                    console.log('☁️  Restored reading position from server:', remote);
+                    console.log('☁️  Restored reading position from server:', remote,
+                        isAudio ? (audioAnchor != null
+                            ? `(chapter-aligned → anchor ${audioAnchor})`
+                            : '(percent fallback — no chapter match)') : '');
                 }
                 // Restore reading-speed buffer from THIS ebook's own record
                 // (the audiobook has none) regardless of who won on position.
