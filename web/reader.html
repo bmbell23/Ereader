@@ -210,6 +210,31 @@
             line-height: 1;
             margin: 0 0 1em;
         }
+        /* Chapter-END ornament. Some EPUBs (the Malazan books) close a chapter
+           with TWO empty spacers in a row (→ two ⁂) and open the next with a
+           redundant one. The refine pass in renderEpubContent collapses that
+           run to a single block carrying THIS class — a wider, more elegant
+           glyph than the mid-chapter ⁂ — and drops the opener. Easy to retune:
+           swap the `content` glyph (e.g. ❧ ❦ ⸎ ✶) and letter-spacing. */
+        #epub-content p.epub-chapter-end-break,
+        #epub-content div.epub-chapter-end-break {
+            min-height: 1em;
+            margin: 1.7em 0;
+            text-align: center;
+        }
+        #epub-content p.epub-chapter-end-break::before,
+        #epub-content div.epub-chapter-end-break::before {
+            content: "✦ ✦ ✦";
+            display: block;
+            text-align: center;
+            text-indent: 0;
+            opacity: 0.4;
+            font-size: 0.85em;
+            letter-spacing: 0.6em;
+            /* letter-spacing adds trailing space; nudge so the triad stays centred. */
+            padding-left: 0.6em;
+            line-height: 1;
+        }
         #epub-content h1, #epub-content h2, #epub-content h3 {
             margin-top: 1.5em;
             margin-bottom: 0.5em;
@@ -2201,6 +2226,51 @@
                     }
                 }
             }
+
+            // Refine the empty-spacer scene breaks around CHAPTER boundaries.
+            // The Malazan EPUBs bracket a chapter break like:
+            //     …body, [spacer][spacer]   ← chapter-END ornament (two ⁂)
+            //     <chapter boundary: spine-item / h1>
+            //     [spacer], body…           ← a redundant OPENER spacer (one ⁂)
+            // Collapse a run of 2+ consecutive spacers (or a lone spacer sitting
+            // right before a chapter boundary) into ONE distinct chapter-end
+            // ornament, and drop a spacer that merely opens a chapter. Anything
+            // that doesn't match — a lone mid-chapter spacer between two scenes —
+            // is left as the normal ⁂. Boundaries are spine-item files + <h1>
+            // only (h2-h6 are unreliable across publishers); the heuristic
+            // degrades gracefully when a book doesn't follow this pattern.
+            (function refineSceneBreaksAtChapterEnds() {
+                const isLeaf = el => !Array.from(el.children).some(c => !INLINE_OK.test(c.tagName));
+                const seq = [];
+                epubContent
+                    .querySelectorAll('.epub-spine-item, h1, p, div, blockquote')
+                    .forEach(node => {
+                        if (node.classList && node.classList.contains('epub-spine-item')) { seq.push({el: node, kind: 'boundary'}); return; }
+                        if (node.tagName === 'H1') { seq.push({el: node, kind: 'boundary'}); return; }
+                        if (!isLeaf(node)) return;                                  // skip containers
+                        if (node.classList.contains('epub-scene-break')) { seq.push({el: node, kind: 'sb'}); return; }
+                        if ((node.textContent || '').trim() !== '') seq.push({el: node, kind: 'body'});
+                    });
+                for (let i = 0; i < seq.length;) {
+                    if (seq[i].kind !== 'sb') { i++; continue; }
+                    let j = i;
+                    while (j < seq.length && seq[j].kind === 'sb') j++;
+                    const run = seq.slice(i, j);
+                    const prevKind = i > 0 ? seq[i - 1].kind : 'boundary';
+                    const nextKind = j < seq.length ? seq[j].kind : 'boundary';
+                    if (prevKind === 'boundary') {
+                        // Opens a chapter → redundant; drop the ornament entirely.
+                        run.forEach(s => s.el.classList.remove('epub-scene-break'));
+                    } else if (run.length >= 2 || nextKind === 'boundary') {
+                        // Chapter-end ornament → one elegant glyph, drop the rest.
+                        run[0].el.classList.remove('epub-scene-break');
+                        run[0].el.classList.add('epub-chapter-end-break');
+                        for (let k = 1; k < run.length; k++) run[k].el.classList.remove('epub-scene-break');
+                    }
+                    // else: lone mid-chapter spacer → leave as the normal ⁂.
+                    i = j;
+                }
+            })();
 
             // Tag every leaf block element with a stable data-anchor="N".
             // Done on the live DOM (not the parsed tree) so the queries below
