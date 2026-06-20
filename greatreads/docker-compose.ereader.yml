@@ -18,6 +18,7 @@ services:
       - "8092:8006"                   # free host port (8090/8091 = Ereader, 8007 = prod GreatReads)
     volumes:
       - ./data:/app/data              # repo-local COPY of the DB + covers (NOT prod ./data)
+      - ../web:/app/src/web:ro        # so /api/build-stamp reads real web mtimes (web/ is served by :8090, not baked in)
       # External libraries — READ-ONLY; same host paths as prod compose. Needed for
       # cover fallback now and Calibre/ABS sync later (Story 2). Never written.
       - /home/brandon/projects/docker/calibre/config/library:/calibre:ro
