@@ -977,9 +977,9 @@
            pointer-events:none so it never intercepts the drag. */
         #hl-magnifier {
             position: fixed;
-            width: 220px;
-            height: 150px;
-            border-radius: 110px / 75px;
+            width: 160px;
+            height: 110px;
+            border-radius: 80px / 55px;
             border: 3px solid #fff;
             box-shadow: 0 6px 20px rgba(0,0,0,0.6);
             overflow: hidden;
@@ -4643,7 +4643,7 @@
         // #epub-content once at pointerdown, then on every pointermove
         // translate+scale the clone inside the circular magnifier so the
         // touch point lands at the centre of the lens.
-        const _MAG_W = 220, _MAG_H = 150, _MAG_SCALE = 2.5;
+        const _MAG_W = 160, _MAG_H = 110, _MAG_SCALE = 2;
         let _hlMagSrcRect = null;
         function _showMagnifier() {
             const mag      = document.getElementById('hl-magnifier');
@@ -4678,7 +4678,7 @@
             if (!mag || !clone || !_hlMagSrcRect) return;
             // Place the lens above the finger; flip below if no room.
             let mLeft = x - _MAG_W / 2;
-            let mTop  = y - _MAG_H - 80;
+            let mTop  = y - _MAG_H - 50;
             if (mTop < 8) mTop = y + 50;
             mLeft = Math.max(8, Math.min(mLeft, window.innerWidth  - _MAG_W - 8));
             mTop  = Math.max(8, Math.min(mTop,  window.innerHeight - _MAG_H - 8));
@@ -4783,17 +4783,11 @@
             } catch (_) {}
             _rebuildCSSHL();
             _positionHLHandles(_draggingHLId);
-            // Centre the lens on the SNAPPED edge (where the caret actually
-            // landed), not the raw finger, so the crosshair sits on the exact
-            // character the handle will keep. Falls back to the finger point.
-            const _edge = _rangeEdgePoint(stored, _draggingHandle);
-            _moveMagnifier(_edge ? _edge.x : x, _edge ? _edge.y : y);
         }
 
         async function _onHandlePointerUp(e) {
             document.removeEventListener('pointermove', _onHandlePointerMove);
             document.removeEventListener('pointerup',   _onHandlePointerUp);
-            _hideMagnifier();
             const hlId = _draggingHLId;
             _draggingHandle = null;
             _draggingHLId   = null;
@@ -4813,16 +4807,11 @@
             e.preventDefault();
             _draggingHandle = which;
             _draggingHLId   = _activeHLId;
-            // Keep the popup visible while dragging, and show the custom
-            // magnifier centred on the caret HIT-POINT so the crosshair marks
-            // exactly where the handle will land (#31).
+            // Custom magnifier intentionally NOT shown during custom-handle
+            // drags — it was terrible (massive, off-target, dark clone). The
+            // good loupe is the NATIVE one; highlight adjustment should use the
+            // native long-press-reselect flow instead (#31).
             if (_hlPopupTimer) { clearTimeout(_hlPopupTimer); _hlPopupTimer = null; }
-            _showMagnifier();
-            // Open the lens on the handle's current edge so it shows the right
-            // text from the first frame, before any move.
-            const _stored0 = _hlRanges.get(_draggingHLId);
-            const _edge0 = _stored0 && _rangeEdgePoint(_stored0, which);
-            if (_edge0) _moveMagnifier(_edge0.x, _edge0.y);
             document.addEventListener('pointermove', _onHandlePointerMove, { passive: false });
             document.addEventListener('pointerup',   _onHandlePointerUp,   { once: true });
         }
