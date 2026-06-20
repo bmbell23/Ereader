@@ -4756,6 +4756,17 @@
                 }
             }
             if (!caret) return;
+            // Reject hits that resolve OUTSIDE the book text (margins, gaps,
+            // overlays) or land far from the finger — these misfires are what
+            // make the selection "snap to the opposite side". On a rejected
+            // hit the handle simply holds position for this frame.
+            const _content = document.getElementById('epub-content');
+            if (!_content || !_content.contains(caret.startContainer)) return;
+            const _cr = caret.getBoundingClientRect();
+            if (_cr && _cr.height) {
+                const _lineH = _cr.height || 24;
+                if (Math.abs((_cr.top + _cr.height / 2) - y) > _lineH * 2.5) return;
+            }
             try {
                 if (_draggingHandle === 'start') {
                     // Don't let start cross end
