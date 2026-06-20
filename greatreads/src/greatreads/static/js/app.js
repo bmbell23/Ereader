@@ -613,7 +613,7 @@ function readingExtraInfoHtml(reading) {
 // ---- Shared cover-tap popup -------------------------------------------------
 // Ereader (Flask) API base — used to fetch per-book highlight counts for the popup.
 // (Named distinctly from pages' own EREADER_API const to avoid global redeclaration.)
-const GR_EREADER_API = 'http://100.69.184.113:8091/api';
+const GR_EREADER_API = 'http://100.69.184.113:8092/api';
 
 // Open a readable book in the Ereader reader/player. Both are served same-origin
 // at the site root via the :8090 proxy, so root-absolute paths work. Cache-bust
