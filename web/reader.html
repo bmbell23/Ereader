@@ -4740,9 +4740,10 @@
             e.preventDefault();
             const stored = _hlRanges.get(_draggingHLId);
             if (!stored) return;
-            // Hit-test at the pointer position, offset upward slightly so
-            // the finger doesn't occlude the target text on small lines.
-            const x = e.clientX;
+            // Hit-test slightly LEFT of and ABOVE the finger: left so the caret
+            // lands under the fingertip instead of biasing to its right; up so
+            // the finger doesn't occlude the target line. Both px are tunable.
+            const x = e.clientX - 8;
             const y = e.clientY - 12;
             let caret = null;
             if (document.caretRangeFromPoint) {
@@ -4885,7 +4886,7 @@
                 setTimeout(() => {
                     if (popup.style.opacity === '0') hideHLPopup();
                 }, 420);
-            }, 2000);
+            }, 6000);
         }
         // Show/hide popup buttons per mode. 'lookup' = a short, unsaved
         // selection (no highlight to share/delete); 'highlight' = full actions.
