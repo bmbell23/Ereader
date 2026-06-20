@@ -3971,6 +3971,7 @@
         // after creating a new highlight or when they tap an existing
         // one. Cleared by hideHLPopup() on explicit dismiss.
         let _editingHLId = null;
+        let _hlSelExpanded = false;  // expand a native selection to the full highlight once per gesture (#31)
 
         function getLookupURL(kind) {
             const key = kind === 'dict' ? HL_DICT_KEY : HL_WIKI_KEY;
@@ -5703,9 +5704,39 @@
         // adjusting the handles. Handle-drag adjustments fire
         // selectionchange but NOT touch events, so this is the only path
         // that catches post-release tweaks.
+        // When a native long-press lands INSIDE an existing highlight, the OS
+        // only selects the pressed word — adjusting from there would shrink the
+        // highlight to that word. Expand the selection to the WHOLE highlight so
+        // the native handles sit at its two ends; the user extends/shrinks from
+        // there and the settle replaces it. Once per gesture (reset on collapse). (#31)
+        function _maybeExpandSelectionToHighlight(sel, range) {
+            if (_hlSelExpanded) return;
+            for (const [id, hr] of _hlRanges) {
+                if (!hr) continue;
+                let intersects = false, coversAll = false;
+                try {
+                    intersects = _rangesIntersect(range, hr);
+                    if (intersects) {
+                        coversAll = range.compareBoundaryPoints(Range.START_TO_START, hr) <= 0
+                                 && range.compareBoundaryPoints(Range.END_TO_END, hr) >= 0;
+                    }
+                } catch (_) { continue; }
+                if (!intersects) continue;
+                _hlSelExpanded = true;
+                if (coversAll) return;          // already spans it → mid-adjust
+                try {
+                    sel.setBaseAndExtent(hr.startContainer, hr.startOffset,
+                                         hr.endContainer, hr.endOffset);
+                    _editingHLId = id;           // settle → replace THIS highlight
+                } catch (_) {}
+                return;
+            }
+        }
+
         function onSelectionChangeForSave() {
             const sel = window.getSelection();
             if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
+                _hlSelExpanded = false;
                 if (_selSettleTimer) { clearTimeout(_selSettleTimer); _selSettleTimer = null; }
                 if (_overlaySelTimer) { clearTimeout(_overlaySelTimer); _overlaySelTimer = null; }
                 return;
@@ -5713,6 +5744,7 @@
             const range = sel.getRangeAt(0);
             const content = document.getElementById('epub-content');
             if (content && content.contains(range.endContainer)) {
+                _maybeExpandSelectionToHighlight(sel, range);
                 scheduleSelectionSettleSave();
                 return;
             }
