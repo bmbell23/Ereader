@@ -4744,9 +4744,6 @@
             // the finger doesn't occlude the target text on small lines.
             const x = e.clientX;
             const y = e.clientY - 12;
-            // Magnify around the caret hit-point (not the raw finger), so the
-            // lens crosshair sits exactly where the handle will be placed.
-            _moveMagnifier(x, y);
             let caret = null;
             if (document.caretRangeFromPoint) {
                 caret = document.caretRangeFromPoint(x, y);
@@ -4785,6 +4782,11 @@
             } catch (_) {}
             _rebuildCSSHL();
             _positionHLHandles(_draggingHLId);
+            // Centre the lens on the SNAPPED edge (where the caret actually
+            // landed), not the raw finger, so the crosshair sits on the exact
+            // character the handle will keep. Falls back to the finger point.
+            const _edge = _rangeEdgePoint(stored, _draggingHandle);
+            _moveMagnifier(_edge ? _edge.x : x, _edge ? _edge.y : y);
         }
 
         async function _onHandlePointerUp(e) {
@@ -4815,6 +4817,11 @@
             // exactly where the handle will land (#31).
             if (_hlPopupTimer) { clearTimeout(_hlPopupTimer); _hlPopupTimer = null; }
             _showMagnifier();
+            // Open the lens on the handle's current edge so it shows the right
+            // text from the first frame, before any move.
+            const _stored0 = _hlRanges.get(_draggingHLId);
+            const _edge0 = _stored0 && _rangeEdgePoint(_stored0, which);
+            if (_edge0) _moveMagnifier(_edge0.x, _edge0.y);
             document.addEventListener('pointermove', _onHandlePointerMove, { passive: false });
             document.addEventListener('pointerup',   _onHandlePointerUp,   { once: true });
         }
