@@ -889,12 +889,21 @@ function grUpdatePhysicalProgress(addMinutes) {
 let _sess = null;          // { readingId, accSec, startMs, running, tid }
 let _grWake = null;
 
-async function grApplyReadingWakeLock(on) {
-    if (on) {
+// Global "keep screen awake" — honors the app-wide setting (ereader.settings.keepAwake)
+// EVERYWHERE in the app (not just while actively reading; not released on pause).
+// Re-applied on return-to-foreground and first touch because Android WebView drops
+// the lock. The reader (reader.html) has its own equivalent. (#40)
+function _grKeepAwakeWanted() {
+    try { return localStorage.getItem('ereader.settings.keepAwake') === '1'; } catch (_) { return false; }
+}
+async function grApplyGlobalWakeLock() {
+    if (_grKeepAwakeWanted()) {
         if (window.Android && typeof window.Android.keepScreenOn === 'function') {
             try { window.Android.keepScreenOn(true); return; } catch (_) {}
         }
-        if ('wakeLock' in navigator) { try { _grWake = await navigator.wakeLock.request('screen'); } catch (_) {} }
+        if ('wakeLock' in navigator) {
+            try { if (!_grWake || _grWake.released) _grWake = await navigator.wakeLock.request('screen'); } catch (_) {}
+        }
     } else {
         if (window.Android && typeof window.Android.keepScreenOn === 'function') {
             try { window.Android.keepScreenOn(false); } catch (_) {}
@@ -903,6 +912,9 @@ async function grApplyReadingWakeLock(on) {
         _grWake = null;
     }
 }
+document.addEventListener('DOMContentLoaded', grApplyGlobalWakeLock);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') grApplyGlobalWakeLock(); });
+document.addEventListener('touchstart', grApplyGlobalWakeLock, { passive: true });
 
 function _sessElapsedSec() { return _sess.accSec + (_sess.running ? (Date.now() - _sess.startMs) / 1000 : 0); }
 function _fmtTimer(sec) {
@@ -926,7 +938,7 @@ function grStartReadingSession() {
     document.getElementById('sessPauseBtn').classList.remove('d-none');
     _sessTick();
     _sess.tid = setInterval(_sessTick, 1000);
-    grApplyReadingWakeLock(true);
+    grApplyGlobalWakeLock();
 
     document.getElementById('sessPauseBtn').onclick = grSessionPause;
     document.getElementById('sessResumeBtn').onclick = grSessionResume;
@@ -935,6 +947,7 @@ function grStartReadingSession() {
     document.addEventListener('visibilitychange', _sessVis);
 
     bootstrap.Modal.getOrCreateInstance(document.getElementById('readingSessionModal')).show();
+    grSessAmbientStart(reading);   // auto-play ambient music (Start Reading is a gesture)
 }
 
 function grSessionPause() {
@@ -945,7 +958,8 @@ function grSessionPause() {
     document.getElementById('sessPauseBtn').classList.add('d-none');
     document.getElementById('sessResumeBtn').classList.remove('d-none');
     document.getElementById('sessState').textContent = 'Paused';
-    grApplyReadingWakeLock(false);
+    grApplyGlobalWakeLock();
+    grSessAmbientSetEditable(true);   // track change allowed only while paused
 }
 
 function grSessionResume() {
@@ -957,7 +971,8 @@ function grSessionResume() {
     document.getElementById('sessResumeBtn').classList.add('d-none');
     document.getElementById('sessPauseBtn').classList.remove('d-none');
     document.getElementById('sessState').textContent = 'Reading…';
-    grApplyReadingWakeLock(true);
+    grApplyGlobalWakeLock();
+    grSessAmbientSetEditable(false);   // running → lock the track picker
 }
 
 // Screen lock / app background → auto-pause; the Resume button shows on return.
@@ -968,11 +983,86 @@ function grSessionDone() {
     const mins = Math.round(_sessElapsedSec() / 60);
     if (_sess.tid) clearInterval(_sess.tid);
     document.removeEventListener('visibilitychange', _sessVis);
-    grApplyReadingWakeLock(false);
+    grApplyGlobalWakeLock();
     _sess = null;
+    grSessAmbientStop();
     const sm = bootstrap.Modal.getInstance(document.getElementById('readingSessionModal'));
     if (sm) sm.hide();
     grUpdatePhysicalProgress(mins);   // reopen popup, add session minutes to today's total
+}
+
+// ---- Ambient music for the physical reading session (#32) ------------------
+// Auto-plays on Start Reading (a gesture), loops, single play/pause, track
+// picker enabled only when the session is paused. Track + position remembered
+// per physical book (by book id, separate from the ebook's choice).
+const _AMB_BASE = GR_EREADER_API + '/ambient';
+let _appAmb = null, _appAmbKey = null, _appAmbTrackId = null, _appAmbTracks = [], _appAmbSaveT = 0;
+
+function _appAmbIcon() {
+    const b = document.getElementById('sessAmbientBtn');
+    if (b) b.innerHTML = (_appAmb && !_appAmb.paused) ? '<i class="fas fa-pause"></i>' : '<i class="fas fa-play"></i>';
+}
+function grSessAmbientSave() {
+    if (_appAmb && _appAmbKey && !isNaN(_appAmb.currentTime)) {
+        try { localStorage.setItem('gr_ambient_pos_' + _appAmbKey, String(_appAmb.currentTime)); } catch (_) {}
+    }
+}
+function grSessAmbientSetEditable(on) {
+    const sel = document.getElementById('sessAmbientTrack');
+    if (sel) sel.disabled = !on;
+}
+function grSessAmbientLoad(tid, wantPlay) {
+    _appAmbTrackId = tid;
+    _appAmb.src = _AMB_BASE + '/' + encodeURIComponent(tid);
+    const pos = parseFloat(localStorage.getItem('gr_ambient_pos_' + _appAmbKey) || '0');
+    _appAmb.addEventListener('loadedmetadata', function once() {
+        _appAmb.removeEventListener('loadedmetadata', once);
+        if (pos > 0 && pos < (_appAmb.duration || Infinity)) { try { _appAmb.currentTime = pos; } catch (_) {} }
+        if (wantPlay) _appAmb.play().catch(() => {});
+    });
+    _appAmb.load();
+}
+function grSessAmbientToggle() {
+    if (!_appAmb || !_appAmbTrackId) return;
+    if (_appAmb.paused) _appAmb.play().catch(() => {});
+    else { _appAmb.pause(); grSessAmbientSave(); }
+    _appAmbIcon();
+}
+function grSessAmbientSetTrack(tid) {
+    if (!tid) return;
+    try {
+        localStorage.setItem('gr_ambient_track_' + _appAmbKey, tid);
+        localStorage.setItem('gr_ambient_last_track', tid);
+        localStorage.setItem('gr_ambient_pos_' + _appAmbKey, '0');
+    } catch (_) {}
+    grSessAmbientLoad(tid, true);
+}
+async function grSessAmbientStart(reading) {
+    _appAmb = document.getElementById('sessAmbientAudio');
+    if (!_appAmb) return;
+    _appAmb.loop = true;
+    _appAmb.onplay = _appAmbIcon;
+    _appAmb.onpause = _appAmbIcon;
+    _appAmb.ontimeupdate = () => { const n = Date.now(); if (n - _appAmbSaveT > 5000) { _appAmbSaveT = n; grSessAmbientSave(); } };
+    _appAmbKey = 'phys_' + ((reading.book && reading.book.id) || reading.id);
+    document.getElementById('sessAmbientBtn').onclick = grSessAmbientToggle;
+    const sel = document.getElementById('sessAmbientTrack');
+    if (sel) sel.onchange = () => grSessAmbientSetTrack(sel.value);
+    if (!_appAmbTracks.length) {
+        try { _appAmbTracks = ((await (await fetch(_AMB_BASE + '/tracks')).json()).tracks) || []; } catch (_) {}
+    }
+    if (sel) sel.innerHTML = _appAmbTracks.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
+    let tid = localStorage.getItem('gr_ambient_track_' + _appAmbKey) || localStorage.getItem('gr_ambient_last_track');
+    if (!tid && _appAmbTracks.length) tid = _appAmbTracks[0].id;
+    grSessAmbientSetEditable(false);   // running → locked
+    _appAmbIcon();
+    if (!tid) return;
+    if (sel) sel.value = tid;
+    grSessAmbientLoad(tid, true);      // auto-play
+}
+function grSessAmbientStop() {
+    if (_appAmb) { grSessAmbientSave(); try { _appAmb.pause(); } catch (_) {} }
+    _appAmbIcon();
 }
 
 // ---- Reading lamp / screen flashlight (#40) --------------------------------

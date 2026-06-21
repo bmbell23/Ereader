@@ -499,6 +499,26 @@
         }
         #search-btn img { width: 22px; height: 22px; filter: brightness(0); opacity: 0.5; display: block; }
         #search-btn:active img { opacity: 0.9; }
+        /* Ambient music play/pause — same row, right of search (116 + 28 + 10). (#32) */
+        #ambient-btn {
+            position: fixed;
+            top: 26px;
+            left: 154px;
+            width: 28px;
+            height: 28px;
+            border-radius: 6px;
+            background: transparent;
+            border: none;
+            color: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 9500;
+            cursor: pointer;
+            -webkit-tap-highlight-color: transparent;
+        }
+        #ambient-btn svg { width: 20px; height: 20px; display: block; }
+        #ambient-btn:active { color: rgba(0, 0, 0, 0.85); }
         /* In-book search overlay rows. */
         .search-section {
             color: #8640C0;
@@ -1225,6 +1245,8 @@
     <!-- Floating in-book search button (right of TOC btn). Shown only for EPUB by
          setupNavigation(); opens the full-screen search overlay below. -->
     <button id="search-btn" title="Search this book" onclick="openSearch()"><img src="assets/search.png" alt="Search"></button>
+    <button id="ambient-btn" title="Ambient music" onclick="toggleAmbient()"></button>
+    <audio id="ambient-audio" loop preload="none"></audio>
 
     <div id="reader-container">
         <div class="loading">Loading book...</div>
@@ -1310,6 +1332,13 @@
         </div>
         <div id="add-font-hint" style="display:none;font-size:11px;color:#6c757d;padding:0 4px 6px;line-height:1.4;">
             Paste a Google Fonts URL (e.g. <em>fonts.google.com/specimen/Lora</em>) or type the exact font name (e.g. <em>Lora</em>, <em>Merriweather</em>, <em>Source Serif 4</em>).
+        </div>
+
+        <div class="setting-group">
+            <span class="setting-label">Ambient</span>
+            <div class="setting-controls">
+                <select class="font-select" id="ambient-track-select" onchange="setAmbientTrack(this.value)"></select>
+            </div>
         </div>
 
         <div class="setting-group">
@@ -1636,6 +1665,89 @@
         const format = urlParams.get('format') || 'epub';
         const title = urlParams.get('title') || 'Book';
         const API_URL = 'http://100.69.184.113:8092/api';
+
+        // ---- Ambient reading music (#32) -----------------------------------
+        // Single play/pause (top-left), track picker in Reading Options. Track
+        // choice + position are remembered per book; loops at the end. Auto-plays
+        // on open (WebView blocks autoplay until a gesture, so we start on the
+        // first tap if needed). Volume = device volume; no other controls.
+        const AMBIENT_API = API_URL + '/ambient';
+        const _ambBook = bookId || 'default';
+        const _ambKT = 'gr_ambient_track_' + _ambBook;
+        const _ambKP = 'gr_ambient_pos_' + _ambBook;
+        const _ambKL = 'gr_ambient_last_track';
+        let _ambAudio = null, _ambTrackId = null, _ambWantPlay = false, _ambSaveT = 0;
+        const _AMB_PLAY = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
+        const _AMB_PAUSE = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>';
+
+        function _ambIcon() {
+            const b = document.getElementById('ambient-btn');
+            if (b) b.innerHTML = (_ambAudio && !_ambAudio.paused) ? _AMB_PAUSE : _AMB_PLAY;
+        }
+        function _ambSavePos() {
+            if (_ambAudio && _ambTrackId && !isNaN(_ambAudio.currentTime)) {
+                try { localStorage.setItem(_ambKP, String(_ambAudio.currentTime)); } catch (_) {}
+            }
+        }
+        function _ambLoadTrack(tid, wantPlay) {
+            _ambTrackId = tid;
+            _ambAudio.src = AMBIENT_API + '/' + encodeURIComponent(tid);
+            const pos = parseFloat(localStorage.getItem(_ambKP) || '0');
+            _ambAudio.addEventListener('loadedmetadata', function once() {
+                _ambAudio.removeEventListener('loadedmetadata', once);
+                if (pos > 0 && pos < (_ambAudio.duration || Infinity)) { try { _ambAudio.currentTime = pos; } catch (_) {} }
+                if (wantPlay) _ambTryPlay();
+            });
+            _ambAudio.load();
+        }
+        function _ambTryPlay() {
+            _ambWantPlay = true;
+            const p = _ambAudio.play();
+            if (p && p.catch) p.catch(() => {});   // autoplay blocked → starts on first gesture
+        }
+        function _ambResumeOnGesture() {
+            if (_ambWantPlay && _ambAudio && _ambAudio.paused) _ambAudio.play().catch(() => {});
+        }
+        function toggleAmbient() {
+            if (!_ambAudio || !_ambTrackId) return;
+            if (_ambAudio.paused) { _ambWantPlay = true; _ambAudio.play().catch(() => {}); }
+            else { _ambWantPlay = false; _ambAudio.pause(); _ambSavePos(); }
+            _ambIcon();
+        }
+        function setAmbientTrack(tid) {
+            if (!tid) return;
+            try {
+                localStorage.setItem(_ambKT, tid);
+                localStorage.setItem(_ambKL, tid);
+                localStorage.setItem(_ambKP, '0');   // new track starts fresh
+            } catch (_) {}
+            _ambLoadTrack(tid, true);
+        }
+        async function initAmbient() {
+            _ambAudio = document.getElementById('ambient-audio');
+            if (!_ambAudio) return;
+            _ambAudio.loop = true;
+            _ambAudio.addEventListener('play', _ambIcon);
+            _ambAudio.addEventListener('pause', _ambIcon);
+            _ambAudio.addEventListener('timeupdate', () => {
+                const now = Date.now();
+                if (now - _ambSaveT > 5000) { _ambSaveT = now; _ambSavePos(); }
+            });
+            document.addEventListener('visibilitychange', () => { if (document.hidden) _ambSavePos(); });
+            window.addEventListener('pagehide', _ambSavePos);
+            document.addEventListener('pointerdown', _ambResumeOnGesture, true);
+            _ambIcon();
+            let tracks = [];
+            try { tracks = ((await (await fetch(AMBIENT_API + '/tracks')).json()).tracks) || []; } catch (_) {}
+            const sel = document.getElementById('ambient-track-select');
+            if (sel) sel.innerHTML = tracks.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
+            let tid = localStorage.getItem(_ambKT) || localStorage.getItem(_ambKL);
+            if (!tid && tracks.length) tid = tracks[0].id;
+            if (!tid) return;
+            if (sel) sel.value = tid;
+            _ambLoadTrack(tid, true);   // auto-play on open
+        }
+        initAmbient();
 
         // Populated from the EPUB's OPF metadata (dc:creator) once the book
         // is parsed — used by the share-card renderer to credit the author

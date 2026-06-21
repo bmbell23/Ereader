@@ -180,6 +180,9 @@ public class MainActivity extends Activity {
         // cache. Combined with the server's Cache-Control: no-store, this makes
         // edits to web/*.html show up the next time the app is opened.
         webSettings.setCacheMode(WebSettings.LOAD_NO_CACHE);
+        // Allow <audio>/<video> to autoplay without a user gesture so ambient
+        // reading music starts the moment an ebook opens. (#32)
+        webSettings.setMediaPlaybackRequiresUserGesture(false);
         webView.clearCache(true);
 
         webView.setWebViewClient(new WebViewClient());

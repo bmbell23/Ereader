@@ -5,7 +5,7 @@ Serves ebook files from Calibre Content Server via REST API
 """
 
 from fastapi import APIRouter, Request, Response, HTTPException
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 import requests
 import os
 import json
@@ -1360,6 +1360,41 @@ def list_books(limit: int | None = None, offset: int = 0, query: str | None = No
         'offset': offset,
         'limit': limit
     }
+
+# ---- Ambient reading music (#32) -------------------------------------------
+# Curated long-form ambient tracks served by clean id from the read-only /music
+# mount. FileResponse handles HTTP Range, so the <audio> element can seek/resume.
+AMBIENT_TRACKS = {
+    'highfantasy': {
+        'name': 'High Fantasy Ambiance',
+        'path': '/music/Youtube/Fantasy Ambiance/Playlist for reading or writing High Fantasy ｜ ambient fantasy music.mp3',
+    },
+    'wow': {
+        'name': 'World of Warcraft',
+        'path': '/music/World of Warcraft/Relax Study Sleep Focus/World of Warcraft ｜ Teldrassil Music & Ambience, Peaceful and Tranquil Fantasy Forests.mp3',
+    },
+    'ffxiv': {
+        'name': 'FFXIV - Shadowbringers',
+        'path': '/music/FFXIV/Final Fantasy XIV - Shadowbringers Music Best of Mix.mp3',
+    },
+    'malazan': {
+        'name': 'Malazan Book of the Fallen',
+        'path': '/music/Malazan/Malazan Book of the Fallen ｜ Gardens of the Moon (Original Album).mp3',
+    },
+}
+
+@router.get('/api/ambient/tracks')
+def ambient_tracks():
+    """List available ambient tracks (id + display name)."""
+    return {'tracks': [{'id': k, 'name': v['name']} for k, v in AMBIENT_TRACKS.items()]}
+
+@router.get('/api/ambient/{track_id}')
+def ambient_stream(track_id: str):
+    """Stream a track (Range-capable via FileResponse) so audio can seek/resume."""
+    t = AMBIENT_TRACKS.get(track_id)
+    if not t or not os.path.exists(t['path']):
+        raise HTTPException(status_code=404, detail='Track not found')
+    return FileResponse(t['path'], media_type='audio/mpeg')
 
 @router.get('/api/ebooks/{book_id}')
 def get_book_info(book_id):

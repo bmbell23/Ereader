@@ -236,6 +236,13 @@
                         <button type="button" class="btn btn-lg btn-outline-warning" id="sessLampBtn"><i class="fas fa-lightbulb me-2"></i>Reading lamp</button>
                         <button type="button" class="btn btn-lg btn-primary" id="sessDoneBtn"><i class="fas fa-check me-2"></i>Done</button>
                     </div>
+                    <!-- Ambient music: auto-plays on start; track change enabled only when paused (#32) -->
+                    <div class="d-flex align-items-center gap-2 mt-4" style="min-width:240px;">
+                        <button type="button" class="btn btn-outline-secondary" id="sessAmbientBtn" title="Ambient music"><i class="fas fa-music"></i></button>
+                        <select class="form-select form-select-sm" id="sessAmbientTrack" title="Pause reading to change the track"></select>
+                    </div>
+                    <div class="text-muted" style="font-size:.72rem; margin-top:.35rem;">Pause to change the track</div>
+                    <audio id="sessAmbientAudio" loop preload="none"></audio>
                 </div>
             </div>
         </div>
