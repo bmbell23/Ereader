@@ -942,12 +942,12 @@ function grStartReadingSession() {
 
     document.getElementById('sessPauseBtn').onclick = grSessionPause;
     document.getElementById('sessResumeBtn').onclick = grSessionResume;
-    document.getElementById('sessLampBtn').onclick = grFlashlight;
     document.getElementById('sessDoneBtn').onclick = grSessionDone;
     document.addEventListener('visibilitychange', _sessVis);
 
     bootstrap.Modal.getOrCreateInstance(document.getElementById('readingSessionModal')).show();
     grSessAmbientStart(reading);   // auto-play ambient music (Start Reading is a gesture)
+    grSessBrightnessStart();       // apply remembered screen brightness
 }
 
 function grSessionPause() {
@@ -986,6 +986,7 @@ function grSessionDone() {
     grApplyGlobalWakeLock();
     _sess = null;
     grSessAmbientStop();
+    grSessBrightnessStop();           // restore system brightness on leaving
     const sm = bootstrap.Modal.getInstance(document.getElementById('readingSessionModal'));
     if (sm) sm.hide();
     grUpdatePhysicalProgress(mins);   // reopen popup, add session minutes to today's total
@@ -1065,104 +1066,34 @@ function grSessAmbientStop() {
     _appAmbIcon();
 }
 
-// ---- Reading lamp / screen flashlight (#40) --------------------------------
-// Full-screen colored light at a chosen brightness. Native window brightness via
-// window.Android.setBrightness when present (true lamp brightness); otherwise a
-// dim layer approximates it. Color (full-spectrum square) + brightness are
-// remembered. Launched from the reading session; exits on the back gesture or
-// screen lock, revealing the session underneath.
-let _flBackPushed = false;
-let _flSquareWired = false;
-function _flHasNative() { return !!(window.Android && typeof window.Android.setBrightness === 'function'); }
-
-function _flHslHex(h, s, l) {
-    s /= 100; l /= 100;
-    const k = n => (n + h / 30) % 12;
-    const a = s * Math.min(l, 1 - l);
-    const f = n => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
-    const toHex = x => Math.round(x * 255).toString(16).padStart(2, '0');
-    return `#${toHex(f(0))}${toHex(f(8))}${toHex(f(4))}`;
-}
-function _flPlaceMarker(fx, fy) {
-    const m = document.getElementById('flColorMarker');
-    if (fx == null || fy == null || isNaN(fx) || isNaN(fy)) { m.style.display = 'none'; return; }
-    m.style.display = 'block';
-    m.style.left = (fx * 100) + '%';
-    m.style.top = (fy * 100) + '%';
-}
-function _flWireSquare() {
-    if (_flSquareWired) return; _flSquareWired = true;
-    const sq = document.getElementById('flColorSquare');
-    let down = false;
-    const pick = (e) => {
-        const rect = sq.getBoundingClientRect();
-        const cx = e.touches ? e.touches[0].clientX : e.clientX;
-        const cy = e.touches ? e.touches[0].clientY : e.clientY;
-        const fx = Math.max(0, Math.min(1, (cx - rect.left) / rect.width));
-        const fy = Math.max(0, Math.min(1, (cy - rect.top) / rect.height));
-        const hex = _flHslHex(fx * 360, 100, (1 - fy) * 100);
-        document.getElementById('flColor').value = hex;
-        _flPlaceMarker(fx, fy);
-        localStorage.setItem('gr_lamp_color', hex);
-        localStorage.setItem('gr_lamp_fx', String(fx));
-        localStorage.setItem('gr_lamp_fy', String(fy));
-    };
-    sq.addEventListener('pointerdown', e => { down = true; pick(e); });
-    sq.addEventListener('pointermove', e => { if (down) pick(e); });
-    window.addEventListener('pointerup', () => { down = false; });
-}
-
-function grFlashlight() {
-    _flWireSquare();
-    const color = localStorage.getItem('gr_lamp_color') || '#ffd9a0';
-    const level = parseInt(localStorage.getItem('gr_lamp_bright') || '80');
-    const fx = parseFloat(localStorage.getItem('gr_lamp_fx'));
-    const fy = parseFloat(localStorage.getItem('gr_lamp_fy'));
-    document.getElementById('flColor').value = color;
-    _flPlaceMarker(isNaN(fx) ? null : fx, isNaN(fy) ? null : fy);
-    const bright = document.getElementById('flBright');
-    bright.value = level;
-    document.getElementById('flBrightVal').textContent = String(level);
-    bright.oninput = function () { document.getElementById('flBrightVal').textContent = this.value; };
-    document.getElementById('flOnBtn').onclick = grFlashlightOn;
-    bootstrap.Modal.getOrCreateInstance(document.getElementById('flashlightSettingsModal')).show();
-}
-
-function grFlashlightOn() {
-    const color = document.getElementById('flColor').value;
-    const level = Math.max(1, Math.min(100, parseInt(document.getElementById('flBright').value) || 80));
-    localStorage.setItem('gr_lamp_color', color);
-    localStorage.setItem('gr_lamp_bright', String(level));
-    const sm = bootstrap.Modal.getInstance(document.getElementById('flashlightSettingsModal'));
-    if (sm) sm.hide();
-
-    document.getElementById('flashlightFill').style.background = color;
-    if (_flHasNative()) {
+// ---- Reading session brightness slider (#40) ------------------------------
+// Adjusts screen brightness while in the session. Native window brightness via
+// window.Android.setBrightness (0-1, -1 resets); falls back to a dim overlay when
+// the native bridge isn't present (desktop / pre-brightness APK). Remembered
+// globally; restored to system default when the session ends.
+function _sessBrightHasNative() { return !!(window.Android && typeof window.Android.setBrightness === 'function'); }
+function grSessApplyBrightness(level) {
+    level = Math.max(5, Math.min(100, parseInt(level) || 100));
+    try { localStorage.setItem('gr_session_brightness', String(level)); } catch (_) {}
+    const dim = document.getElementById('sessDim');
+    if (_sessBrightHasNative()) {
         try { window.Android.setBrightness(level / 100); } catch (_) {}
-        document.getElementById('flashlightDim').style.opacity = '0';
-    } else {
-        document.getElementById('flashlightDim').style.opacity = String(1 - level / 100);
+        if (dim) dim.style.opacity = '0';
+    } else if (dim) {
+        dim.style.opacity = String(1 - level / 100);
     }
-    document.getElementById('flashlightOverlay').style.display = 'block';
-
-    try { history.pushState({ fl: 1 }, ''); _flBackPushed = true; } catch (_) { _flBackPushed = false; }
-    window.addEventListener('popstate', grFlashlightPop);
-    document.addEventListener('visibilitychange', grFlashlightVis);
 }
-
-function grFlashlightPop() { grFlashlightExit(false); }
-function grFlashlightVis() { if (document.hidden) grFlashlightExit(true); }
-
-function grFlashlightExit(popHistory) {
-    const ov = document.getElementById('flashlightOverlay');
-    if (!ov || ov.style.display === 'none') return;
-    ov.style.display = 'none';
-    if (_flHasNative()) { try { window.Android.setBrightness(-1); } catch (_) {} }
-    window.removeEventListener('popstate', grFlashlightPop);
-    document.removeEventListener('visibilitychange', grFlashlightVis);
-    if (popHistory && _flBackPushed) { try { history.back(); } catch (_) {} }
-    _flBackPushed = false;
-    // The reading session modal remains underneath; nothing to reopen.
+function grSessBrightnessStart() {
+    const slider = document.getElementById('sessBright');
+    const saved = Math.max(5, Math.min(100, parseInt(localStorage.getItem('gr_session_brightness') || '100')));
+    if (slider) { slider.value = saved; slider.oninput = function () { grSessApplyBrightness(this.value); }; }
+    grSessApplyBrightness(saved);
+}
+function grSessBrightnessStop() {
+    // Restore the system default brightness on leaving the session.
+    if (_sessBrightHasNative()) { try { window.Android.setBrightness(-1); } catch (_) {} }
+    const dim = document.getElementById('sessDim');
+    if (dim) dim.style.opacity = '0';
 }
 
 // True if the book has logged time in a format OTHER than `fmt` (so we know to
@@ -1199,7 +1130,6 @@ window.GreatReads = {
     showEditModal,
     openBookActions: grOpenBookActions,
     updatePhysicalProgress: grUpdatePhysicalProgress,
-    flashlight: grFlashlight,
     startReadingSession: grStartReadingSession,
     formatDateSmart,
     readingExtraInfoHtml,
