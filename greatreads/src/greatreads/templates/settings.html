@@ -518,6 +518,17 @@ chapter remain = (chapterEnd − pageIndex) × avg</pre>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
+                <div class="d-flex gap-2 mb-2">
+                    <div class="input-group input-group-sm flex-grow-1">
+                        <span class="input-group-text"><i class="fas fa-search"></i></span>
+                        <input type="text" id="mmSearch" class="form-control" placeholder="Search files in this folder…" autocomplete="off">
+                        <button type="button" id="mmSearchClear" class="btn btn-outline-secondary" title="Clear"><i class="fas fa-times"></i></button>
+                    </div>
+                    <select id="mmSort" class="form-select form-select-sm" style="width:auto;flex:0 0 auto;">
+                        <option value="name">Name (A–Z)</option>
+                        <option value="mtime">Recently modified</option>
+                    </select>
+                </div>
                 <div class="small text-muted mb-2"><i class="fas fa-folder-open me-1"></i><span id="mmBrowsePath">/</span></div>
                 <div id="mmBrowseList" class="list-group" style="max-height:55vh; overflow:auto;"></div>
             </div>
@@ -583,32 +594,56 @@ async function mmDelete(id, btn) {
     } catch (_) {}
 }
 
+let _mmPath = '';   // current folder (rel to media root) being browsed
+
 function mmStartAdd() {
     const mm = bootstrap.Modal.getInstance(document.getElementById('musicManagerModal'));
     if (mm) mm.hide();   // reopened by the picker's hidden handler
+    const s = document.getElementById('mmSearch'); if (s) s.value = '';
+    if (!mmStartAdd._wired) {
+        mmStartAdd._wired = true;
+        let t;
+        document.getElementById('mmSearch').addEventListener('input', () => {
+            clearTimeout(t); t = setTimeout(() => mmBrowse(_mmPath), 250);
+        });
+        document.getElementById('mmSearchClear').addEventListener('click', () => {
+            const s = document.getElementById('mmSearch'); s.value = ''; s.focus(); mmBrowse(_mmPath);
+        });
+        document.getElementById('mmSort').addEventListener('change', () => mmBrowse(_mmPath));
+    }
     mmBrowse('');
     bootstrap.Modal.getOrCreateInstance(document.getElementById('mmBrowseModal')).show();
 }
 
 async function mmBrowse(path) {
+    _mmPath = path || '';
     const listEl = document.getElementById('mmBrowseList');
+    const q = (document.getElementById('mmSearch').value || '').trim();
+    const sort = document.getElementById('mmSort').value || 'name';
     let d;
-    try { d = await GreatReads.apiCall('/ambient/browse?path=' + encodeURIComponent(path || '')); }
+    try {
+        d = await GreatReads.apiCall('/ambient/browse?path=' + encodeURIComponent(_mmPath)
+            + '&q=' + encodeURIComponent(q) + '&sort=' + encodeURIComponent(sort));
+    }
     catch (_) { listEl.innerHTML = '<div class="text-danger small p-2">Could not open that folder.</div>'; return; }
-    document.getElementById('mmBrowsePath').textContent = '/' + (d.path || '');
+    document.getElementById('mmBrowsePath').textContent = (q ? 'Searching ' : '') + '/' + (d.path || '');
     let html = '';
-    if (d.path) {
+    if (!q && d.path) {
         html += `<button type="button" class="list-group-item list-group-item-action" onclick="mmBrowse('${_mmEsc(d.parent)}')"><i class="fas fa-level-up-alt me-2 text-muted"></i>..</button>`;
     }
-    html += (d.dirs || []).map(name => {
-        const child = (d.path ? d.path + '/' : '') + name;
-        return `<button type="button" class="list-group-item list-group-item-action" onclick="mmBrowse('${_mmEsc(child)}')"><i class="fas fa-folder me-2 text-warning"></i>${_mmEsc(name)}</button>`;
+    html += (d.dirs || []).map(e => {
+        return `<button type="button" class="list-group-item list-group-item-action" onclick="mmBrowse('${_mmEsc(e.path)}')"><i class="fas fa-folder me-2 text-warning"></i>${_mmEsc(e.name)}</button>`;
     }).join('');
-    html += (d.files || []).map(name => {
-        const full = (d.path ? d.path + '/' : '') + name;
-        return `<button type="button" class="list-group-item list-group-item-action" onclick="mmPick('${_mmEsc(full)}','${_mmEsc(name)}')"><i class="fas fa-music me-2 text-primary"></i>${_mmEsc(name)}</button>`;
+    html += (d.files || []).map(e => {
+        const sub = q ? `<div class="small text-muted text-truncate">${_mmEsc(e.path)}</div>` : '';
+        return `<button type="button" class="list-group-item list-group-item-action" onclick="mmPick('${_mmEsc(e.path)}','${_mmEsc(e.name)}')"><i class="fas fa-music me-2 text-primary"></i>${_mmEsc(e.name)}${sub}</button>`;
     }).join('');
-    listEl.innerHTML = html || '<div class="text-muted small p-2">Empty folder.</div>';
+    if (!html) {
+        html = '<div class="text-muted small p-2">' + (q ? 'No matching audio files.' : 'Empty folder.') + '</div>';
+    } else if (d.truncated) {
+        html += '<div class="text-muted small p-2">Showing first 500 matches — narrow your search.</div>';
+    }
+    listEl.innerHTML = html;
 }
 
 async function mmPick(relPath, filename) {

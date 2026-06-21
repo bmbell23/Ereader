@@ -1450,26 +1450,72 @@ def ambient_delete(track_id: str):
     return {'ok': True}
 
 @router.get('/api/ambient/browse')
-def ambient_browse(path: str = ''):
-    """List subfolders + audio files under the media root for the file picker."""
+def ambient_browse(path: str = '', q: str = '', sort: str = 'name'):
+    """List subfolders + audio files under the media root for the file picker.
+
+    q    — if set, recursively search audio files under `path` whose name matches
+           (case-insensitive substring); subfolders are not returned in this mode.
+    sort — 'name' (A-Z) or 'mtime' (most-recently-modified first).
+    """
     safe = _safe_media_path(path) if path else os.path.realpath(MEDIA_ROOT)
     if not safe or not os.path.isdir(safe):
         raise HTTPException(status_code=404, detail='Not a directory')
     root = os.path.realpath(MEDIA_ROOT)
     rel = '' if safe == root else os.path.relpath(safe, root)
+    q = (q or '').strip().lower()
+    SEARCH_CAP = 500
+
+    def _mtime(p):
+        try:
+            return os.path.getmtime(p)
+        except OSError:
+            return 0
+
     dirs, files = [], []
     try:
-        for entry in sorted(os.listdir(safe), key=lambda s: s.lower()):
-            if entry.startswith('.'):
-                continue
-            full = os.path.join(safe, entry)
-            if os.path.isdir(full):
-                dirs.append(entry)
-            elif entry.lower().endswith(_AMBIENT_AUDIO_EXTS):
-                files.append(entry)
+        if q:
+            # Recursive name search under the current folder.
+            for dirpath, dirnames, filenames in os.walk(safe):
+                dirnames[:] = [d for d in dirnames if not d.startswith('.')]
+                for fn in filenames:
+                    if fn.startswith('.') or not fn.lower().endswith(_AMBIENT_AUDIO_EXTS):
+                        continue
+                    if q not in fn.lower():
+                        continue
+                    full = os.path.join(dirpath, fn)
+                    files.append({'name': fn,
+                                  'path': os.path.relpath(full, root),
+                                  'mtime': _mtime(full)})
+                    if len(files) >= SEARCH_CAP:
+                        break
+                if len(files) >= SEARCH_CAP:
+                    break
+        else:
+            for entry in os.listdir(safe):
+                if entry.startswith('.'):
+                    continue
+                full = os.path.join(safe, entry)
+                if os.path.isdir(full):
+                    dirs.append({'name': entry,
+                                 'path': os.path.relpath(full, root),
+                                 'mtime': _mtime(full)})
+                elif entry.lower().endswith(_AMBIENT_AUDIO_EXTS):
+                    files.append({'name': entry,
+                                  'path': os.path.relpath(full, root),
+                                  'mtime': _mtime(full)})
     except Exception:
         raise HTTPException(status_code=500, detail='Cannot list directory')
-    return {'path': rel, 'parent': ('' if not rel else os.path.dirname(rel)), 'dirs': dirs, 'files': files}
+
+    if sort == 'mtime':
+        dirs.sort(key=lambda e: e['mtime'], reverse=True)
+        files.sort(key=lambda e: e['mtime'], reverse=True)
+    else:
+        dirs.sort(key=lambda e: e['name'].lower())
+        files.sort(key=lambda e: e['name'].lower())
+
+    return {'path': rel, 'parent': ('' if not rel else os.path.dirname(rel)),
+            'dirs': dirs, 'files': files, 'q': q,
+            'truncated': len(files) >= SEARCH_CAP}
 
 @router.get('/api/ambient/{track_id}')
 def ambient_stream(track_id: str):
