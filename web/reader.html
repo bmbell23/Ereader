@@ -831,6 +831,16 @@
             width: 100%;
             padding: 0 10px;
         }
+        /* Brightness slider row (#50): sun icon — slider — sun icon. */
+        .bright-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            width: 100%;
+            padding: 0 10px;
+            color: #6c757d;
+        }
+        .bright-row .font-slider { min-width: 120px; }
         .slider-ticks {
             display: flex;
             justify-content: space-between;
@@ -1224,6 +1234,11 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 </head>
 <body>
+    <!-- Brightness dim overlay (#50). Fallback dimmer used when the native
+         brightness bridge is absent (desktop / old APK), and for sub-hardware-min
+         dimming on top of the native brightness. Above all content, never
+         intercepts taps. -->
+    <div id="reader-dim" style="position:fixed;inset:0;z-index:2147483646;background:#000;opacity:0;pointer-events:none;"></div>
     <div class="header">
         <button class="back-btn" onclick="goBack()">← Back</button>
         <div class="book-title" id="book-title">Loading...</div>
@@ -1314,6 +1329,19 @@
                     <span>20</span><span>22</span><span>24</span><span>26</span>
                     <span>28</span><span>30</span><span>32</span>
                 </div>
+            </div>
+        </div>
+
+        <!-- Brightness (#50). Locks the screen to a fixed level so the phone's
+             auto-brightness can't fade the page mid-read. Sun icons flank the
+             slider, mirroring the physical-book reading session's control. -->
+        <div class="control-row">
+            <div class="bright-row">
+                <span class="bright-icon" aria-hidden="true" style="font-size:13px;opacity:.55;">☀</span>
+                <input type="range" class="font-slider" id="brightness-slider"
+                       min="1" max="100" value="100"
+                       oninput="setReaderBrightness(this.value)">
+                <span class="bright-icon" aria-hidden="true" style="font-size:20px;opacity:.85;">☀</span>
             </div>
         </div>
 
@@ -1651,7 +1679,12 @@
         }
         // Re-acquire after the tab becomes visible again (e.g. returning from another app).
         document.addEventListener('visibilitychange', () => {
-            if (document.visibilityState === 'visible') applyWakeLock();
+            if (document.visibilityState === 'visible') {
+                applyWakeLock();
+                // Re-assert the locked brightness — Android may have handed the
+                // window back to auto-brightness while we were backgrounded (#50).
+                try { applyReaderBrightness(loadBrightnessPref()); } catch (_) {}
+            }
         });
         // The Web Wake Lock API requires user activation to acquire — and
         // some Android WebView builds drop the lock the moment the call
@@ -1692,6 +1725,12 @@
         }
         function _ambLoadTrack(tid, wantPlay) {
             _ambTrackId = tid;
+            // Record play intent synchronously. The <audio> is preload="none", so on
+            // a freshly-navigated reader page (no user activation yet) the WebView
+            // won't fetch metadata and loadedmetadata may never fire — which means
+            // _ambTryPlay() below wouldn't run and the first-tap fallback would stay
+            // inert. Setting the flag here guarantees the first gesture starts it.
+            if (wantPlay) _ambWantPlay = true;
             _ambAudio.src = AMBIENT_API + '/' + encodeURIComponent(tid);
             const pos = parseFloat(localStorage.getItem(_ambKP) || '0');
             _ambAudio.addEventListener('loadedmetadata', function once() {
@@ -1821,6 +1860,8 @@
         function goBack() {
             // Clear 180° flip before navigating away
             document.body.style.transform = '';
+            // Hand brightness back to the OS (auto-brightness) on the way out (#50).
+            try { restoreSystemBrightness(); } catch (_) {}
             // Proper back: return to wherever the reader was opened from (Library,
             // TBR, Highlights…). Fall back to the Library home if there's no history.
             if (window.history.length > 1) window.history.back();
@@ -4221,6 +4262,53 @@
                 if (v >= 12 && v <= 32) return v;
             } catch (e) {}
             return null;
+        }
+
+        // ---------- Screen brightness (#50) --------------------------------
+        // Lock the reader to a fixed brightness so the phone's auto-brightness
+        // can't fade the page mid-read. Mirrors the physical-book reading
+        // session's slider (grSessApplyBrightness). Native window brightness via
+        // window.Android.setBrightness (0-1, where -1 resets to system/auto);
+        // setting any fixed value is what overrides the OS auto-brightness for
+        // this window. Falls back to a black dim overlay when the bridge isn't
+        // present (desktop / pre-brightness APK). Remembered globally; restored
+        // to system/auto when leaving the reader.
+        const BRIGHT_KEY = 'ereader.brightness';   // '1'..'100'
+        function _readerBrightHasNative() {
+            return !!(window.Android && typeof window.Android.setBrightness === 'function');
+        }
+        function applyReaderBrightness(level) {
+            level = Math.max(1, Math.min(100, parseInt(level) || 100));
+            try { localStorage.setItem(BRIGHT_KEY, String(level)); } catch (_) {}
+            const dim = document.getElementById('reader-dim');
+            // Below this knee the panel is at/near its hardware minimum, so we
+            // stack a black overlay to dim further than the screen can on its own.
+            // Above the knee: pure hardware brightness, no overlay.
+            const KNEE = 30;            // % of the slider where overlay-dimming begins
+            const MAX_OVERLAY = 0.92;   // darkest the overlay goes (at slider = 1)
+            const overlay = level < KNEE ? (1 - level / KNEE) * MAX_OVERLAY : 0;
+            if (_readerBrightHasNative()) {
+                try { window.Android.setBrightness(Math.max(0.01, level / 100)); } catch (_) {}
+                if (dim) dim.style.opacity = String(overlay);
+            } else if (dim) {
+                // No native bridge: the overlay does all the dimming.
+                dim.style.opacity = String(1 - level / 100);
+            }
+        }
+        // Called from the slider's oninput.
+        function setReaderBrightness(level) { applyReaderBrightness(level); }
+        function loadBrightnessPref() {
+            try {
+                const v = parseInt(localStorage.getItem(BRIGHT_KEY) || '100', 10);
+                if (v >= 1 && v <= 100) return v;
+            } catch (_) {}
+            return 100;
+        }
+        // Hand the screen back to the OS (auto-brightness) when leaving the reader.
+        function restoreSystemBrightness() {
+            if (_readerBrightHasNative()) { try { window.Android.setBrightness(-1); } catch (_) {} }
+            const dim = document.getElementById('reader-dim');
+            if (dim) dim.style.opacity = '0';
         }
 
         // ---------- Reader display prefs (text-align, font-family, hyphens) ----
@@ -7617,6 +7705,17 @@
             if (slider) slider.value = fontSize;
             const lbl = document.getElementById('font-size-label');
             if (lbl) lbl.textContent = fontSize;
+        }
+
+        // Lock screen brightness to the saved level on open (#50) so the phone's
+        // auto-brightness can't fade the page while reading; restore system/auto
+        // brightness when the reader is left.
+        {
+            const b = loadBrightnessPref();
+            const bslider = document.getElementById('brightness-slider');
+            if (bslider) bslider.value = b;
+            applyReaderBrightness(b);
+            window.addEventListener('pagehide', restoreSystemBrightness);
         }
 
         // Same for the display prefs (align / font / hyphenation / flip). Loading
