@@ -845,10 +845,17 @@ function grUpdatePhysicalProgress(addMinutes) {
     const minEl = document.getElementById('upMinutes');
     const extra = Math.max(0, parseInt(addMinutes) || 0);
     minEl.value = extra;
-    apiCall(`/readings/${reading.id}/today-minutes`)
-        .then(d => { minEl.value = ((d && typeof d.minutes === 'number') ? d.minutes : 0) + extra; })
+    // Load today's running total, then add any session minutes. Save() awaits this
+    // promise so it never reads a racy 0 and wipes the logged total. (#44)
+    let _minutesLoaded = false, _minutesTouched = false;
+    const minutesLoad = apiCall(`/readings/${reading.id}/today-minutes`)
+        .then(d => {
+            // Don't clobber a value the user already adjusted while the GET was in flight.
+            if (!_minutesTouched) minEl.value = ((d && typeof d.minutes === 'number') ? d.minutes : 0) + extra;
+            _minutesLoaded = true;
+        })
         .catch(() => {});
-    const stepMin = (delta) => { minEl.value = Math.max(0, (parseInt(minEl.value) || 0) + delta); };
+    const stepMin = (delta) => { _minutesTouched = true; minEl.value = Math.max(0, (parseInt(minEl.value) || 0) + delta); };
     document.getElementById('upMinutesMinus').onclick = () => stepMin(-5);
     document.getElementById('upMinutesPlus').onclick = () => stepMin(5);
 
@@ -879,11 +886,16 @@ function grUpdatePhysicalProgress(addMinutes) {
             if (isNaN(pct)) { showToast('Enter a percent', 'warning'); return; }
         }
         pct = Math.max(0, Math.min(100, pct));
-        const minutes = Math.max(0, parseInt(minEl.value) || 0);
+        // Wait for today's total to load before reading the field, so a quick Save
+        // never sends 0 and wipes today's logged minutes. If it never loaded (and the
+        // user didn't touch it), omit minutes_read so the backend preserves it. (#44)
+        await minutesLoad;
+        const params = { current_percent: pct };
+        if (_minutesLoaded || _minutesTouched) params.minutes_read = Math.max(0, parseInt(minEl.value) || 0);
         try {
             await apiCall(`/readings/${reading.id}/progress`, {
                 method: 'PUT',
-                params: { current_percent: pct, minutes_read: minutes }
+                params
             });
             const inst = bootstrap.Modal.getInstance(modalEl);
             if (inst) inst.hide();
@@ -1100,19 +1112,28 @@ function grSessAmbientStop() {
 // globally; restored to system default when the session ends.
 function _sessBrightHasNative() { return !!(window.Android && typeof window.Android.setBrightness === 'function'); }
 function grSessApplyBrightness(level) {
-    level = Math.max(5, Math.min(100, parseInt(level) || 100));
+    level = Math.max(1, Math.min(100, parseInt(level) || 100));
     try { localStorage.setItem('gr_session_brightness', String(level)); } catch (_) {}
     const dim = document.getElementById('sessDim');
+    // Below this knee, the panel is at/near its hardware minimum, so we stack a black
+    // overlay to dim much further than the screen can on its own — for "barely lit,
+    // save battery" reading. Above the knee, pure hardware brightness, no overlay.
+    const KNEE = 30;          // % of the slider where overlay-dimming begins
+    const MAX_OVERLAY = 0.92; // darkest the overlay goes (at slider = 1)
+    const overlay = level < KNEE ? (1 - level / KNEE) * MAX_OVERLAY : 0;
     if (_sessBrightHasNative()) {
-        try { window.Android.setBrightness(level / 100); } catch (_) {}
-        if (dim) dim.style.opacity = '0';
+        // Hardware brightness ramps across the whole slider, floored very low so the
+        // bottom genuinely bottoms out the panel; overlay then takes it darker still.
+        try { window.Android.setBrightness(Math.max(0.01, level / 100)); } catch (_) {}
+        if (dim) dim.style.opacity = String(overlay);
     } else if (dim) {
+        // No native bridge (desktop / old APK): overlay does all the dimming.
         dim.style.opacity = String(1 - level / 100);
     }
 }
 function grSessBrightnessStart() {
     const slider = document.getElementById('sessBright');
-    const saved = Math.max(5, Math.min(100, parseInt(localStorage.getItem('gr_session_brightness') || '100')));
+    const saved = Math.max(1, Math.min(100, parseInt(localStorage.getItem('gr_session_brightness') || '100')));
     if (slider) { slider.value = saved; slider.oninput = function () { grSessApplyBrightness(this.value); }; }
     grSessApplyBrightness(saved);
 }

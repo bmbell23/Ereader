@@ -206,15 +206,16 @@
                     <div class="text-muted" style="font-size:.72rem; margin-top:.35rem;">Pause to change the track</div>
                     <audio id="sessAmbientAudio" loop preload="none"></audio>
                 </div>
-                <!-- Screen brightness slider, pinned to the bottom (#40). -->
-                <div style="position:absolute; left:0; right:0; bottom:0; padding:14px 24px calc(14px + env(safe-area-inset-bottom));">
+                <!-- Screen brightness slider, pinned to the bottom (#40). Sits ABOVE the
+                     dim overlay (z-index) so it stays usable even when dimmed way down. -->
+                <div style="position:absolute; left:0; right:0; bottom:0; z-index:2; padding:14px 24px calc(14px + env(safe-area-inset-bottom));">
                     <div class="d-flex align-items-center gap-2">
                         <i class="fas fa-sun text-muted" style="font-size:.8rem; opacity:.5;"></i>
-                        <input type="range" class="form-range flex-grow-1" id="sessBright" min="5" max="100" value="100">
+                        <input type="range" class="form-range flex-grow-1" id="sessBright" min="1" max="100" value="100">
                         <i class="fas fa-sun text-muted"></i>
                     </div>
                 </div>
-                <div id="sessDim" style="position:absolute; inset:0; background:#000; opacity:0; pointer-events:none;"></div>
+                <div id="sessDim" style="position:absolute; inset:0; z-index:1; background:#000; opacity:0; pointer-events:none;"></div>
             </div>
         </div>
     </div>

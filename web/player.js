@@ -845,6 +845,9 @@ function saveProgress() {
             bookTitle: TITLE, bookAuthor: AUTHOR, mediaType: 'audiobook',
             absId: ABS_ID, format: 'audiobook',
             position: pos, duration: total,
+            // Current playback speed so the backend logs real listening time
+            // (content advanced ÷ rate), not nominal audiobook duration. (#46)
+            playbackRate: currentRate(),
             progress: total ? Math.min(1, pos / total) : 0,
             chapterTitle: stamp ? stamp.title : undefined,
             chapterFraction: stamp ? stamp.fraction : undefined,

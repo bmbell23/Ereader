@@ -252,7 +252,7 @@ async def update_reading(reading_id: int, reading: ReadingUpdate, db: Session = 
 async def update_reading_progress(
     reading_id: int,
     current_percent: float,
-    minutes_read: float = 0,
+    minutes_read: Optional[float] = None,
     db: Session = Depends(get_db)
 ):
     """Realign the current progress percentage for an in-progress reading.
@@ -330,16 +330,26 @@ async def update_reading_progress(
             "WHERE book_key=:bk AND format='Physical' AND activity_date < :d"),
             {"bk": book_key, "d": today_str}).scalar() or 0
         today_words = max(0, round(target_total - logged_before))
-        # Both words and minutes OVERWRITE today's row: words = position-based delta
-        # from prior days; minutes_read is the *today total* the UI carries (loaded
-        # via /today-minutes, edited up, re-sent). Naturally resets at midnight (new
-        # date = new row). (#39/#40)
-        db.execute(_sql(
-            "INSERT INTO reading_activity(activity_date,book_key,format,minutes,words,wpm_mpw_sum,wpm_n) "
-            "VALUES(:d,:bk,'Physical',:mins,:w,0,0) "
-            "ON CONFLICT(activity_date,book_key,format) DO UPDATE SET "
-            "words=excluded.words, minutes=excluded.minutes"),
-            {"d": today_str, "bk": book_key, "w": today_words, "mins": max(0.0, float(minutes_read or 0))})
+        # Words always OVERWRITE today's row (position-based delta from prior days).
+        # Minutes only overwrite when the caller actually carries a value: a page-only
+        # progress save (minutes_read=None) must NOT clobber today's logged minutes to
+        # 0. minutes_read, when given, is the *today total* the UI carries (loaded via
+        # /today-minutes, edited up, re-sent). Naturally resets at midnight (new date =
+        # new row). (#39/#40, minutes-preservation fix #44)
+        if minutes_read is None:
+            db.execute(_sql(
+                "INSERT INTO reading_activity(activity_date,book_key,format,minutes,words,wpm_mpw_sum,wpm_n) "
+                "VALUES(:d,:bk,'Physical',0,:w,0,0) "
+                "ON CONFLICT(activity_date,book_key,format) DO UPDATE SET "
+                "words=excluded.words"),
+                {"d": today_str, "bk": book_key, "w": today_words})
+        else:
+            db.execute(_sql(
+                "INSERT INTO reading_activity(activity_date,book_key,format,minutes,words,wpm_mpw_sum,wpm_n) "
+                "VALUES(:d,:bk,'Physical',:mins,:w,0,0) "
+                "ON CONFLICT(activity_date,book_key,format) DO UPDATE SET "
+                "words=excluded.words, minutes=excluded.minutes"),
+                {"d": today_str, "bk": book_key, "w": today_words, "mins": max(0.0, float(minutes_read))})
 
     db.commit()
 

@@ -117,16 +117,25 @@
                 <div id="goalCalendar" class="goal-calendar"></div>
                 <div id="goalDayDetail" class="small text-center mt-2 text-muted"></div>
                 <hr class="my-3">
-                <div class="d-flex justify-content-between align-items-center mb-2">
+                <div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
                     <h6 class="mb-0 text-muted" id="goalChartTitle">Words per day</h6>
-                    <div class="btn-group btn-group-sm" role="group">
-                        <button type="button" class="btn btn-outline-secondary active" id="goalGranDay" onclick="setGoalGranularity('day')">Day</button>
-                        <button type="button" class="btn btn-outline-secondary" id="goalGranWeek" onclick="setGoalGranularity('week')">Week</button>
-                        <button type="button" class="btn btn-outline-secondary" id="goalGranMonth" onclick="setGoalGranularity('month')">Month</button>
-                        <button type="button" class="btn btn-outline-secondary" id="goalGranYear" onclick="setGoalGranularity('year')">Year</button>
+                    <div class="d-flex align-items-center gap-2 flex-wrap">
+                        <div class="btn-group btn-group-sm" role="group">
+                            <button type="button" class="btn btn-outline-secondary active" id="goalMetricWords" onclick="setGoalMetric('words')">Words</button>
+                            <button type="button" class="btn btn-outline-secondary" id="goalMetricTime" onclick="setGoalMetric('time')">Time</button>
+                        </div>
+                        <div class="btn-group btn-group-sm" role="group">
+                            <button type="button" class="btn btn-outline-secondary active" id="goalGranDay" onclick="setGoalGranularity('day')">Day</button>
+                            <button type="button" class="btn btn-outline-secondary" id="goalGranWeek" onclick="setGoalGranularity('week')">Week</button>
+                            <button type="button" class="btn btn-outline-secondary" id="goalGranMonth" onclick="setGoalGranularity('month')">Month</button>
+                            <button type="button" class="btn btn-outline-secondary" id="goalGranYear" onclick="setGoalGranularity('year')">Year</button>
+                        </div>
                     </div>
                 </div>
                 <div style="position:relative;height:280px;"><canvas id="goalChart"></canvas></div>
+                <hr class="my-3">
+                <h6 class="mb-2 text-muted"><i class="fas fa-trophy me-2 text-warning"></i><span id="goalRecordsTitle">Record days</span></h6>
+                <div id="goalRecords" class="row g-2"></div>
             </div>
         </div>
     </div>
@@ -1952,11 +1961,13 @@ let goalChart = null;
 let goalGoals = {};          // {ebook_wpd, audio_wpd, physical_wpd}
 let goalMonth = null;        // Date pinned to the 1st of the displayed month
 let goalGran = 'day';
+let goalMetric = 'words';    // 'words' | 'time' — what the trend chart plots
 let goalSelected = null;     // 'YYYY-MM-DD'
 
 function _ymd(y, m, d) { return `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`; }
 function _todayStr() { const t = new Date(); return _ymd(t.getFullYear(), t.getMonth(), t.getDate()); }
 function _wordsOn(fmt, ds) { const dw = (activityData && activityData.daily_words) || {}; return (dw[fmt] && dw[fmt][ds]) || 0; }
+function _minutesOn(fmt, ds) { const dm = (activityData && activityData.daily_minutes) || {}; return (dm[fmt] && dm[fmt][ds]) || 0; }
 function _dailyGoalTotal() { return GOAL_FMTS.reduce((s, [, k]) => s + (Number(goalGoals[k]) || 0), 0); }
 function _daysInMonth(y, m) { return new Date(y, m + 1, 0).getDate(); }
 function _daysInYear(y) { return ((y % 4 === 0 && y % 100 !== 0) || y % 400 === 0) ? 366 : 365; }
@@ -1967,8 +1978,12 @@ async function loadGoals() {
     if (!goalMonth) { const t = new Date(); goalMonth = new Date(t.getFullYear(), t.getMonth(), 1); }
     document.getElementById('goalPrevMonth').onclick = () => { goalMonth = new Date(goalMonth.getFullYear(), goalMonth.getMonth() - 1, 1); renderGoalCalendar(); if (goalGran === 'day') renderGoalChart(); };
     document.getElementById('goalNextMonth').onclick = () => { goalMonth = new Date(goalMonth.getFullYear(), goalMonth.getMonth() + 1, 1); renderGoalCalendar(); if (goalGran === 'day') renderGoalChart(); };
+    // Select today by default so its details are visible on load.
+    if (!goalSelected) goalSelected = _todayStr();
     renderGoalCalendar();
+    renderGoalDayDetail();
     renderGoalChart();
+    renderGoalRecords();
 }
 
 function renderGoalCalendar() {
@@ -2005,17 +2020,73 @@ function renderGoalCalendar() {
 function selectGoalDay(ds) {
     goalSelected = (goalSelected === ds) ? null : ds;
     renderGoalCalendar();
+    renderGoalDayDetail();
+}
+
+function renderGoalDayDetail() {
     const el = document.getElementById('goalDayDetail');
     if (!goalSelected) { el.innerHTML = ''; return; }
+    const ds = goalSelected;
     const date = new Date(ds + 'T00:00:00');
+    // Per format: words (vs goal) plus time spent, so the day detail shows both.
     const parts = GOAL_FMTS.map(([f, k]) => {
-        const goal = goalGoals[k] || 0, w = _wordsOn(f, ds);
-        if (!goal && !w) return null;
+        const goal = goalGoals[k] || 0, w = _wordsOn(f, ds), mn = _minutesOn(f, ds);
+        if (!goal && !w && !mn) return null;
         const met = goal > 0 && w >= goal;
-        return `<span style="color:${COLORS[f]}">${f}</span> ${w.toLocaleString()}${goal ? ` / ${Number(goal).toLocaleString()}` : ''} ${met ? '✓' : ''}`;
+        const tbit = mn ? ` <span class="text-muted">(${_fmtHours(mn)})</span>` : '';
+        return `<span style="color:${COLORS[f]}">${f}</span> ${w.toLocaleString()}${goal ? ` / ${Number(goal).toLocaleString()}` : ''}${tbit} ${met ? '✓' : ''}`;
     }).filter(Boolean);
+    // Append a day total (words + time across all formats).
+    const totW = GOAL_FMTS.reduce((s, [f]) => s + _wordsOn(f, ds), 0);
+    const totM = GOAL_FMTS.reduce((s, [f]) => s + _minutesOn(f, ds), 0);
+    if (parts.length) {
+        const tt = totM ? ` <span class="text-muted">(${_fmtHours(totM)})</span>` : '';
+        parts.push(`<strong>Total</strong> ${totW.toLocaleString()}${tt}`);
+    }
     el.innerHTML = `<strong>${date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</strong> — ` +
         (parts.length ? parts.join(' &nbsp;·&nbsp; ') : 'no reading logged');
+}
+
+function setGoalMetric(mtr) {
+    goalMetric = mtr;
+    document.getElementById('goalMetricWords').classList.toggle('active', mtr === 'words');
+    document.getElementById('goalMetricTime').classList.toggle('active', mtr === 'time');
+    renderGoalChart();
+    renderGoalRecords();
+}
+
+// All-time best single day per format + overall total, in the selected metric
+// (words or time). The two metrics give different record days. (#48)
+function renderGoalRecords() {
+    const el = document.getElementById('goalRecords');
+    if (!el) return;
+    const isTime = goalMetric === 'time';
+    const data = (activityData && (isTime ? activityData.daily_minutes : activityData.daily_words)) || {};
+    document.getElementById('goalRecordsTitle').textContent = 'Record days — ' + (isTime ? 'time' : 'words');
+
+    const bestOf = (map) => {
+        let date = null, val = 0;
+        for (const d in map) { if (map[d] > val) { val = map[d]; date = d; } }
+        return { date, val };
+    };
+    // Per-day totals across all formats.
+    const totals = {};
+    GOAL_FMTS.forEach(([f]) => { const m = data[f] || {}; for (const d in m) totals[d] = (totals[d] || 0) + m[d]; });
+
+    const fmtVal = (v) => isTime ? _fmtHours(v) : Math.round(v).toLocaleString() + ' words';
+    const fmtDate = (d) => d ? new Date(d + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
+
+    const cards = GOAL_FMTS.map(([f]) => [f, COLORS[f], bestOf(data[f] || {})]);
+    cards.push(['Total', '#6c757d', bestOf(totals)]);
+
+    el.innerHTML = cards.map(([label, color, r]) => `
+        <div class="col-6 col-md-3">
+            <div class="border rounded p-2 text-center h-100">
+                <div class="small fw-semibold" style="color:${color}">${label}</div>
+                <div class="fw-bold">${r.val ? fmtVal(r.val) : '—'}</div>
+                <div class="small text-muted">${fmtDate(r.date)}</div>
+            </div>
+        </div>`).join('');
 }
 
 function setGoalGranularity(g) {
@@ -2026,54 +2097,77 @@ function setGoalGranularity(g) {
 
 function renderGoalChart() {
     const dw = (activityData && activityData.daily_words) || {};
+    const dm = (activityData && activityData.daily_minutes) || {};
     const dateSet = new Set();
-    GOAL_FMTS.forEach(([f]) => Object.keys(dw[f] || {}).forEach(d => dateSet.add(d)));
+    GOAL_FMTS.forEach(([f]) => {
+        Object.keys(dw[f] || {}).forEach(d => dateSet.add(d));
+        Object.keys(dm[f] || {}).forEach(d => dateSet.add(d));
+    });
     const allDates = Array.from(dateSet).sort();
+    const isTime = goalMetric === 'time';
 
-    const labels = [], series = { Ebook: [], Audio: [], Physical: [] }, goalLine = [];
+    // Build parallel words + minutes series per bucket so we can plot either metric
+    // and show both in the tooltip.
+    const labels = [];
+    const words = { Ebook: [], Audio: [], Physical: [] };
+    const mins = { Ebook: [], Audio: [], Physical: [] };
+    const goalLine = [];
     const addBucket = (label, days, goalDays) => {
         labels.push(label);
-        GOAL_FMTS.forEach(([f]) => series[f].push(days.reduce((s, ds) => s + _wordsOn(f, ds), 0)));
+        GOAL_FMTS.forEach(([f]) => {
+            words[f].push(days.reduce((s, ds) => s + _wordsOn(f, ds), 0));
+            mins[f].push(days.reduce((s, ds) => s + _minutesOn(f, ds), 0));
+        });
         goalLine.push(_dailyGoalTotal() * goalDays);
     };
 
+    const metricName = isTime ? 'Time' : 'Words';
     let title;
     if (goalGran === 'day') {
         const y = goalMonth.getFullYear(), m = goalMonth.getMonth(), n = _daysInMonth(y, m);
         for (let d = 1; d <= n; d++) addBucket(String(d), [_ymd(y, m, d)], 1);
-        title = 'Words per day — ' + goalMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+        title = `${metricName} per day — ` + goalMonth.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
     } else if (goalGran === 'week') {
-        const byWeek = {};
-        allDates.forEach(ds => {
-            const dt = new Date(ds + 'T00:00:00'); const sun = new Date(dt); sun.setDate(dt.getDate() - dt.getDay());
-            const key = _ymd(sun.getFullYear(), sun.getMonth(), sun.getDate());
-            (byWeek[key] = byWeek[key] || []).push(ds);
-        });
-        Object.keys(byWeek).sort().slice(-16).forEach(wk => {
-            const dt = new Date(wk + 'T00:00:00');
-            addBucket('wk ' + dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), byWeek[wk], 7);
-        });
-        title = 'Words per week';
+        // Always show the last 12 weeks (this week + 11 prior), including empty ones.
+        const t = new Date();
+        const thisSun = new Date(t.getFullYear(), t.getMonth(), t.getDate() - t.getDay());
+        for (let wk = 11; wk >= 0; wk--) {
+            const sun = new Date(thisSun); sun.setDate(thisSun.getDate() - wk * 7);
+            const days = [];
+            for (let i = 0; i < 7; i++) { const dd = new Date(sun); dd.setDate(sun.getDate() + i); days.push(_ymd(dd.getFullYear(), dd.getMonth(), dd.getDate())); }
+            addBucket('wk ' + sun.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), days, 7);
+        }
+        title = `${metricName} per week`;
     } else if (goalGran === 'month') {
-        const byMonth = {};
-        allDates.forEach(ds => { const k = ds.slice(0, 7); (byMonth[k] = byMonth[k] || []).push(ds); });
-        Object.keys(byMonth).sort().forEach(k => {
-            const [yy, mm] = k.split('-').map(Number);
-            addBucket(new Date(yy, mm - 1, 1).toLocaleDateString('en-US', { month: 'short', year: '2-digit' }), byMonth[k], _daysInMonth(yy, mm - 1));
-        });
-        title = 'Words per month';
+        // Always show the last 12 months (this month + 11 prior), including empty ones.
+        const t = new Date();
+        for (let mo = 11; mo >= 0; mo--) {
+            const dt = new Date(t.getFullYear(), t.getMonth() - mo, 1);
+            const yy = dt.getFullYear(), mm = dt.getMonth(), n = _daysInMonth(yy, mm);
+            const days = [];
+            for (let d = 1; d <= n; d++) days.push(_ymd(yy, mm, d));
+            addBucket(dt.toLocaleDateString('en-US', { month: 'short', year: '2-digit' }), days, n);
+        }
+        title = `${metricName} per month`;
     } else {
-        const byYear = {};
-        allDates.forEach(ds => { const k = ds.slice(0, 4); (byYear[k] = byYear[k] || []).push(ds); });
-        Object.keys(byYear).sort().forEach(k => addBucket(k, byYear[k], _daysInYear(Number(k))));
-        title = 'Words per year';
+        // Always show the last 12 years (this year + 11 prior), including empty ones.
+        const ty = new Date().getFullYear();
+        for (let y = ty - 11; y <= ty; y++) {
+            addBucket(String(y), allDates.filter(ds => ds.slice(0, 4) === String(y)), _daysInYear(y));
+        }
+        title = `${metricName} per year`;
     }
     document.getElementById('goalChartTitle').textContent = title;
 
-    const datasets = GOAL_FMTS.filter(([f]) => series[f].some(v => v > 0)).map(([f]) => ({
-        label: f, data: series[f], backgroundColor: COLORS[f], borderColor: COLORS[f], borderWidth: 1, borderRadius: 3, stack: 'words'
+    const primary = isTime ? mins : words;
+    const datasets = GOAL_FMTS.filter(([f]) => primary[f].some(v => v > 0)).map(([f]) => ({
+        label: f,
+        data: isTime ? mins[f].map(v => Math.round(v)) : words[f],
+        _words: words[f], _minutes: mins[f],          // both, for the tooltip
+        backgroundColor: COLORS[f], borderColor: COLORS[f], borderWidth: 1, borderRadius: 3, stack: 'main'
     }));
-    if (_dailyGoalTotal() > 0) datasets.push({
+    // Goal line only applies to the words metric (there's no per-format time goal).
+    if (!isTime && _dailyGoalTotal() > 0) datasets.push({
         // Show points when there are few buckets (week/month/year often collapse
         // to 1–2 points — a 0-radius line would be invisible); clean dashed line
         // for the many-point day view. (#39)
@@ -2081,13 +2175,48 @@ function renderGoalChart() {
         pointRadius: labels.length <= 2 ? 4 : 0, pointHoverRadius: 5, pointBackgroundColor: '#dc3545', fill: false
     });
 
+    // Tooltip shows BOTH words and time for each format, plus a Total footer summing
+    // all formats for that bucket. mode:'index' so one hover lists every format.
+    const tooltipLabel = (ctx) => {
+        if (ctx.dataset.label === 'Goal') return `Goal: ${Number(ctx.parsed.y).toLocaleString()} words`;
+        const i = ctx.dataIndex;
+        const w = (ctx.dataset._words && ctx.dataset._words[i]) || 0;
+        const mn = (ctx.dataset._minutes && ctx.dataset._minutes[i]) || 0;
+        const bits = [`${w.toLocaleString()} words`];
+        if (mn) bits.push(_fmtHours(mn));
+        return `${ctx.dataset.label}: ${bits.join(' · ')}`;
+    };
+    const tooltipFooter = (items) => {
+        let w = 0, mn = 0;
+        items.forEach(it => {
+            if (it.dataset.label === 'Goal') return;
+            const i = it.dataIndex;
+            w += (it.dataset._words && it.dataset._words[i]) || 0;
+            mn += (it.dataset._minutes && it.dataset._minutes[i]) || 0;
+        });
+        const bits = [`${w.toLocaleString()} words`];
+        if (mn) bits.push(_fmtHours(mn));
+        return `Total: ${bits.join(' · ')}`;
+    };
+
+    // In time mode, label the y-axis in whole hours only (e.g. "5h", not "5h 40m").
+    // Snap ticks to an hour step sized so the axis stays uncluttered.
+    const yTicks = { callback: v => isTime ? Math.round(v / 60) + 'h' : (v >= 1000 ? (v / 1000) + 'k' : v) };
+    if (isTime) {
+        const maxStack = Math.max(0, ...labels.map((_, i) => GOAL_FMTS.reduce((s, [f]) => s + (mins[f][i] || 0), 0)));
+        const stepH = (maxStack / 60) <= 8 ? 1 : Math.ceil((maxStack / 60) / 8);
+        yTicks.stepSize = stepH * 60;
+    }
+
     const ctx = document.getElementById('goalChart').getContext('2d');
     if (goalChart) goalChart.destroy();
     goalChart = new Chart(ctx, {
         type: 'bar',
         data: { labels, datasets },
-        options: { ...commonChartOptions, plugins: { legend: { position: 'top' } },
-            scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true, ticks: { callback: v => v >= 1000 ? (v / 1000) + 'k' : v } } } }
+        options: { ...commonChartOptions,
+            plugins: { legend: { position: 'top' },
+                tooltip: { mode: 'index', intersect: false, callbacks: { label: tooltipLabel, footer: tooltipFooter } } },
+            scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true, ticks: yTicks } } }
     });
 }
 

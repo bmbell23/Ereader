@@ -387,7 +387,14 @@ def _record_reading_activity(book_key, item, prev, body):
             if isinstance(pos_now, (int, float)) and isinstance(pos_prev, (int, float)):
                 dsec = pos_now - pos_prev
                 if 0 < dsec <= 6 * 3600:        # ignore seek-back / absurd jumps
-                    minutes = dsec / 60.0
+                    # `dsec` is the audiobook *content* advanced, not real time spent.
+                    # At playback speed R, R seconds of content play per wall-clock
+                    # second, so real listening time = content / R. Divide by the
+                    # client's current playbackRate so logged minutes reflect actual
+                    # time spent, not nominal audiobook duration. (#46)
+                    rate = body.get('playbackRate')
+                    rate = float(rate) if isinstance(rate, (int, float)) and rate > 0 else 1.0
+                    minutes = (dsec / rate) / 60.0
             wc = _gr_word_count_for(bk)
             dprog = _progress_delta(item, prev)
             if wc and dprog > 0:
@@ -533,7 +540,21 @@ def _gr_set_current_percent(book_key, record):
                 'ORDER BY r.date_started DESC LIMIT 1',
                 (source, ext_id, media)).fetchone()
             if not row:
-                return  # GreatReads has no in-progress reading for this book+format
+                # Cross-format fallback (#42 inverse): no in-progress reading in THIS
+                # format, but the user may be tracking the book in another format
+                # (e.g. a Physical reading). Reading the ebook/audiobook should still
+                # advance that reading's position so it doesn't sit frozen while you
+                # read ahead in a different format. Match any in-progress reading for
+                # the same book.
+                row = conn.execute(
+                    'SELECT r.id, r.current_percent FROM read r '
+                    'JOIN external_imports ei ON ei.book_id = r.book_id '
+                    'WHERE ei.source=? AND ei.external_id=? '
+                    '  AND r.date_started IS NOT NULL AND r.date_finished_actual IS NULL '
+                    'ORDER BY r.date_started DESC LIMIT 1',
+                    (source, ext_id)).fetchone()
+            if not row:
+                return  # GreatReads has no in-progress reading for this book
             cur = row['current_percent']
             if cur is not None and abs(float(cur) - pct) < 0.05:
                 return  # unchanged — skip a redundant write (keep GR tracking tightly)
