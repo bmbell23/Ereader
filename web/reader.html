@@ -1736,9 +1736,15 @@
             _ambAudio.addEventListener('loadedmetadata', function once() {
                 _ambAudio.removeEventListener('loadedmetadata', once);
                 if (pos > 0 && pos < (_ambAudio.duration || Infinity)) { try { _ambAudio.currentTime = pos; } catch (_) {} }
-                if (wantPlay) _ambTryPlay();
             });
             _ambAudio.load();
+            // Attempt playback NOW — don't gate it behind loadedmetadata, which
+            // preload="none" may never fire on open (that's why it used to need a
+            // tap). play() forces the fetch itself; with the APK's
+            // setMediaPlaybackRequiresUserGesture(false) this starts zero-tap. If
+            // autoplay is still blocked, the catch + first-gesture fallback covers
+            // it, and the loadedmetadata handler above still restores position. (#51)
+            if (wantPlay) _ambTryPlay();
         }
         function _ambTryPlay() {
             _ambWantPlay = true;
