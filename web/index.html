@@ -1507,6 +1507,15 @@
             // The reader will pull the book blob from IndexedDB if we already
             // have it, or fetch + cache it on first open. We don't pre-fetch
             // here \u2014 the reader's own cache-then-network path handles it.
+            //
+            // Hand the reader the progress record we already hold in memory so it
+            // can seed the resume position synchronously \u2014 no per-book /progress
+            // round-trip on the critical path (#54 / #28). reader.html reads
+            // sessionStorage 'gr.prefetch.progress.<id>'.
+            try {
+                const rec = progressMap.get(String(id));
+                if (rec) sessionStorage.setItem('gr.prefetch.progress.' + id, JSON.stringify(rec));
+            } catch (_) {}
             window.location.href = `reader.html?v=${BUILD}&id=${id}&format=${format}&title=${title}`;
         }
 
@@ -1518,6 +1527,21 @@
         // the player can play a multi-part edition back-to-back.
         function openPlayer(absId, title, author, ebookId, ebookFormat, editionId) {
             const raw = String(absId || '').replace(/^abs:/, '');
+            // Seed the player's resume from the freshest record we already hold
+            // (audio record, or the dual-format ebook record) so it can paint the
+            // resumed % instantly and skip the /progress refetch + ABS-session
+            // wait before knowing where to seek (#54 / #28). Keyed by raw absId,
+            // which the player reads as 'gr.prefetch.progress.<ABS_ID>'.
+            try {
+                const cand = [];
+                const a = audioProgressByAbsId.get(raw);
+                if (a) cand.push(a);
+                if (ebookId) { const e = progressMap.get(String(ebookId)); if (e) cand.push(e); }
+                if (cand.length) {
+                    cand.sort((x, y) => (y.updated || 0) - (x.updated || 0));
+                    sessionStorage.setItem('gr.prefetch.progress.' + raw, JSON.stringify(cand[0]));
+                }
+            } catch (_) {}
             let url = `player.html?v=${BUILD}&absId=${encodeURIComponent(raw)}`
                 + `&title=${encodeURIComponent(title || '')}`
                 + `&author=${encodeURIComponent(author || '')}`;
@@ -1641,7 +1665,10 @@
         let db;
         const cachedBookIds = new Set();
         function initDB() {
-            const request = indexedDB.open('EreaderDB', 2);
+            // v3 (#54): additive — adds audio/ambient/cacheMeta stores for
+            // local-first asset caching. Version MUST match reader.html's
+            // openBookDB(); the lower-version opener throws VersionError.
+            const request = indexedDB.open('EreaderDB', 3);
             request.onupgradeneeded = (e) => {
                 db = e.target.result;
                 if (!db.objectStoreNames.contains('books')) {
@@ -1649,6 +1676,15 @@
                 }
                 if (!db.objectStoreNames.contains('covers')) {
                     db.createObjectStore('covers', { keyPath: 'id' });
+                }
+                if (!db.objectStoreNames.contains('audio')) {
+                    db.createObjectStore('audio', { keyPath: 'id' });
+                }
+                if (!db.objectStoreNames.contains('ambient')) {
+                    db.createObjectStore('ambient', { keyPath: 'id' });
+                }
+                if (!db.objectStoreNames.contains('cacheMeta')) {
+                    db.createObjectStore('cacheMeta', { keyPath: 'id' });
                 }
             };
             request.onsuccess = (e) => {

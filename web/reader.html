@@ -1932,8 +1932,38 @@
             }
         }
 
+        // Seed the resume position synchronously from the record the library
+        // stashed in sessionStorage on tap (#54 / #28), so calculatePages reads
+        // a fresh position from localStorage without waiting on the /progress
+        // network fetch. Returns true if it wrote a (newer) position.
+        // Only ebook records are seeded here — audio→ebook chapter-anchor mapping
+        // needs the parsed TOC (not ready this early); the background
+        // syncReadingStateFromServer() still covers the audio-winner case.
+        function seedReadingStateFromPrefetch() {
+            try {
+                const sk = 'gr.prefetch.progress.' + bookId;
+                const raw = sessionStorage.getItem(sk);
+                if (!raw) return false;
+                sessionStorage.removeItem(sk);
+                const rec = JSON.parse(raw);
+                if (!rec || rec.error || !rec.updated || rec.mediaType === 'audiobook') return false;
+                const key = 'ereader.state.' + bookId;
+                let localTs = 0;
+                try { const r = localStorage.getItem(key); if (r) localTs = (JSON.parse(r) || {}).ts || 0; } catch (_) {}
+                if ((rec.updated || 0) <= localTs) return false; // local is already fresher
+                localStorage.setItem(key, JSON.stringify({
+                    page: rec.page, total: rec.total, progress: rec.progress,
+                    anchor: rec.anchor, fontSize: rec.fontSize, ts: rec.updated
+                }));
+                console.log('⚡ Seeded reading position from library prefetch:', rec);
+                return true;
+            } catch (_) { return false; }
+        }
+        let _seededFromPrefetch = false;
+
         async function loadEPUB() {
             try {
+                _seededFromPrefetch = seedReadingStateFromPrefetch();
                 console.log('🚀 ========== LOADING EPUB ==========');
                 console.log('📚 Book ID:', bookId);
                 console.log('📖 Title:', title);
@@ -1957,7 +1987,7 @@
                     const blob = await response.blob();
                     arrayBuffer = await blob.arrayBuffer();
                     console.log('📥 Downloaded', arrayBuffer.byteLength, 'bytes, caching\u2026');
-                    putCachedBookBlob(bookId, 'epub', blob); // fire-and-forget
+                    putCachedBookBlob(bookId, 'epub', blob, { title }); // fire-and-forget; author backfilled post-parse
                 }
 
                 const zip = await JSZip.loadAsync(arrayBuffer);
@@ -2000,6 +2030,10 @@
                     });
                     bookAuthor = names.join(', ');
                 } catch (e) { bookAuthor = ''; }
+                // Backfill title/author onto the cached record (#54). Runs on
+                // BOTH cache-hit and cache-miss opens, so books cached before
+                // this change get their names filled in on next open.
+                updateCachedBookMeta(bookId, { title, author: bookAuthor });
 
                 opfDoc.querySelectorAll('manifest item').forEach(item => {
                     manifest[item.getAttribute('id')] = item.getAttribute('href');
@@ -2471,16 +2505,25 @@
             // matters for geometry; the progress sync still has to land
             // in localStorage before calculatePages reads it on first paint.
             initHighlights();
-            Promise.all([
+            // When the library prefetched our position (the common path), first
+            // paint no longer waits on the /progress round-trip (#54 / #28):
+            // STATE_KEY is already seeded, so syncReadingStateFromServer() runs
+            // in the background (refreshing position for the next open and
+            // restoring the reading-speed buffer). When there's no prefetch
+            // (e.g. reader opened directly), keep it on the blocking path so the
+            // first paint still lands on the server position.
+            const gating = [
                 loadHighlightsForBook(),
                 loadBookmarksForBook(),
-                syncReadingStateFromServer(),
                 loadBookWordCount(),
                 loadBookSummaries(),
                 loadReadingBaseline()
-            ]).finally(() => {
+            ];
+            if (!_seededFromPrefetch) gating.push(syncReadingStateFromServer());
+            Promise.all(gating).finally(() => {
                 setTimeout(calculatePages, 100);
             });
+            if (_seededFromPrefetch) syncReadingStateFromServer().catch(() => {});
         }
 
         // ---------- Word-anchored reading position ----------
@@ -6041,7 +6084,13 @@
         let bookDB = null;
         function openBookDB() {
             return new Promise((resolve) => {
-                const req = indexedDB.open('EreaderDB', 2);
+                // v3 (#54): added `audio`/`ambient`/`cacheMeta` stores for
+                // local-first asset caching, and we now persist title/author on
+                // `books` records so an offline library list is renderable. The
+                // upgrade is purely additive — existing books/covers survive.
+                // BOTH reader.html and index.html MUST open the same version,
+                // else whichever opens the lower version throws VersionError.
+                const req = indexedDB.open('EreaderDB', 3);
                 req.onupgradeneeded = (e) => {
                     const db = e.target.result;
                     if (!db.objectStoreNames.contains('books')) {
@@ -6049,6 +6098,15 @@
                     }
                     if (!db.objectStoreNames.contains('covers')) {
                         db.createObjectStore('covers', { keyPath: 'id' });
+                    }
+                    if (!db.objectStoreNames.contains('audio')) {
+                        db.createObjectStore('audio', { keyPath: 'id' });
+                    }
+                    if (!db.objectStoreNames.contains('ambient')) {
+                        db.createObjectStore('ambient', { keyPath: 'id' });
+                    }
+                    if (!db.objectStoreNames.contains('cacheMeta')) {
+                        db.createObjectStore('cacheMeta', { keyPath: 'id' });
                     }
                 };
                 req.onsuccess = (e) => { bookDB = e.target.result; resolve(bookDB); };
@@ -6066,12 +6124,45 @@
                 } catch (e) { resolve(null); }
             });
         }
-        function putCachedBookBlob(id, fmt, blob) {
+        // Persist the EPUB blob. Merges over any existing record (read→modify
+        // →write within one tx) so we never clobber title/author already
+        // annotated by a prior open. `meta` is optional {title, author} (#54).
+        function putCachedBookBlob(id, fmt, blob, meta) {
             return new Promise((resolve) => {
                 if (!bookDB) { resolve(false); return; }
                 try {
                     const tx = bookDB.transaction(['books'], 'readwrite');
-                    tx.objectStore('books').put({ id, format: fmt, blob, cached: new Date() });
+                    const store = tx.objectStore('books');
+                    const getReq = store.get(id);
+                    getReq.onsuccess = () => {
+                        const rec = Object.assign({}, getReq.result || {},
+                            { id, format: fmt, blob, cached: new Date() });
+                        if (meta && meta.title != null) rec.title = meta.title;
+                        if (meta && meta.author != null) rec.author = meta.author;
+                        store.put(rec);
+                    };
+                    tx.oncomplete = () => resolve(true);
+                    tx.onerror = () => resolve(false);
+                } catch (e) { resolve(false); }
+            });
+        }
+        // Annotate an already-cached book with title/author WITHOUT a blob (#54)
+        // — used after OPF metadata parse and on cache-hit opens, so offline
+        // list rendering has names. No-op if the book isn't cached yet.
+        function updateCachedBookMeta(id, meta) {
+            return new Promise((resolve) => {
+                if (!bookDB || !id || !meta) { resolve(false); return; }
+                try {
+                    const tx = bookDB.transaction(['books'], 'readwrite');
+                    const store = tx.objectStore('books');
+                    const getReq = store.get(id);
+                    getReq.onsuccess = () => {
+                        const rec = getReq.result;
+                        if (!rec) return; // nothing cached to annotate
+                        if (meta.title != null)  rec.title = meta.title;
+                        if (meta.author != null) rec.author = meta.author;
+                        store.put(rec);
+                    };
                     tx.oncomplete = () => resolve(true);
                     tx.onerror = () => resolve(false);
                 } catch (e) { resolve(false); }

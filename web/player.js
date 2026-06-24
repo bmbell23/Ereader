@@ -154,8 +154,25 @@ async function init() {
     // the other at the same spot. It's a BOOK-global time; map it onto the part
     // that contains it. An ebook winner gives a percent — converted to seconds
     // here when the book total is known, else deferred to loadPart.
+    // Resume position. Prefer the record the library stashed in sessionStorage
+    // (#54 / #28): it lets us paint the resumed % immediately (no 0% flash) and
+    // resume without the /progress round-trip or waiting on the ABS session
+    // before we know where to seek. Falls back to the network gather on a direct
+    // open (no prefetch present).
+    let pre = null;
+    try {
+        const sk = 'gr.prefetch.progress.' + ABS_ID;
+        const praw = sessionStorage.getItem(sk);
+        if (praw) { pre = JSON.parse(praw); sessionStorage.removeItem(sk); }
+    } catch (_) {}
+    if (pre && typeof pre.progress === 'number' && pre.progress > 0) {
+        // Optimistic book-bar render before the audio element has loaded.
+        try { $('scrubber').value = Math.round(pre.progress * 1000); fillRange($('scrubber')); } catch (_) {}
+        try { $('book-pct').textContent = Math.round(pre.progress * 100) + '%'; } catch (_) {}
+    }
+
     let savedPos = 0;
-    const resume = await resolveResumePosition();
+    const resume = (pre && resumeShapeFromRecord(pre)) || await resolveResumePosition();
     if (resume.kind === 'seconds') {
         savedPos = resume.value;
     } else if (resume.kind === 'percent') {
@@ -589,6 +606,21 @@ let resumePercent = null;
 // resumePercent it's resolved in loadPart, once the part's chapters are loaded
 // and we can title-match. Takes precedence over resumePercent when it matches.
 let resumeChapter = null;
+// Map a backend progress record onto the resume shape loadPart consumes.
+// Shared by the network path and the sessionStorage fast path (#54 / #28).
+function resumeShapeFromRecord(best) {
+    if (!best || best.error || !best.updated) return null;
+    if (best.mediaType === 'audiobook' && typeof best.position === 'number') {
+        return { kind: 'seconds', value: best.position };
+    }
+    return {
+        kind: 'percent',
+        value: (typeof best.progress === 'number') ? best.progress : 0,
+        chapter: best.chapterTitle
+            ? { title: best.chapterTitle, fraction: best.chapterFraction } : null,
+    };
+}
+
 async function resolveResumePosition() {
     if (!PROGRESS_KEY) return { kind: 'none' };
     // Gather every key this book's progress could live under, de-duplicated:
@@ -613,20 +645,10 @@ async function resolveResumePosition() {
     const valid = recs.filter(p => p && !p.error && p.updated);
     if (!valid.length) return { kind: 'none' };
     valid.sort((a, b) => (b.updated || 0) - (a.updated || 0));
-    const best = valid[0];
-    if (best.mediaType === 'audiobook' && typeof best.position === 'number') {
-        return { kind: 'seconds', value: best.position };
-    }
-    // Ebook winner: prefer chapter-anchored resume (#25) — match its chapter
-    // title against our audio chapters once loaded, falling back to percent when
-    // there's no match. The chapter list isn't loaded yet here (loadPart loads
-    // it), so carry the anchor along and resolve it there.
-    return {
-        kind: 'percent',
-        value: (typeof best.progress === 'number') ? best.progress : 0,
-        chapter: best.chapterTitle
-            ? { title: best.chapterTitle, fraction: best.chapterFraction } : null,
-    };
+    // Ebook winner: resumeShapeFromRecord prefers a chapter-anchored resume
+    // (#25) — its chapter title is title-matched against our audio chapters once
+    // loaded (loadPart), falling back to percent when there's no match.
+    return resumeShapeFromRecord(valid[0]) || { kind: 'none' };
 }
 
 function curChapterTitle() {
