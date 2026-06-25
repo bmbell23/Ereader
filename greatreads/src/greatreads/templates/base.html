@@ -307,6 +307,24 @@
     <!-- Custom JS -->
     <script src="{{ url_for('static', path='/js/app.js') }}?v=2.0.10"></script>
 
+    <!-- Loading screen: show a random saved highlight while the page's data
+         loads, instead of a bare spinner / "Loading…" (#55). Renders into the
+         page's #loading-state (tbr/journal/library/books); a no-op elsewhere.
+         Pulls highlights from the absorbed Ereader API (GR_EREADER_API). -->
+    <script src="{{ url_for('static', path='/js/quotes.js') }}?v=1"></script>
+    <script>
+        (function () {
+            function go() {
+                var el = document.getElementById('loading-state');
+                if (el && window.GreatReadsQuotes && typeof GR_EREADER_API !== 'undefined') {
+                    GreatReadsQuotes.start(el, GR_EREADER_API);
+                }
+            }
+            if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', go);
+            else go();
+        })();
+    </script>
+
     <!-- Load left-handed mode setting -->
     <script>
     // Load and apply left-handed mode setting

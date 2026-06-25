@@ -793,6 +793,7 @@
         <div class="loading">Loading your library...</div>
     </div>
 
+    <script src="quotes.js?v=1"></script>
     <script>
         // Build stamp: YYMMDD-HH:MM, generated fresh each page load so it
         // always reflects when the user last refreshed (also serves as a
@@ -2431,6 +2432,8 @@
         };
 
         initDB();
+        // Show saved-highlight quotes while the first page of books loads (#55).
+        if (window.GreatReadsQuotes) GreatReadsQuotes.start(document.querySelector('#content .loading'), API_URL);
         loadBooks();
         // Pull /api/progress in parallel with the first page of books so that
         // any in-progress book that wouldn't be in the first page yet gets
