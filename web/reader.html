@@ -688,11 +688,22 @@
             cursor: pointer;
         }
         .loading {
+            /* Full-screen, opaque loading screen so the quote masks the page
+               until the EPUB has actually painted. Previously this was just a
+               centered text box, so once it was hidden there was a white gap
+               while pagination finished (#55). Background matches #epub-reader
+               so the hand-off to the book is seamless. Sits above the page
+               content but below the menus/overlays. */
             position: fixed;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+            box-sizing: border-box;
+            background: #fefefe;
             color: #888;
+            z-index: 9600;
         }
         .controls {
             display: none;
@@ -2129,8 +2140,10 @@
                     }
                 }
 
-                // Display content using column-based pagination
-                document.querySelector('.loading').style.display = 'none';
+                // Display content using column-based pagination. Keep the
+                // loading-quote screen up (it's opaque, full-screen) until the
+                // first page actually paints — renderEpubPage() hides it then,
+                // so there's no white gap while pagination finishes (#55).
                 const reader = document.getElementById('epub-reader');
                 reader.style.display = 'block';
                 reader.style.visibility = 'hidden';
@@ -3143,7 +3156,8 @@
             // Flip visibility on first paint to avoid "page 0 flash" before
             // the initial bookmark transform is applied.
             const reader = document.getElementById('epub-reader');
-            if (reader && reader.style.visibility === 'hidden') {
+            const firstPaint = reader && reader.style.visibility === 'hidden';
+            if (firstPaint) {
                 reader.style.visibility = 'visible';
             }
 
@@ -3163,6 +3177,14 @@
             // unconditional point where we know the new translateX is in
             // effect, so it's safe to show again.
             if (content.style.visibility === 'hidden') content.style.visibility = '';
+
+            // The book is now actually on screen — drop the loading-quote screen
+            // (#55). If the user is press-holding a quote, quotes.js reverts this
+            // and replays it on release, so a long quote isn't cut off.
+            if (firstPaint) {
+                const ld = document.querySelector('.loading');
+                if (ld) ld.style.display = 'none';
+            }
 
             console.log('📄 Page', currentEpubPage + 1, '/', totalPages,
                         '| offset:', offset, '| stride:', columnStride,

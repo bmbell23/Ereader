@@ -321,11 +321,18 @@
         <iframe id="reader-frame" title="Reader"></iframe>
     </div>
 
-    <div class="overlay-msg" id="overlay-msg">Starting playback…</div>
+    <div class="overlay-msg" id="overlay-msg"></div>
 
     <audio id="audio" preload="auto"></audio>
-    <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
     <script src="quotes.js?v=1"></script>
+    <script>
+        // Start the loading-quote screen immediately — before the (CDN) hls.js
+        // and player.js load — so there's no blank/"Starting playback…" flash
+        // before the quote appears (#55). player.js's init() re-starts it
+        // idempotently. API base matches player.js's API_URL.
+        try { GreatReadsQuotes.start(document.getElementById('overlay-msg'), 'http://100.69.184.113:8092/api'); } catch (e) {}
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
     <script src="player.js?v=46"></script>
 </body>
 </html>
