@@ -7,11 +7,19 @@ import android.webkit.WebView;
 import android.webkit.WebSettings;
 import android.webkit.WebViewClient;
 import android.webkit.WebChromeClient;
+import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
+import android.webkit.WebResourceError;
 import android.webkit.DownloadListener;
 import android.webkit.URLUtil;
 import android.webkit.JavascriptInterface;
 import android.content.Intent;
 import android.net.Uri;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
+import java.io.InputStream;
+import java.io.IOException;
 import android.app.DownloadManager;
 import android.os.Environment;
 import android.view.ActionMode;
@@ -33,6 +41,13 @@ public class MainActivity extends Activity {
     // so the bars don't immediately snap back to hidden on the next focus
     // event. Cleared again when the web UI calls hideSystemBars().
     private boolean systemBarsRequested = false;
+
+    // Set when the main page failed to load from the network (offline, or the
+    // host is unreachable even though ConnectivityManager reports "online").
+    // While true, shouldInterceptRequest serves the bundled shell even if
+    // isOnline() is true — so we recover regardless of the connectivity read.
+    // Reset on the next successful page load. (#23)
+    private boolean forcedOfflineReload = false;
 
     // Weak self-reference so PlaybackService (same process) can route media
     // button / notification actions back into the WebView's <audio> via JS.
@@ -185,7 +200,7 @@ public class MainActivity extends Activity {
         webSettings.setMediaPlaybackRequiresUserGesture(false);
         webView.clearCache(true);
 
-        webView.setWebViewClient(new WebViewClient());
+        webView.setWebViewClient(new OfflineShellWebViewClient());
         webView.setWebChromeClient(new WebChromeClient());
 
         // JS bridge: lets reader.html show/hide the Android system bars so
@@ -217,7 +232,115 @@ public class MainActivity extends Activity {
             }
         });
 
-        webView.loadUrl("http://100.69.184.113:8090");
+        webView.loadUrl("http://100.69.184.113:8090/");
+    }
+
+    // ---- Offline app shell (#23) ----
+    // When the device has no network, serve the bundled copy of the web shell
+    // (HTML/JS/CSS + vendored pdf.js/jszip/hls.js) from APK assets/web so the
+    // app still launches and cached books still open. When ONLINE we return
+    // null → the WebView loads live from the server exactly as before, so web
+    // edits keep showing up without an APK rebuild. API / cover / GreatReads
+    // requests are never bundled: offline they fail and the page's own
+    // IndexedDB fallbacks take over. The bundled shell is staged into
+    // assets/web by build-app.sh from web/.
+    private static final String SHELL_HOST = "100.69.184.113";
+
+    private class OfflineShellWebViewClient extends WebViewClient {
+        @Override
+        public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+            try {
+                if (request == null || !"GET".equalsIgnoreCase(request.getMethod())) return null;
+                Uri url = request.getUrl();
+                if (url == null || !SHELL_HOST.equals(url.getHost())) return null;
+                // Online → load live (preserves live-reload of the web shell) —
+                // unless a prior main-frame load already failed, in which case
+                // we force the bundled shell regardless of the connectivity read.
+                if (isOnline() && !forcedOfflineReload) return null;
+                // Offline → try to serve the request from the bundled shell.
+                // NOTE: the root URL ("http://host:8090") has an EMPTY path, not
+                // "/", so we must treat null/""/"/" all as the offline home.
+                String path = url.getPath();
+                if (path == null || path.isEmpty() || path.equals("/") || path.equals("/index.html")) {
+                    path = "/index.html";   // offline home = the cached ereader grid
+                }
+                String assetPath = "web" + path;   // e.g. web/reader.html, web/vendor/pdf.min.js
+                try {
+                    InputStream is = getAssets().open(assetPath);
+                    String mime = mimeFor(path);
+                    android.util.Log.i("EreaderOffline", "served from bundle: " + path);
+                    return new WebResourceResponse(mime, isTextMime(mime) ? "utf-8" : null, is);
+                } catch (IOException notBundled) {
+                    // Not part of the shell (API, covers, /greatreads/, …) → let
+                    // it hit the network and fail; the page handles offline.
+                    android.util.Log.i("EreaderOffline", "not bundled (network): " + path);
+                    return null;
+                }
+            } catch (Exception e) {
+                return null;
+            }
+        }
+
+        @Override
+        public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
+            // Main page couldn't load from the network (offline, or the host is
+            // unreachable while the device still reports connectivity). Fall back
+            // to the bundled shell by reloading the SAME http URL — shouldInter-
+            // ceptRequest then serves it from assets, keeping the origin (so the
+            // IndexedDB cache stays visible). Guard against a reload loop.
+            if (request != null && request.isForMainFrame() && !forcedOfflineReload) {
+                forcedOfflineReload = true;
+                android.util.Log.i("EreaderOffline", "main-frame load failed → bundled shell fallback");
+                runOnUiThread(() -> view.loadUrl("http://100.69.184.113:8090/"));
+                return;
+            }
+            super.onReceivedError(view, request, error);
+        }
+
+        @Override
+        public void onPageFinished(WebView view, String url) {
+            // A page loaded successfully — clear the forced-offline latch so the
+            // next navigation tries the network (live) again.
+            forcedOfflineReload = false;
+            super.onPageFinished(view, url);
+        }
+    }
+
+    private boolean isOnline() {
+        try {
+            ConnectivityManager cm = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+            if (cm == null) return true;            // can't tell → assume online (load live)
+            Network n = cm.getActiveNetwork();
+            if (n == null) return false;
+            NetworkCapabilities caps = cm.getNetworkCapabilities(n);
+            return caps != null && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);
+        } catch (Exception e) {
+            return true;
+        }
+    }
+
+    private static boolean isTextMime(String m) {
+        return m != null && (m.startsWith("text/") || m.equals("application/javascript")
+                || m.equals("application/json") || m.equals("image/svg+xml"));
+    }
+
+    private static String mimeFor(String path) {
+        String p = path.toLowerCase();
+        if (p.endsWith(".html") || p.endsWith(".htm")) return "text/html";
+        if (p.endsWith(".js"))    return "application/javascript";
+        if (p.endsWith(".css"))   return "text/css";
+        if (p.endsWith(".json"))  return "application/json";
+        if (p.endsWith(".svg"))   return "image/svg+xml";
+        if (p.endsWith(".png"))   return "image/png";
+        if (p.endsWith(".jpg") || p.endsWith(".jpeg")) return "image/jpeg";
+        if (p.endsWith(".gif"))   return "image/gif";
+        if (p.endsWith(".webp"))  return "image/webp";
+        if (p.endsWith(".ico"))   return "image/x-icon";
+        if (p.endsWith(".woff2")) return "font/woff2";
+        if (p.endsWith(".woff"))  return "font/woff";
+        if (p.endsWith(".ttf"))   return "font/ttf";
+        if (p.endsWith(".mp3"))   return "audio/mpeg";
+        return "application/octet-stream";
     }
 
     @Override

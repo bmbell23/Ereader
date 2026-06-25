@@ -3,6 +3,9 @@
     package="com.ereader.simple">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Read connectivity state so the offline app shell (#23) knows when to
+         serve bundled assets vs load live from the server. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
     <!-- Background audiobook playback + lock-screen / headphone media controls. -->

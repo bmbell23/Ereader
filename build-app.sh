@@ -15,6 +15,17 @@ cd "$REPO_ROOT/simple-app"
 VERSION="$(cat "$REPO_ROOT/version.txt" 2>/dev/null || echo unknown)"
 echo "🔨 Building debug APK (version: $VERSION)"
 
+# Stage the web shell into APK assets so the app can serve it offline (#23).
+# Always re-copied from web/ so the bundled shell can't drift from the live one.
+# Server-only scripts and the APK itself are excluded.
+ASSETS="$REPO_ROOT/simple-app/app/src/main/assets/web"
+echo "📦 Staging web shell → assets/web"
+rm -rf "$ASSETS"
+mkdir -p "$ASSETS"
+cp -R "$REPO_ROOT/web/." "$ASSETS/"
+rm -rf "$ASSETS/serve.py" "$ASSETS/keep-alive.sh" "$ASSETS/__pycache__" \
+       "$ASSETS/ereader.apk" "$ASSETS/ereader.apk.idsig"
+
 if [ "$1" = "--clean" ]; then
     ./gradlew clean
 fi
