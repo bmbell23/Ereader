@@ -1241,8 +1241,10 @@
             pointer-events: none;
         }
     </style>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <!-- Vendored locally (#23) so the reader works offline — CDN scripts can't
+         load with no network, and these get bundled into the APK shell. -->
+    <script src="vendor/pdf.min.js"></script>
+    <script src="vendor/jszip.min.js"></script>
     <script src="quotes.js?v=1"></script>
 </head>
 <body>
@@ -1895,7 +1897,7 @@
         async function loadPDF() {
             const url = `${API_URL}/ebooks/${bookId}/download?format=pdf`;
 
-            pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+            pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js';
 
             pdfDoc = await pdfjsLib.getDocument(url).promise;
             totalPages = pdfDoc.numPages;

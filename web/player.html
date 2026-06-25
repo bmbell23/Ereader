@@ -332,7 +332,8 @@
         // idempotently. API base matches player.js's API_URL.
         try { GreatReadsQuotes.start(document.getElementById('overlay-msg'), 'http://100.69.184.113:8092/api'); } catch (e) {}
     </script>
-    <script src="https://cdn.jsdelivr.net/npm/hls.js@1"></script>
+    <!-- Vendored locally (#23) so audiobook playback works offline + bundles into the APK shell. -->
+    <script src="vendor/hls.min.js"></script>
     <script src="player.js?v=46"></script>
 </body>
 </html>

@@ -79,6 +79,20 @@
             -webkit-tap-highlight-color: transparent;
             text-decoration: none;
         }
+        /* Offline state (#23): when the library is served from the local cache,
+           swap the brand wordmark for an "Offline" pill and tint the clock so
+           it's unmistakable the app is running without a backend. */
+        #offline-pill {
+            display: none;
+            align-items: center;
+            gap: 5px;
+            color: #ffd24a;
+            font-weight: 600;
+            letter-spacing: 0.3px;
+        }
+        body.offline #offline-pill { display: inline-flex; }
+        body.offline .brand { display: none; }
+        body.offline #status-clock { color: #ffd24a; }
         /* Brand wordmark — purple→pink→blue gradient sampled from the
            GreatReads launcher icon. Perfectly centred between the two pins. */
         .brand {
@@ -600,6 +614,7 @@
         <div class="status-bar-row1">
             <span id="status-clock"></span>
             <span class="brand">GreatReads</span>
+            <span id="offline-pill">📴 Offline</span>
             <span id="build-stamp"></span>
         </div>
         <div class="status-bar-row2">
@@ -877,6 +892,50 @@
             } catch (e) { return null; }
         }
 
+        // fetch() with a manual timeout. We deliberately use AbortController +
+        // setTimeout rather than AbortSignal.timeout() — the latter isn't
+        // supported in older Android WebViews and silently broke a previous
+        // offline attempt (#23). On a true offline launch fetch() rejects almost
+        // immediately; the timeout only guards a reachable-but-hanging server.
+        function fetchWithTimeout(url, ms, opts) {
+            const ctl = new AbortController();
+            const t = setTimeout(() => ctl.abort(), ms || 6000);
+            return fetch(url, Object.assign({}, opts || {}, { signal: ctl.signal }))
+                .finally(() => clearTimeout(t));
+        }
+
+        // Build a minimal book list from the IndexedDB `books` store so the
+        // library still renders with no backend (#23). Only ebooks we've
+        // downloaded (opened at least once) are here; title/author come from the
+        // metadata stored on cache (#54 A). Records cached before that land as
+        // "Untitled" and get backfilled on the next online open.
+        async function loadOfflineBooks() {
+            await dbReady; // don't race a not-yet-open DB on a fast offline launch
+            return new Promise((resolve) => {
+                if (!db) { resolve([]); return; }
+                try {
+                    const tx = db.transaction(['books'], 'readonly');
+                    const req = tx.objectStore('books').getAll();
+                    req.onsuccess = () => {
+                        const recs = req.result || [];
+                        resolve(recs.map(r => ({
+                            id: r.id,
+                            title: r.title || 'Untitled',
+                            author: r.author || '',
+                            formats: [r.format || 'epub'],
+                            mediaTypes: ['ebook'],
+                            _offline: true
+                        })));
+                    };
+                    req.onerror = () => resolve([]);
+                } catch (e) { resolve([]); }
+            });
+        }
+
+        function setOffline(off) {
+            document.body.classList.toggle('offline', !!off);
+        }
+
         async function loadBooks() {
             // Don't lazy-page while a search is active \u2014 search owns the result
             // set and infinite scroll would corrupt it.
@@ -891,7 +950,7 @@
                 // is off, so this is safe even without audiobooks configured.
                 const url = `${API_URL}/catalog?limit=${BATCH_SIZE}&offset=${currentOffset}`;
                 console.log('Fetching books from:', url);
-                const response = await fetch(url);
+                const response = await fetchWithTimeout(url, 6000);
                 if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
                 const data = await response.json();
                 const newBooks = data.books || [];
@@ -911,15 +970,33 @@
                 allBooks = homeBooks;
                 currentOffset = homeOffset;
 
+                setOffline(false);
                 displayBooks(allBooks, homeIsComplete);
             } catch (error) {
                 console.error('Error loading books:', error);
-                document.getElementById('content').innerHTML = `
-                    <div class="error">
-                        Failed to load books: ${error.message}<br>
-                        Check console for details.
-                    </div>
-                `;
+                // Backend unreachable. For the FIRST page, fall back to the
+                // locally cached library so the app still works offline (#23).
+                // Don't clobber an already-rendered grid when a later
+                // infinite-scroll page fails — just stop paging.
+                if (currentOffset === 0 && homeBooks.length === 0) {
+                    const offline = await loadOfflineBooks();
+                    setOffline(true);
+                    if (offline.length) {
+                        homeBooks = offline;
+                        allBooks = homeBooks;
+                        homeIsComplete = true;
+                        // Cached books carry no series metadata, so the grouped
+                        // Series/Saga grids would render empty — fall back to a
+                        // flat title list while offline.
+                        if (sortMode === 'series' || sortMode === 'saga') sortMode = 'title';
+                        displayBooks(allBooks, true);
+                    } else {
+                        document.getElementById('content').innerHTML =
+                            "<div class=\"error\">📴 You're offline and no books are downloaded yet.<br>"
+                            + "Open books while online to make them readable offline.</div>";
+                    }
+                }
+                homeIsComplete = true; // stop infinite-scroll attempts while unreachable
             } finally {
                 isLoading = false;
             }
@@ -1664,6 +1741,11 @@
 
         // IndexedDB for offline storage (schema MUST match reader.html)
         let db;
+        // Resolves once the IndexedDB open settles (success OR error), so the
+        // offline fallback doesn't race a not-yet-open DB on a fast offline
+        // launch and wrongly report "no books" (#23).
+        let _dbReadyResolve;
+        const dbReady = new Promise((r) => { _dbReadyResolve = r; });
         const cachedBookIds = new Set();
         function initDB() {
             // v3 (#54): additive — adds audio/ambient/cacheMeta stores for
@@ -1690,11 +1772,13 @@
             };
             request.onsuccess = (e) => {
                 db = e.target.result;
+                _dbReadyResolve(db);
                 refreshCachedIds();
                 // If books were already rendered before DB was ready,
                 // trigger cover loading now.
                 _lazyLoadCovers();
             };
+            request.onerror = () => { _dbReadyResolve(null); };
         }
 
         // Populate cachedBookIds so book covers can show a "downloaded" dot.
@@ -1828,6 +1912,14 @@
         document.addEventListener('visibilitychange', () => {
             if (!document.hidden) {
                 refreshCachedIds();
+                // If we fell back to the cached library while offline, try a
+                // fresh online load now that we're back (#23). loadBooks() will
+                // re-enter the offline path if still unreachable.
+                if (document.body.classList.contains('offline')) {
+                    homeBooks = []; allBooks = []; homeOffset = 0; currentOffset = 0;
+                    homeIsComplete = false;
+                    loadBooks();
+                }
                 ensureProgressBooksLoaded();
             }
         });

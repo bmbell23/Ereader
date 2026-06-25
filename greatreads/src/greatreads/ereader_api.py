@@ -395,10 +395,19 @@ def _record_reading_activity(book_key, item, prev, body):
                     rate = body.get('playbackRate')
                     rate = float(rate) if isinstance(rate, (int, float)) and rate > 0 else 1.0
                     minutes = (dsec / rate) / 60.0
-            wc = _gr_word_count_for(bk)
-            dprog = _progress_delta(item, prev)
-            if wc and dprog > 0:
-                words = int(round(dprog * wc))
+                    # Words from the SAME gated position advance, NOT raw
+                    # Δprogress (#56). progress == position/duration, so for real
+                    # listening words = (dsec/duration)*word_count is identical to
+                    # Δprogress*word_count — but a resume/correction jump (a large
+                    # dsec, already excluded by the gate above, or a transient
+                    # low-progress save that the resume snaps back) can't inflate
+                    # the word count the way the ungated Δprogress did.
+                    dur = body.get('duration')
+                    if not isinstance(dur, (int, float)) or dur <= 0:
+                        dur = (prev or {}).get('duration')
+                    wc = _gr_word_count_for(bk)
+                    if wc and isinstance(dur, (int, float)) and dur > 0:
+                        words = int(round((dsec / dur) * wc))
         else:
             ams, aw = body.get('activityMs'), body.get('activityWords')
             if isinstance(ams, (int, float)) and ams > 0:
