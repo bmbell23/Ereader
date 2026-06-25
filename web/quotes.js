@@ -1,20 +1,23 @@
 // Shared "loading quotes" screen (#55). While an ebook paginates or an
 // audiobook session spins up, show a random highlight the user has saved —
 // quote in italics with book / chapter / author below — instead of a bare
-// "Loading…" string. Used by both reader.html (.loading) and player.html
-// (#overlay-msg).
+// "Loading…" string. Used by reader.html (.loading), player.html (#overlay-msg),
+// web/index.html (#content .loading), and the GreatReads pages (#loading-state).
+//
+// Press-and-hold to keep reading (Instagram-stories style): while a pointer is
+// held down the rotation pauses AND — if the page's content finishes loading
+// mid-hold — the reveal is deferred until release, so a long quote isn't yanked
+// away. We watch the host element for the host's own "hide" (display:none /
+// .hidden / .d-none) via a MutationObserver and, while held, revert it and
+// replay it on release. This needs no cooperation from the host pages.
 //
 // Design notes:
 //  - Reads a localStorage cache FIRST so a quote paints instantly (even
-//    offline / before any network), then refreshes the cache in the background
-//    from /api/highlights?type=highlight for next time.
+//    offline), then refreshes from /api/highlights?type=highlight for next time.
 //  - Rotates every few seconds with a gentle cross-fade while loading lasts.
-//  - Falls back to a small set of boilerplate literary quotes ONLY when the
-//    user has no highlights of their own (cache empty AND fetch empty).
-//  - Theme-agnostic: the quote inherits the host element's color; meta uses
-//    opacity so it reads correctly on both the reader (light) and player (dark).
-//  - Auto-stops if the host gets hidden or its content is replaced (e.g. an
-//    error message), so callers don't have to stop() from every code path.
+//  - Falls back to boilerplate literary quotes ONLY when the user has none.
+//  - Theme-agnostic: quote inherits the host color; meta uses opacity.
+//  - Auto-stops if the host gets hidden or its content is replaced (error text).
 (function () {
     'use strict';
 
@@ -43,19 +46,27 @@
         var css = ''
             + '.grq{max-width:560px;width:86vw;margin:0 auto;padding:8px 4px;text-align:center;'
             + 'opacity:0;transition:opacity ' + FADE_MS + 'ms ease;'
-            + 'font-family:Georgia,"Times New Roman",serif;line-height:1.5;}'
+            + 'font-family:Georgia,"Times New Roman",serif;line-height:1.5;'
+            + '-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;'
+            + '-webkit-tap-highlight-color:transparent;}'
             + '.grq.grq-in{opacity:1;}'
+            + '.grq.grq-held{opacity:1 !important;}'
             + '.grq-cap{font-family:-apple-system,system-ui,sans-serif;font-style:normal;'
             + 'font-size:11px;letter-spacing:.14em;text-transform:uppercase;'
             + 'opacity:.5;margin-bottom:18px;}'
             + '.grq-text{font-style:italic;font-size:20px;margin:0 0 18px;'
             + 'display:-webkit-box;-webkit-line-clamp:9;-webkit-box-orient:vertical;overflow:hidden;}'
+            + '.grq.grq-held .grq-text{-webkit-line-clamp:30;}'
             + '.grq-meta{font-family:-apple-system,system-ui,sans-serif;font-style:normal;'
             + 'font-size:13px;opacity:.7;line-height:1.7;}'
             + '.grq-book{font-weight:600;}'
             + '.grq-chapter{opacity:.85;}'
             + '.grq-author{display:block;opacity:.7;margin-top:2px;}'
-            + '.grq-sep{opacity:.5;margin:0 7px;}';
+            + '.grq-sep{opacity:.5;margin:0 7px;}'
+            + '.grq-hint{font-family:-apple-system,system-ui,sans-serif;font-style:normal;'
+            + 'font-size:11px;letter-spacing:.06em;opacity:.32;margin-top:22px;'
+            + 'transition:opacity .3s ease;}'
+            + '.grq.grq-held .grq-hint{opacity:.55;}';
         var el = document.createElement('style');
         el.id = 'grq-style';
         el.textContent = css;
@@ -122,7 +133,9 @@
         var cap = isOwn ? '<div class="grq-cap">&#10022; From your highlights</div>' : '';
         return '<div class="grq">' + cap
             + '<blockquote class="grq-text">&ldquo;' + esc(q.text) + '&rdquo;</blockquote>'
-            + meta + '</div>';
+            + meta
+            + '<div class="grq-hint">Press &amp; hold to keep reading</div>'
+            + '</div>';
     }
 
     // Module state — only one loading screen is ever live at a time.
@@ -131,39 +144,51 @@
     var pool = [];
     var poolIsOwn = false;
     var idx = 0;
+    // Press-and-hold state.
+    var held = false;          // a pointer is currently held down
+    var pendingReveal = false; // content finished loading while held — reveal on release
+    var pendingHide = null;    // {class, style} captured from the host's deferred hide
+    var observer = null;
+    var catcher = null;        // full-screen transparent overlay that captures the hold
+
+    function isHidden(el) {
+        if (!el) return true;
+        if (el.classList.contains('d-none') || el.classList.contains('hidden')) return true;
+        if (el.style && el.style.display === 'none') return true;
+        try { return getComputedStyle(el).display === 'none'; } catch (_) { return false; }
+    }
 
     function stillValid() {
-        // Auto-stop if the host vanished, got hidden, or its content was
-        // replaced by something other than our quote (e.g. an error message).
-        // Covers all three host conventions: inline display:none (reader
-        // .loading), the .hidden class (player overlay-msg), and Bootstrap's
-        // .d-none (GreatReads #loading-state).
+        // Auto-stop if the host vanished or its content was replaced by something
+        // other than our quote (e.g. an error message). The hidden case is
+        // handled by the observer; checked here too as a backstop.
         return hostEl && hostEl.isConnected
-            && hostEl.style.display !== 'none'
-            && !hostEl.classList.contains('hidden')
-            && !hostEl.classList.contains('d-none')
+            && !isHidden(hostEl)
             && hostEl.querySelector('.grq');
     }
 
     function paint(q) {
         if (!hostEl) return;
         hostEl.innerHTML = quoteHTML(q, poolIsOwn);
+        var node = hostEl.querySelector('.grq');
+        if (held && node) node.classList.add('grq-held'); // keep expanded while reading
         // Next frame so the fade-in transition runs.
         requestAnimationFrame(function () {
-            var node = hostEl && hostEl.querySelector('.grq');
-            if (node) node.classList.add('grq-in');
+            var n = hostEl && hostEl.querySelector('.grq');
+            if (n) n.classList.add('grq-in');
         });
     }
 
     function rotate() {
-        if (!stillValid()) { stop(); return; }
+        if (held) return;               // paused while holding
+        if (!stillValid()) { teardown(); return; }
         if (!pool.length) return;
         var node = hostEl.querySelector('.grq');
         idx = (idx + 1) % pool.length;
         var next = pool[idx];
         if (node) {
             node.classList.remove('grq-in'); // fade out
-            setTimeout(function () { if (stillValid()) paint(next); }, FADE_MS);
+            setTimeout(function () { if (!held && stillValid()) paint(next); }, FADE_MS);
         } else {
             paint(next);
         }
@@ -177,38 +202,127 @@
         if (hostEl) paint(pool[0]);
     }
 
+    // ----- Press-and-hold -----
+    function onDown(e) {
+        if (!hostEl) return;
+        held = true;
+        if (timer) { clearInterval(timer); timer = null; } // pause rotation
+        // Capture the pointer so move/up keep targeting the catcher even if the
+        // finger drifts — without this, a tiny movement drops the hold.
+        if (catcher && e && e.pointerId != null) {
+            try { catcher.setPointerCapture(e.pointerId); } catch (_) {}
+        }
+        var node = hostEl.querySelector('.grq');
+        if (node) node.classList.add('grq-held');
+    }
+
+    function onUp() {
+        if (!held) return;
+        held = false;
+        var node = hostEl && hostEl.querySelector('.grq');
+        if (node) node.classList.remove('grq-held');
+        if (pendingReveal) {
+            // Content loaded while we were holding — now actually reveal it.
+            applyPendingHide();
+            teardown();
+        } else if (hostEl && !timer) {
+            timer = setInterval(rotate, ROTATE_MS); // resume rotation
+        }
+    }
+
+    function applyPendingHide() {
+        if (!pendingHide || !hostEl) return;
+        if (pendingHide.class === null) hostEl.removeAttribute('class');
+        else hostEl.setAttribute('class', pendingHide.class);
+        if (pendingHide.style === null) hostEl.removeAttribute('style');
+        else hostEl.setAttribute('style', pendingHide.style);
+        pendingHide = null;
+    }
+
+    // The host page just changed class/style. If that hid the loading screen:
+    //  - while held → remember it and revert so the quote stays up until release.
+    //  - otherwise  → it's a normal reveal; tear down.
+    function onMutations(records) {
+        if (!hostEl || !isHidden(hostEl)) return;
+        if (held) {
+            pendingReveal = true;
+            pendingHide = { class: hostEl.getAttribute('class'), style: hostEl.getAttribute('style') };
+            for (var i = 0; i < records.length; i++) {
+                var r = records[i];
+                if (r.attributeName === 'class' || r.attributeName === 'style') {
+                    if (r.oldValue === null) hostEl.removeAttribute(r.attributeName);
+                    else hostEl.setAttribute(r.attributeName, r.oldValue);
+                }
+            }
+        } else {
+            teardown();
+        }
+    }
+
     function start(el, apiUrl) {
         if (!el) return;
         // Idempotent: re-starting on the same already-running host is a no-op so
         // repeated loadPart()/loading calls don't reset the rotation.
         if (hostEl === el && timer) return;
-        stop();
+        teardown();
         injectStyle();
         hostEl = el;
         hostEl.classList.remove('hidden');
         hostEl.style.display = '';
 
         var cached = readCache();
-        if (cached.length) {
-            setPool(cached, true);
-        } else {
-            setPool(BOILERPLATE, false);
-        }
+        if (cached.length) setPool(cached, true);
+        else setPool(BOILERPLATE, false);
 
-        // Refresh in the background; if it's the first-ever load (we showed
-        // boilerplate) and real highlights come back, swap to them.
+        // Refresh in the background; if we showed boilerplate and real highlights
+        // come back, swap to them.
         refreshCache(apiUrl, function (fresh) {
             if (fresh && fresh.length && !poolIsOwn) setPool(fresh, true);
         });
 
+        // Watch the host for the page's own hide so press-and-hold can defer it.
+        try {
+            observer = new MutationObserver(onMutations);
+            observer.observe(hostEl, { attributes: true, attributeOldValue: true, attributeFilter: ['class', 'style'] });
+        } catch (_) { observer = null; }
+
+        // Full-screen, transparent catcher so press-and-hold works no matter
+        // where you tap, and touch-action:none stops the browser from stealing
+        // the touch for scrolling — which used to fire pointercancel on the
+        // slightest finger movement and drop the hold. The quote shows through
+        // it; nothing else is interactive during the (brief) load anyway.
+        catcher = document.createElement('div');
+        catcher.id = 'grq-hold';
+        catcher.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;'
+            + 'z-index:2147483646;background:transparent;touch-action:none;';
+        catcher.addEventListener('pointerdown', onDown);
+        catcher.addEventListener('pointerup', onUp);
+        catcher.addEventListener('pointercancel', onUp);
+        (document.body || document.documentElement).appendChild(catcher);
+
         timer = setInterval(rotate, ROTATE_MS);
     }
 
+    // Public stop. While held, defer the actual teardown until release so a
+    // host that hides + stops mid-hold (e.g. the player's setMsg('')) still
+    // keeps the quote on screen until the user lets go.
     function stop() {
+        if (held) { pendingReveal = true; return; }
+        teardown();
+    }
+
+    function teardown() {
         if (timer) { clearInterval(timer); timer = null; }
-        hostEl = null;
-        pool = [];
-        idx = 0;
+        if (observer) { try { observer.disconnect(); } catch (_) {} observer = null; }
+        if (catcher) {
+            try { catcher.removeEventListener('pointerdown', onDown); } catch (_) {}
+            try { catcher.removeEventListener('pointerup', onUp); } catch (_) {}
+            try { catcher.removeEventListener('pointercancel', onUp); } catch (_) {}
+            try { if (catcher.parentNode) catcher.parentNode.removeChild(catcher); } catch (_) {}
+            catcher = null;
+        }
+        hostEl = null; pool = []; idx = 0;
+        held = false; pendingReveal = false; pendingHide = null;
     }
 
     window.GreatReadsQuotes = { start: start, stop: stop };
