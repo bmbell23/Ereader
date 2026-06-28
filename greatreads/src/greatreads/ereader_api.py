@@ -424,19 +424,20 @@ def _record_reading_activity(book_key, item, prev, body):
                     rate = body.get('playbackRate')
                     rate = float(rate) if isinstance(rate, (int, float)) and rate > 0 else 1.0
                     minutes = (dsec / rate) / 60.0
-                    # Words from the SAME gated position advance, NOT raw
-                    # Δprogress (#56). progress == position/duration, so for real
-                    # listening words = (dsec/duration)*word_count is identical to
-                    # Δprogress*word_count — but a resume/correction jump (a large
-                    # dsec, already excluded by the gate above, or a transient
-                    # low-progress save that the resume snaps back) can't inflate
-                    # the word count the way the ungated Δprogress did.
+                    # Time counts on every forward pass (re-listening IS listening),
+                    # but WORDS are credited only for NET-NEW ground past the furthest
+                    # point ever reached (#79). Re-listening an already-heard chapter →
+                    # new_ground 0 → 0 words, while minutes still accrue. The
+                    # high-water-mark (maxPosition) is maintained in put_progress.
+                    prior_max = (prev or {}).get('maxPosition')
+                    prior_max = float(prior_max) if isinstance(prior_max, (int, float)) else pos_prev
+                    new_ground = max(0.0, float(pos_now) - prior_max)
                     dur = body.get('duration')
                     if not isinstance(dur, (int, float)) or dur <= 0:
                         dur = (prev or {}).get('duration')
                     wc = _gr_word_count_for(bk)
                     if wc and isinstance(dur, (int, float)) and dur > 0:
-                        words = int(round((dsec / dur) * wc))
+                        words = int(round((new_ground / dur) * wc))
         else:
             ams, aw = body.get('activityMs'), body.get('activityWords')
             if isinstance(ams, (int, float)) and ams > 0:
@@ -449,6 +450,13 @@ def _record_reading_activity(book_key, item, prev, body):
                 dprog = _progress_delta(item, prev)
                 if wc and dprog > 0:
                     words = int(round(dprog * wc))
+            # Re-read HWM gate (#79): credit ebook words only when this flush advanced
+            # past the furthest progress ever reached; re-reading already-read pages
+            # (end-progress at/under the high-water-mark) counts time only — like audio.
+            prior_max_p = (prev or {}).get('maxProgress')
+            cur_p = item.get('progress')
+            if isinstance(prior_max_p, (int, float)) and isinstance(cur_p, (int, float)) and cur_p <= prior_max_p:
+                words = 0
             # Sanity gate (#59): a client pagination race — totalPages momentarily 1
             # before EPUB pagination settles — makes words-per-page equal the WHOLE
             # book, accruing thousands of words against ~no real page time. Drop the
@@ -2775,6 +2783,25 @@ async def put_progress(book_id, request: Request):
     with _progress_lock:
         data = _load_progress()
         prev = data.get(str(book_id))     # snapshot BEFORE overwrite — for activity deltas (#30)
+        # High-water-mark of the furthest audio position reached (#79). Monotonic —
+        # carried forward and never decreased — so re-listening already-heard content
+        # credits no new words (only time). Audio-only; absent for ebooks.
+        if item.get('position') is not None:
+            try:
+                _cur = float(item['position'])
+                _pm = (prev or {}).get('maxPosition')
+                item['maxPosition'] = max(_cur, float(_pm)) if isinstance(_pm, (int, float)) else _cur
+            except (TypeError, ValueError):
+                pass
+        # Ebook analog of maxPosition: monotonic furthest progress (0..1) reached, so
+        # re-reading already-read pages credits no new words, only time (#79).
+        if item.get('progress') is not None:
+            try:
+                _cp = float(item['progress'])
+                _pmp = (prev or {}).get('maxProgress')
+                item['maxProgress'] = max(_cp, float(_pmp)) if isinstance(_pmp, (int, float)) else _cp
+            except (TypeError, ValueError):
+                pass
         data[str(book_id)] = item
         _save_progress(data)
     # Reflect the % straight into GreatReads (read.current_percent) — no sync job.

@@ -837,8 +837,13 @@ async function fetchAllBookmarks() {
         for (let i = 0; i < res.length; i++) {
             if (!res[i].ok) continue;
             const data = await res[i].json();
-            const origin = i < 2 ? 'audio' : 'ebook';
-            for (const b of (data.items || [])) out.push(normBookmark(b, origin));
+            for (const b of (data.items || [])) {
+                // Audio view: only audio-origin bookmarks (#80). mediaType is the
+                // reliable discriminant — also catches audio bookmarks cross-keyed
+                // under the linked ebook id; ebook bookmarks (mediaType ''/absent) drop.
+                if (b.mediaType !== 'audiobook') continue;
+                out.push(normBookmark(b, 'audio'));
+            }
         }
     } catch (_) {}
     // Newest / furthest-progress first.
@@ -877,44 +882,32 @@ async function renderBookmarks() {
     const BM_ICON_MANUAL = '<img src="assets/bookmark.png" style="width:13px;height:13px;opacity:0.7;vertical-align:middle;margin-right:5px;" aria-hidden="true">';
     const BM_ICON_AUTO   = '<img src="assets/bookmark.png" style="width:13px;height:13px;filter:invert(28%) sepia(83%) saturate(1700%) hue-rotate(258deg) brightness(90%);vertical-align:middle;margin-right:5px;" aria-hidden="true">';
 
-    const manual = items.filter(n => n.type !== 'auto-bookmark');
-    const auto   = items.filter(n => n.type === 'auto-bookmark');
-
-    function renderSection(sectionItems, sectionLabel, bmIcon) {
-        if (!sectionItems.length) return;
-        const hdr = document.createElement('div');
-        hdr.className = 'bm-sec';
-        hdr.textContent = sectionLabel;
-        list.appendChild(hdr);
-        const total = bookTotal();
-        for (const n of sectionItems) {
-            const row = document.createElement('div');
-            row.className = 'bm-row';
-            const main = document.createElement('div');
-            main.className = 'bm-main';
-            const label = document.createElement('div');
-            label.className = 'bm-label';
-            const txt = (n.chapter || n.text || 'Bookmark').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-            label.innerHTML = bmIcon + txt;
-            const sub = document.createElement('div');
-            sub.className = 'bm-sub';
-            const pctTxt = Math.round((n.percent || 0) * 100) + '%';
-            const timeTxt = (n.origin === 'audio' && n.pos != null) ? fmt(n.pos)
-                            : fmt((n.percent || 0) * total);
-            const originIcon = n.origin === 'ebook' ? ICON_EBOOK : ICON_AUDIO;
-            sub.innerHTML = originIcon + ' ' + pctTxt + ' · ' + timeTxt;
-            main.appendChild(label); main.appendChild(sub);
-            const del = document.createElement('button');
-            del.className = 'bm-del'; del.textContent = '×'; del.title = 'Delete';
-            del.addEventListener('click', (e) => { e.stopPropagation(); deleteBookmark(n.id); });
-            row.appendChild(main); row.appendChild(del);
-            row.addEventListener('click', () => seekToBookmark(n));
-            list.appendChild(row);
-        }
+    // One furthest-first list — manual + auto merged (already sorted % desc), no
+    // section split, one compact row each (#80).
+    const total = bookTotal();
+    for (const n of items) {
+        const bmIcon = (n.type === 'auto-bookmark') ? BM_ICON_AUTO : BM_ICON_MANUAL;
+        const row = document.createElement('div');
+        row.className = 'bm-row';
+        const main = document.createElement('div');
+        main.className = 'bm-main';
+        const label = document.createElement('div');
+        label.className = 'bm-label';
+        const txt = (n.chapter || n.text || 'Bookmark').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        label.innerHTML = bmIcon + txt;
+        const sub = document.createElement('div');
+        sub.className = 'bm-sub';
+        const pctTxt = Math.round((n.percent || 0) * 100) + '%';
+        const timeTxt = (n.pos != null) ? fmt(n.pos) : fmt((n.percent || 0) * total);
+        sub.innerHTML = pctTxt + ' · ' + timeTxt;
+        main.appendChild(label); main.appendChild(sub);
+        const del = document.createElement('button');
+        del.className = 'bm-del'; del.textContent = '×'; del.title = 'Delete';
+        del.addEventListener('click', (e) => { e.stopPropagation(); deleteBookmark(n.id); });
+        row.appendChild(main); row.appendChild(del);
+        row.addEventListener('click', () => seekToBookmark(n));
+        list.appendChild(row);
     }
-
-    renderSection(manual, 'Bookmarks', BM_ICON_MANUAL);
-    renderSection(auto,   'Auto-saved', BM_ICON_AUTO);
 }
 
 function openBookmarks() { $('bm-backdrop').classList.add('open'); renderBookmarks(); }

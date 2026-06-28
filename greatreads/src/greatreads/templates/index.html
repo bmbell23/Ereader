@@ -22,6 +22,15 @@
                      -1px  1px 0 rgba(255, 255, 255, 0.95),  1px  1px 0 rgba(255, 255, 255, 0.95),
                       0    0   3px rgba(255, 255, 255, 0.9);
     }
+    /* Today's words (left) and the daily goal (right), inside the bar (#81). */
+    .dg-words {
+        position: absolute; top: 0; height: 100%; display: flex; align-items: center;
+        font-size: 0.62rem; font-weight: 700; color: #1a1d20; pointer-events: none; padding: 0 6px;
+        text-shadow: -1px -1px 0 rgba(255, 255, 255, 0.95),  1px -1px 0 rgba(255, 255, 255, 0.95),
+                     -1px  1px 0 rgba(255, 255, 255, 0.95),  1px  1px 0 rgba(255, 255, 255, 0.95);
+    }
+    .dg-words-left  { left: 0; }
+    .dg-words-right { right: 0; }
     /* Near-square foldables (e.g. Pixel Fold unfolded, ~5:6–6:5): the in-progress
        cards are otherwise tall enough that the bottom one clips. Compact covers +
        spacing so the list fits. Tall phones (~0.46) and 4:3/3:4 tablets are outside
@@ -359,7 +368,8 @@ async function loadDailyGoals() {
         const today = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
         const dailyWords = (activity && activity.daily_words) || {};
         const dailyMinutes = (activity && activity.daily_minutes) || {};
-        const FMTS = [['Ebook', 'ebook_wpd'], ['Audio', 'audio_wpd'], ['Physical', 'physical_wpd']];
+        // Order: Audio, then Ebook, then Physical (#81).
+        const FMTS = [['Audio', 'audio_wpd'], ['Ebook', 'ebook_wpd'], ['Physical', 'physical_wpd']];
         const rows = FMTS.map(([fmt, key]) => {
             const goal = (speeds && speeds[key]) || 0;
             if (goal <= 0) return '';
@@ -368,6 +378,7 @@ async function loadDailyGoals() {
             const pct = Math.round(words / goal * 100);
             const s = getMediaStyle(fmt);
             const done = pct >= 100;
+            // Inside the bar: today's words (left), % (center), goal words (right) — #81.
             return `
                 <div class="d-flex align-items-center gap-2 my-1"
                      title="${fmt}: ${words.toLocaleString()} / ${goal.toLocaleString()} words today">
@@ -375,7 +386,9 @@ async function loadDailyGoals() {
                     <div class="dg-track">
                         <div class="dg-fill${done ? ' dg-fill-complete' : ''}"
                              style="width:${Math.min(pct, 100)}%; background:${s.color};"></div>
+                        <span class="dg-words dg-words-left">${fmtCount(words)}</span>
                         <span class="dg-pct">${pct}%</span>
+                        <span class="dg-words dg-words-right">${fmtCount(goal)}</span>
                     </div>
                     <span class="text-muted" style="min-width:3.6rem; text-align:right; font-size:0.76rem;">${fmtMinutes(minutes)}</span>
                 </div>`;
