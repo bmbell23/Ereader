@@ -137,6 +137,65 @@ function applySpeed(r) {
     updateUI();
 }
 
+// ---------- Local audio cache (read side, #54) ----------
+// Plays an in-progress audiobook from the file the library pre-downloaded into
+// IndexedDB (EreaderDB v3) — no ABS /play session, no streaming — so it's
+// instant and works in a dead zone. Single-file books only for now; multi-file
+// cleanly falls through to streaming. Best-effort: any miss returns null.
+let _audioDB = null, _audioDBPromise = null;
+function openAudioDB() {
+    if (_audioDB) return Promise.resolve(_audioDB);
+    if (_audioDBPromise) return _audioDBPromise;
+    // Open WITHOUT a version so we never trigger an upgrade or create an empty
+    // store-less DB that would break the library's schema (the library/reader
+    // own EreaderDB's v3 schema; we're a read-only guest here).
+    _audioDBPromise = new Promise((resolve) => {
+        let req;
+        try { req = indexedDB.open('EreaderDB'); } catch (_) { return resolve(null); }
+        req.onsuccess = (e) => { _audioDB = e.target.result; resolve(_audioDB); };
+        req.onerror = () => resolve(null);
+    });
+    return _audioDBPromise;
+}
+function _idbGet(store, key) {
+    return openAudioDB().then((dbh) => new Promise((resolve) => {
+        if (!dbh || !dbh.objectStoreNames.contains(store)) return resolve(null);
+        try {
+            const r = dbh.transaction([store], 'readonly').objectStore(store).get(key);
+            r.onsuccess = () => resolve(r.result || null);
+            r.onerror = () => resolve(null);
+        } catch (_) { resolve(null); }
+    }));
+}
+async function getCachedManifest(absId) {
+    const rec = await _idbGet('cacheMeta', 'manifest:' + absId);
+    return rec && rec.manifest ? rec.manifest : null;
+}
+async function getCachedTrackBlob(absId, ino) {
+    const rec = await _idbGet('audio', absId + ':' + ino);
+    return rec && rec.blob ? rec.blob : null;
+}
+// Build a /play-shaped session from the local cache for a SINGLE-FILE audiobook.
+// Returns null if not fully cached or multi-file (caller then streams).
+async function loadLocalSession(absId) {
+    try {
+        const manifest = await getCachedManifest(absId);
+        if (!manifest) return null;
+        const tracks = manifest.tracks || [];
+        if (tracks.length !== 1) return null;          // single-file only (for now)
+        const t = tracks[0];
+        const blob = await getCachedTrackBlob(absId, t.ino);
+        if (!blob) return null;
+        return {
+            id: null,                                   // no ABS session → sync/close no-op
+            audioTracks: [{ contentUrl: URL.createObjectURL(blob) }],
+            chapters: manifest.chapters || [],
+            duration: t.duration || manifest.totalDuration || 0,
+            currentTime: 0, startTime: 0, _local: true,
+        };
+    } catch (_) { return null; }
+}
+
 async function init() {
     $('title').textContent = TITLE;
     $('author').textContent = AUTHOR;
@@ -219,19 +278,23 @@ async function loadPart(i, seekTo, autoplay) {
     if (sid && !closed) closePartSession(sid);
     curPart = i;
     setLoading();
-    let s;
-    try {
-        const res = await fetch(`${API_URL}/audiobooks/${encodeURIComponent(PARTS[i].absId)}/play`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({}),
-        });
-        if (!res.ok) throw new Error('HTTP ' + res.status);
-        s = await res.json();
-    } catch (e) {
-        console.error('play failed', e);
-        setMsg('Could not start playback. Is Audiobookshelf reachable?');
-        return;
+    // Local-first (#54): if the library pre-downloaded this audiobook, play from
+    // the on-device file — no ABS /play, no streaming, works in a dead zone.
+    let s = await loadLocalSession(PARTS[i].absId);
+    if (!s) {
+        try {
+            const res = await fetch(`${API_URL}/audiobooks/${encodeURIComponent(PARTS[i].absId)}/play`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({}),
+            });
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            s = await res.json();
+        } catch (e) {
+            console.error('play failed', e);
+            setMsg('Could not start playback. Is Audiobookshelf reachable?');
+            return;
+        }
     }
     session = s;
     sid = s.id;

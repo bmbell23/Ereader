@@ -2625,9 +2625,143 @@
                 await _waitHomeCovers();
             } catch (_) {}
             hideAppLoading();
+            // Progress is loaded now, so we know the in-progress set. Ask for
+            // durable storage, then pre-cache every IP asset for offline (once),
+            // a beat after the overlay lifts so it never competes with the
+            // foreground. Ebooks first (small), then audio (large) last.
+            try { if (navigator.storage && navigator.storage.persist) await navigator.storage.persist(); } catch (_) {}
+            setTimeout(async () => {
+                try { await precacheInProgressEbooks(); } catch (_) {}
+                try { await precacheInProgressAudio(); } catch (_) {}
+            }, 1500);
         })();
         // Hard cap — lift no matter what (slow/hung network, etc.).
         setTimeout(hideAppLoading, 4500);
+
+        // ---- Offline pre-cache for in-progress books (#54 #1) ----
+        // Stash each in-progress book's EPUB into the same `books` store the
+        // reader reads from, so opening it in a dead zone works with no network.
+        // Small files; sequential + skip-if-cached so it never hogs bandwidth or
+        // storage. Covers are already cached by the overlay's eager-load; progress
+        // lives in localStorage (gr.resume) already. Audio is out of scope here.
+        function _hasCachedBook(id) {
+            return new Promise((resolve) => {
+                if (!db) return resolve(false);
+                try {
+                    const r = db.transaction(['books'], 'readonly').objectStore('books').get(id);
+                    r.onsuccess = () => resolve(!!(r.result && r.result.blob));
+                    r.onerror = () => resolve(false);
+                } catch (_) { resolve(false); }
+            });
+        }
+        function _putCachedBook(id, fmt, blob, meta) {
+            // Merge over any existing record so we never clobber title/author the
+            // reader annotated. Mirrors reader.html putCachedBookBlob's shape.
+            return new Promise((resolve) => {
+                if (!db) return resolve(false);
+                try {
+                    const tx = db.transaction(['books'], 'readwrite');
+                    const store = tx.objectStore('books');
+                    const g = store.get(id);
+                    g.onsuccess = () => {
+                        const rec = Object.assign({}, g.result || {},
+                            { id, format: fmt, blob, cached: new Date() });
+                        if (meta && meta.title != null) rec.title = meta.title;
+                        if (meta && meta.author != null) rec.author = meta.author;
+                        store.put(rec);
+                    };
+                    tx.oncomplete = () => resolve(true);
+                    tx.onerror = () => resolve(false);
+                } catch (_) { resolve(false); }
+            });
+        }
+        async function precacheInProgressEbooks() {
+            // In-progress = 0 < progress < 1 (skip finished + not-started).
+            const ipIds = [];
+            progressMap.forEach((rec, id) => {
+                if (rec && rec.progress > 0 && rec.progress < 1) ipIds.push(String(id));
+            });
+            for (const id of ipIds) {
+                try {
+                    const book = homeBooks.find(b => String(b.id) === id);
+                    if (!book) continue;
+                    const fmts = (book.formats || []).map(f => String(f).toLowerCase());
+                    if (!fmts.includes('epub')) continue;          // ebook-format only
+                    if (await _hasCachedBook(id)) continue;        // once only
+                    const r = await fetch(`${API_URL}/ebooks/${encodeURIComponent(id)}/download?format=epub`);
+                    if (!r.ok) continue;
+                    const blob = await r.blob();
+                    await _putCachedBook(id, 'epub', blob, { title: book.title, author: book.author });
+                } catch (_) { /* try again on a later open */ }
+            }
+        }
+        // ---- Audio store helpers (shared EreaderDB v3 `audio`/`cacheMeta`) ----
+        function _trackKey(absId, ino) { return absId + ':' + ino; }
+        function _hasCachedTrack(absId, ino) {
+            return new Promise((resolve) => {
+                if (!db) return resolve(false);
+                try {
+                    const r = db.transaction(['audio'], 'readonly').objectStore('audio').get(_trackKey(absId, ino));
+                    r.onsuccess = () => resolve(!!(r.result && r.result.blob));
+                    r.onerror = () => resolve(false);
+                } catch (_) { resolve(false); }
+            });
+        }
+        function _idbPutAudio(store, value) {
+            return new Promise((resolve) => {
+                if (!db) return resolve(false);
+                try {
+                    const tx = db.transaction([store], 'readwrite');
+                    tx.objectStore(store).put(value);
+                    tx.oncomplete = () => resolve(true);
+                    tx.onerror = () => resolve(false);
+                    tx.onabort = () => resolve(false);
+                } catch (_) { resolve(false); }
+            });
+        }
+        // Download each in-progress AUDIOBOOK's file(s) + manifest so the player
+        // can play fully from local storage. The manifest (tiny) is cached in
+        // `cacheMeta` so the player can rebuild without network; tracks go in
+        // `audio`. Sequential + skip-if-cached + storage-checked so it runs once
+        // and can't blow the quota / evict other caches.
+        async function precacheInProgressAudio() {
+            const ipAbs = [];
+            audioProgressByAbsId.forEach((rec, absId) => {
+                if (rec && rec.progress > 0 && rec.progress < 1) ipAbs.push(String(absId));
+            });
+            for (const absId of ipAbs) {
+                try {
+                    const mr = await fetch(`${API_URL}/audiobooks/${encodeURIComponent(absId)}/tracks`);
+                    if (!mr.ok) continue;
+                    const manifest = await mr.json();
+                    await _idbPutAudio('cacheMeta', { id: 'manifest:' + absId, manifest, cachedAt: Date.now() });
+                    const tracks = manifest.tracks || [];
+                    // Storage guard: only start a big download if it'll actually fit.
+                    const need = tracks.reduce((s, t) => s + (t.size || 0), 0);
+                    if (navigator.storage && navigator.storage.estimate) {
+                        try {
+                            const est = await navigator.storage.estimate();
+                            const free = (est.quota || 0) - (est.usage || 0);
+                            if (need > 0 && free > 0 && need > free * 0.9) {
+                                console.warn(`[precache] skipping audio ${absId}: need ${(need/1e6)|0}MB, free ~${(free/1e6)|0}MB`);
+                                continue;
+                            }
+                        } catch (_) {}
+                    }
+                    for (const t of tracks) {
+                        if (await _hasCachedTrack(absId, t.ino)) continue;   // once only
+                        const r = await fetch(t.url);
+                        if (!r.ok) continue;
+                        const blob = await r.blob();
+                        await _idbPutAudio('audio', {
+                            id: _trackKey(absId, t.ino), absId, ino: t.ino, blob,
+                            size: blob.size, mime: blob.type || t.mime || 'audio/mpeg',
+                            cachedAt: Date.now(),
+                        });
+                    }
+                } catch (_) { /* try again on a later open */ }
+            }
+        }
 
         // Deep-link entry for the unified menu: open the Highlights/Bookmarks
         // overlay directly when arriving from a GreatReads navbar link
