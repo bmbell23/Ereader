@@ -8,9 +8,9 @@
        static/css/style.css (reused from the gold completion glow). */
     .dg-track { position: relative; flex: 1; height: 15px; background: #e9ecef; border-radius: 8px; }
     .dg-fill  { position: absolute; left: 0; top: 0; height: 100%; border-radius: 8px; transition: width .4s ease; }
+    /* Completed bars keep their format color; the gold is just a glow behind it. */
     .dg-fill-complete {
-        background: linear-gradient(135deg, #ffd700 0%, #ffb347 100%);
-        box-shadow: 0 0 10px rgba(255, 215, 0, 0.7);
+        box-shadow: 0 0 10px rgba(255, 215, 0, 0.75);
         animation: golden-shimmer 2s ease-in-out infinite alternate;
     }
     .dg-pct {
@@ -21,6 +21,28 @@
         text-shadow: -1px -1px 0 rgba(255, 255, 255, 0.95),  1px -1px 0 rgba(255, 255, 255, 0.95),
                      -1px  1px 0 rgba(255, 255, 255, 0.95),  1px  1px 0 rgba(255, 255, 255, 0.95),
                       0    0   3px rgba(255, 255, 255, 0.9);
+    }
+    /* Near-square foldables (e.g. Pixel Fold unfolded, ~5:6–6:5): the in-progress
+       cards are otherwise tall enough that the bottom one clips. Compact covers +
+       spacing so the list fits. Tall phones (~0.46) and 4:3/3:4 tablets are outside
+       this window, so they're untouched (same gating as the #60 player fix). */
+    /* Near-square foldables. The two screen resolutions are the same panel rotated,
+       so they differ only by which side is longer (~3% in height) — vh can't tell
+       them apart. Size the cover by ORIENTATION instead: the taller portrait has
+       room for larger covers; the shorter landscape needs smaller ones to still fit
+       3 cards without scrolling. Tall phones (<5/6) and 4:3 tablets (>6/5) are
+       outside this window and untouched. */
+    @media (min-aspect-ratio: 5/6) and (max-aspect-ratio: 1/1) {
+        /* portrait foldable (taller) */
+        #ip-list { gap: 0.6rem !important; }
+        .ip-card .ip-cover { height: 180px !important; width: 120px !important; }
+        .ip-card .mb-2 { margin-bottom: 0.35rem !important; }
+    }
+    @media (min-aspect-ratio: 1/1) and (max-aspect-ratio: 6/5) {
+        /* landscape foldable (shorter) — smaller so the list still fits */
+        #ip-list { gap: 0.5rem !important; }
+        .ip-card .ip-cover { height: 158px !important; width: 105px !important; }
+        .ip-card .mb-2 { margin-bottom: 0.3rem !important; }
     }
 </style>
 <!-- High-level stats first (the 5 counts + this-year momentum), tight padding (#65) -->
@@ -352,7 +374,7 @@ async function loadDailyGoals() {
                     <i class="fas fa-${s.icon}" style="color:${s.color}; width:1.25rem; text-align:center;"></i>
                     <div class="dg-track">
                         <div class="dg-fill${done ? ' dg-fill-complete' : ''}"
-                             style="width:${Math.min(pct, 100)}%;${done ? '' : ` background:${s.color};`}"></div>
+                             style="width:${Math.min(pct, 100)}%; background:${s.color};"></div>
                         <span class="dg-pct">${pct}%</span>
                     </div>
                     <span class="text-muted" style="min-width:3.6rem; text-align:right; font-size:0.76rem;">${fmtMinutes(minutes)}</span>
@@ -464,10 +486,10 @@ async function loadCurrentlyReading() {
             }
 
             const el = document.createElement('div');
-            el.className = 'd-flex gap-3';
+            el.className = 'd-flex gap-3 ip-card';
             el.innerHTML = `
                 <div class="flex-shrink-0">
-                    <div style="position: relative; height: 200px; width: 133px; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.15); background: #f8f9fa; display: flex; align-items: center; justify-content: center; border-left: 4px solid ${mediaStyle.color};">
+                    <div class="ip-cover" style="position: relative; height: 200px; width: 133px; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.15); background: #f8f9fa; display: flex; align-items: center; justify-content: center; border-left: 4px solid ${mediaStyle.color};">
                         ${book.cover ?
                             `<img src="${coverUrl}" class="img-fluid" alt="${book.title}" style="width: 100%; height: 100%; object-fit: cover;" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
                              <div style="display: none; width: 100%; height: 100%; align-items: center; justify-content: center; color: #adb5bd;"><i class="fas fa-book fa-3x"></i></div>` :
