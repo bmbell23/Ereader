@@ -43,9 +43,44 @@
     <!-- Custom CSS -->
     <link href="{{ url_for('static', path='/css/style.css') }}" rel="stylesheet">
 
+    <!-- App loading overlay (#28): a quote screen over the cold/inter-page load
+         so navigation never flashes black, and data-heavy pages can hold it
+         until their content is ready. -->
+    <style>
+        .app-loading {
+            position: fixed; inset: 0; z-index: 20000;
+            background: #121212; color: #fff;
+            display: flex; align-items: center; justify-content: center;
+            text-align: center; padding: 24px;
+            transition: opacity .25s ease;
+        }
+        .app-loading-brand {
+            font-weight: 700; font-size: 22px; margin-bottom: 14px;
+            background: linear-gradient(90deg, #0066CC, #FF6600);
+            -webkit-background-clip: text; background-clip: text; color: transparent;
+        }
+        .app-loading-quote {
+            color: #bbb; font-style: italic; max-width: 520px;
+            line-height: 1.5; font-size: 15px;
+        }
+    </style>
+
     {% block extra_head %}{% endblock %}
 </head>
 <body>
+    <div id="app-loading" class="app-loading">
+        <div>
+            <div class="app-loading-brand">GreatReads</div>
+            <div class="app-loading-quote">Loading…</div>
+        </div>
+    </div>
+    <script>
+      // Independent safety net: never trap the user on the loading screen.
+      setTimeout(function () {
+          var o = document.getElementById('app-loading');
+          if (o) o.style.display = 'none';
+      }, 8000);
+    </script>
     <!-- Navigation -->
     {% if current_user %}
     <nav class="bookish-header" id="grNav">
@@ -320,6 +355,35 @@
             }
             if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', go);
             else go();
+        })();
+
+        // App loading overlay lift (#28). Quotes show in the full-screen overlay
+        // too; it lifts on DOMContentLoaded — unless the page set window.__pageReady
+        // to a promise (e.g. stats waiting on its numbers), in which case we hold
+        // until that resolves. Capped so it can never trap the user.
+        (function () {
+            var el = document.getElementById('app-loading');
+            if (!el) return;
+            var q = el.querySelector('.app-loading-quote');
+            if (q && window.GreatReadsQuotes && typeof GR_EREADER_API !== 'undefined') {
+                try { GreatReadsQuotes.start(q, GR_EREADER_API); } catch (e) {}
+            }
+            var done = false;
+            function hide() {
+                if (done) return; done = true;
+                if (window.GreatReadsQuotes) { try { GreatReadsQuotes.stop(); } catch (e) {} }
+                el.style.opacity = '0';
+                setTimeout(function () { el.style.display = 'none'; }, 250);
+            }
+            window.hideAppLoading = hide;
+            function lift() {
+                var ready = (window.__pageReady && typeof window.__pageReady.then === 'function')
+                    ? window.__pageReady : Promise.resolve();
+                var cap = new Promise(function (r) { setTimeout(r, 4500); });
+                Promise.race([ready, cap]).then(hide);
+            }
+            if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', lift);
+            else lift();
         })();
     </script>
 

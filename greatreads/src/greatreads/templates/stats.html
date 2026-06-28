@@ -2224,10 +2224,17 @@ function renderGoalChart() {
     });
 }
 
+// Hold the app loading overlay (#28) until the stats numbers are actually in,
+// so the page never shows empty/zeroed stats and then pops. Set synchronously
+// so base.html's lift sees it; resolved once the primary stats have loaded.
+let _statsReadyResolve;
+window.__pageReady = new Promise((r) => { _statsReadyResolve = r; });
+
 document.addEventListener('DOMContentLoaded', async function() {
     // Load chart preference first, then load stats
     await loadChartPreference();
     await loadStats();
+    if (_statsReadyResolve) _statsReadyResolve();   // numbers are in — lift overlay
     await loadReadingActivity();   // live reading time/speed (#30) — independent of the year/month filter
     loadGoals();                   // daily goal calendar + trend (#30)
 
