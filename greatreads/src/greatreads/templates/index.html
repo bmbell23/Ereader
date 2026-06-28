@@ -3,9 +3,29 @@
 {% block title %}GreatReads - Home{% endblock %}
 
 {% block content %}
+<style>
+    /* Daily per-format goal bars (#76). golden-shimmer is defined globally in
+       static/css/style.css (reused from the gold completion glow). */
+    .dg-track { position: relative; flex: 1; height: 15px; background: #e9ecef; border-radius: 8px; }
+    .dg-fill  { position: absolute; left: 0; top: 0; height: 100%; border-radius: 8px; transition: width .4s ease; }
+    .dg-fill-complete {
+        background: linear-gradient(135deg, #ffd700 0%, #ffb347 100%);
+        box-shadow: 0 0 10px rgba(255, 215, 0, 0.7);
+        animation: golden-shimmer 2s ease-in-out infinite alternate;
+    }
+    .dg-pct {
+        position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+        font-size: 0.7rem; font-weight: 700; color: #1a1d20; pointer-events: none;
+        /* White outline keeps the % legible once the fill passes under it, on any
+           format color (purple/physical was the worst case). */
+        text-shadow: -1px -1px 0 rgba(255, 255, 255, 0.95),  1px -1px 0 rgba(255, 255, 255, 0.95),
+                     -1px  1px 0 rgba(255, 255, 255, 0.95),  1px  1px 0 rgba(255, 255, 255, 0.95),
+                      0    0   3px rgba(255, 255, 255, 0.9);
+    }
+</style>
 <!-- High-level stats first (the 5 counts + this-year momentum), tight padding (#65) -->
 <div class="row">
-    <div class="col-12 mb-3">
+    <div class="col-12 mb-2">
         <div class="card">
             <div class="card-body py-2">
                 <div class="row text-center g-0">
@@ -64,15 +84,21 @@
     </div>
 </div>
 
-<!-- Currently Reading (in-progress books live here now, #65) -->
+<!-- Daily per-format goal progress (#76): today's words vs goal per format.
+     Hidden until populated (and stays hidden if no goals are configured). -->
 <div class="row">
-    <div class="col-12 mb-4">
+    <div class="col-12 mb-2">
+        <div class="card d-none" id="daily-goals-card">
+            <div class="card-body py-2" id="daily-goals"></div>
+        </div>
+    </div>
+</div>
+
+<!-- Currently Reading (in-progress books live here now, #65; header dropped #76
+     to make room for the daily-goal bars above). -->
+<div class="row">
+    <div class="col-12 mb-2">
         <div class="card">
-            <div class="card-header">
-                <h5 class="mb-0">
-                    <i class="fas fa-book-open me-2"></i>Currently Reading
-                </h5>
-            </div>
             <div class="card-body">
                 <div id="currently-reading">
                     <div class="text-center text-muted">
@@ -255,6 +281,7 @@
 document.addEventListener('DOMContentLoaded', function() {
     loadDashboardStats();
     loadMomentum();
+    loadDailyGoals();
     loadCurrentlyReading();
 });
 
@@ -293,6 +320,53 @@ async function loadMomentum() {
     }
 }
 
+// Daily per-format goal bars (#76): today's words vs the per-format daily word
+// goal. Mirrors the Stats page Daily Goals (same /settings/reading-speeds +
+// /stats/activity sources) so Home and Stats agree. % can exceed 100%; a bar at
+// >=100% gets the gold completion glow.
+async function loadDailyGoals() {
+    const card = document.getElementById('daily-goals-card');
+    const host = document.getElementById('daily-goals');
+    if (!card || !host) return;
+    try {
+        const [speeds, activity] = await Promise.all([
+            GreatReads.apiCall('/settings/reading-speeds'),
+            GreatReads.apiCall('/stats/activity'),
+        ]);
+        const d = new Date(), p = n => String(n).padStart(2, '0');
+        const today = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+        const dailyWords = (activity && activity.daily_words) || {};
+        const dailyMinutes = (activity && activity.daily_minutes) || {};
+        const FMTS = [['Ebook', 'ebook_wpd'], ['Audio', 'audio_wpd'], ['Physical', 'physical_wpd']];
+        const rows = FMTS.map(([fmt, key]) => {
+            const goal = (speeds && speeds[key]) || 0;
+            if (goal <= 0) return '';
+            const words = ((dailyWords[fmt] || {})[today]) || 0;
+            const minutes = ((dailyMinutes[fmt] || {})[today]) || 0;
+            const pct = Math.round(words / goal * 100);
+            const s = getMediaStyle(fmt);
+            const done = pct >= 100;
+            return `
+                <div class="d-flex align-items-center gap-2 my-1"
+                     title="${fmt}: ${words.toLocaleString()} / ${goal.toLocaleString()} words today">
+                    <i class="fas fa-${s.icon}" style="color:${s.color}; width:1.25rem; text-align:center;"></i>
+                    <div class="dg-track">
+                        <div class="dg-fill${done ? ' dg-fill-complete' : ''}"
+                             style="width:${Math.min(pct, 100)}%;${done ? '' : ` background:${s.color};`}"></div>
+                        <span class="dg-pct">${pct}%</span>
+                    </div>
+                    <span class="text-muted" style="min-width:3.6rem; text-align:right; font-size:0.76rem;">${fmtMinutes(minutes)}</span>
+                </div>`;
+        }).filter(Boolean);
+        if (!rows.length) { card.classList.add('d-none'); return; }
+        host.innerHTML = rows.join('');
+        card.classList.remove('d-none');
+    } catch (error) {
+        console.error('Error loading daily goals:', error);
+        card.classList.add('d-none');
+    }
+}
+
 // Media icon + color (themes the card by the reading's designated media for now).
 function getMediaStyle(media) {
     if (media === 'Ebook')    return { icon: 'tablet-alt', color: '#0066CC' };
@@ -328,24 +402,27 @@ function ownedFormatIcons(mediaOwned) {
         }).join('') + '</span>';
 }
 
-// Per-format dominance + time breakdown (#67): "icon PCT% · time" for each format
-// with logged activity, primary marked with a star. % = share of cumulative words.
+// Per-format dominance + time breakdown (#67, #76): "PCT% · time" per format with
+// logged activity. The dominant/primary format is listed first (most-left) so the
+// single leading star sits on the far left; other formats follow by words desc.
+// No per-entry icons — color-coding carries the format. % = share of cumulative words.
 function formatBreakdownHtml(formats, primary) {
     const entries = Object.keys(formats || {})
         .map(f => ({ f, words: formats[f].words || 0, minutes: formats[f].minutes || 0 }))
         .filter(e => e.words > 0 || e.minutes > 0);
     if (!entries.length) return '<div class="mb-2 small text-muted">No reading time logged yet</div>';
     const total = entries.reduce((s, e) => s + e.words, 0) || 1;
-    entries.sort((a, b) => b.words - a.words);
-    return '<div class="mb-2 d-flex flex-wrap gap-3" style="font-size:0.78rem;">' +
+    // Dominant/primary first (so the star is leftmost), then the rest by words desc.
+    entries.sort((a, b) => (a.f === primary ? -1 : b.f === primary ? 1 : b.words - a.words));
+    const star = '<i class="fas fa-star" style="color:#f5c518; font-size:0.62rem;" title="primary format"></i>';
+    return '<div class="mb-2 d-flex align-items-center flex-nowrap gap-3" style="font-size:0.78rem; white-space:nowrap;">' +
+        star +
         entries.map(e => {
             const s = getMediaStyle(e.f);
             const pct = Math.round(e.words / total * 100);
             const pri = e.f === primary;
             return `<span style="color:${s.color}; font-weight:${pri ? 700 : 500};" title="${e.f}">`
-                + `<i class="fas fa-${s.icon} me-1"></i>${pct}% &middot; ${fmtMinutes(e.minutes)}`
-                + (pri ? ' <i class="fas fa-star" style="font-size:0.6rem;" title="primary format"></i>' : '')
-                + `</span>`;
+                + `${pct}% &middot; ${fmtMinutes(e.minutes)}</span>`;
         }).join('') + '</div>';
 }
 
@@ -365,7 +442,7 @@ async function loadCurrentlyReading() {
         const stats = await Promise.all(readings.map(r =>
             GreatReads.apiCall(`/stats/book-time/${r.book.id}`).catch(() => null)));
 
-        container.innerHTML = '<div class="d-flex flex-column gap-4" id="ip-list"></div>';
+        container.innerHTML = '<div class="d-flex flex-column gap-3" id="ip-list"></div>';
         const list = document.getElementById('ip-list');
 
         readings.forEach((reading, i) => {
@@ -403,9 +480,6 @@ async function loadCurrentlyReading() {
                     <p class="text-muted mb-1" style="font-size: 0.85rem;">${book.author || ''}</p>
                     ${seriesLine ? `<p class="text-muted mb-2" style="font-size: 0.78rem;">${seriesLine}</p>` : ''}
                     <div class="mb-2 d-flex align-items-center gap-2 flex-wrap">
-                        <span style="color: ${mediaStyle.color}; font-weight: 600; font-size: 0.85rem;">
-                            <i class="fas fa-${mediaStyle.icon} me-1"></i>${primary}
-                        </span>
                         ${ownedFormatIcons(book.media_owned)}
                     </div>
                     ${formatBreakdownHtml(formats, primary)}
