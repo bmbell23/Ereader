@@ -8,10 +8,15 @@
        static/css/style.css (reused from the gold completion glow). */
     .dg-track { position: relative; flex: 1; height: 15px; background: #e9ecef; border-radius: 8px; }
     .dg-fill  { position: absolute; left: 0; top: 0; height: 100%; border-radius: 8px; transition: width .4s ease; }
-    /* Completed bars keep their format color; the gold is just a glow behind it. */
+    /* Completed bars keep their format color; a warm amber glow behind (own
+       keyframe, less yellow than the shared golden-shimmer; #81). */
+    @keyframes dg-glow {
+        0%   { box-shadow: 0 0 12px rgba(240, 160, 25, 0.8); }
+        100% { box-shadow: 0 0 22px rgba(240, 160, 25, 1), 0 0 32px rgba(240, 160, 25, 0.6); }
+    }
     .dg-fill-complete {
-        box-shadow: 0 0 10px rgba(255, 215, 0, 0.75);
-        animation: golden-shimmer 2s ease-in-out infinite alternate;
+        box-shadow: 0 0 14px rgba(240, 160, 25, 0.9);
+        animation: dg-glow 2s ease-in-out infinite alternate;
     }
     .dg-pct {
         position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
