@@ -34,6 +34,10 @@
     .bd-cover { aspect-ratio: 2/3; background: #e9ecef; border-radius: 6px; overflow: hidden;
         display: flex; align-items: center; justify-content: center; }
     .bd-cover img { width: 100%; height: 100%; object-fit: cover; }
+    /* Smooth book-to-book swipe in the details modal (#100): fade the new cover
+       in once it's decoded so there's no grey flash between books. */
+    .bd-fade-in { animation: bdFade .18s ease; }
+    @keyframes bdFade { from { opacity: 0; } to { opacity: 1; } }
     /* Bulk-select (#93) */
     .sel-check { width: 22px; height: 22px; border-radius: 50%; background: #fff;
         border: 2px solid #0d6efd; display: flex; align-items: center; justify-content: center;
@@ -435,6 +439,39 @@ function setupDetailSwipe() {
         if (e.key === 'ArrowRight') bdNavTo(1);
         else if (e.key === 'ArrowLeft') bdNavTo(-1);
     });
+    // Forget the cached series/author so a fresh open repaints from scratch
+    // (picks up any edits) — while swiping within an open modal reuses them.
+    dm.addEventListener('hidden.bs.modal', () => { bdSeriesKey = null; bdAuthorKey = null; });
+}
+
+// Preload the next cover and swap it in only once decoded, so swiping between
+// books doesn't flash the empty grey box. _bdCoverReq guards against a fast
+// swipe: if a newer cover request started, drop this (possibly out-of-order) one.
+let _bdCoverReq = 0;
+function setBdCover(c) {
+    const box = document.getElementById('bdCover');
+    const src = coverSrc(c);
+    const req = ++_bdCoverReq;
+    if (!src) { box.innerHTML = phCover(c.title, c.author, 'flex'); return; }
+    const img = new Image();
+    img.onload = () => {
+        if (req !== _bdCoverReq) return;
+        img.className = 'bd-fade-in';
+        box.replaceChildren(img);
+    };
+    img.onerror = () => { if (req === _bdCoverReq) box.innerHTML = phCover(c.title, c.author, 'flex'); };
+    img.src = src;
+}
+
+// Move the "current book" outline within an already-rendered series strip
+// instead of rebuilding it (no refetch, no flicker) when swiping in-series.
+function highlightBdSeries(bookId) {
+    document.querySelectorAll('#bdSeries .books-card[data-bid]').forEach(el => {
+        const on = parseInt(el.dataset.bid, 10) === bookId;
+        el.style.outline = on ? '2px solid var(--bs-primary)' : '';
+        el.style.outlineOffset = on ? '1px' : '';
+        el.style.borderRadius = on ? '4px' : '';
+    });
 }
 
 function visibleCards() {
@@ -581,7 +618,7 @@ function fmtDate(iso, precision) {
     return `${MON[m-1]} ${d}, ${y}`;
 }
 
-let bdCurrent = null, bdNav = [], bdIndex = -1;
+let bdCurrent = null, bdNav = [], bdIndex = -1, bdSeriesKey = null, bdAuthorKey = null;
 function openBookDetails(key, navList) {
     const c = cardReg[key] || cards.find(x => cardKey(x) === key);
     if (!c) return;
@@ -595,10 +632,7 @@ function openBookDetails(key, navList) {
     const base = window.APP_BASE_PATH || '';
     document.getElementById('bdTitle').textContent = c.title || '';
 
-    const src = coverSrc(c);
-    document.getElementById('bdCover').innerHTML = src
-        ? `<img src="${src}" alt="" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">${phCover(c.title, c.author, 'none')}`
-        : phCover(c.title, c.author, 'flex');
+    setBdCover(c);   // preload + fade swap, no grey flash between books (#100)
 
     const statusLabel = { owned: 'Owned', unowned: 'Unowned (no copy yet)', upcoming: 'Upcoming', new: 'New' }[c.status];
     const seriesTxt = c.series
@@ -631,13 +665,29 @@ function openBookDetails(key, navList) {
     }
     document.getElementById('bdActions').innerHTML = actions;
 
-    document.getElementById('bdSeries').innerHTML = '';
-    if (c.series) injectSeriesStrip(c);
+    // Series strip: only rebuild when the series actually changes. Swiping
+    // within the same series just moves the highlight — no refetch, no flash. (#100)
+    const seriesKey = (c.series || '') + '|' + (c.universe || '');
+    if (seriesKey === bdSeriesKey) {
+        highlightBdSeries(c.book_id);
+    } else {
+        bdSeriesKey = seriesKey;
+        document.getElementById('bdSeries').innerHTML = '';
+        if (c.series) injectSeriesStrip(c);
+    }
 
-    document.getElementById('bdAuthorReads').innerHTML = '<span class="text-muted small">Loading your reads…</span>';
-    injectAuthorReads(c.author);
+    // Author reads: only reload when the author changes (#100).
+    const authorKey = c.author || '';
+    if (authorKey !== bdAuthorKey) {
+        bdAuthorKey = authorKey;
+        const ar = document.getElementById('bdAuthorReads');
+        if (authorKey) { ar.innerHTML = '<span class="text-muted small">Loading your reads…</span>'; injectAuthorReads(authorKey); }
+        else ar.innerHTML = '';
+    }
 
-    bootstrap.Modal.getOrCreateInstance(document.getElementById('bookDetailsModal')).show();
+    const modalEl = document.getElementById('bookDetailsModal');
+    const inst = bootstrap.Modal.getOrCreateInstance(modalEl);
+    if (!modalEl.classList.contains('show')) inst.show();   // already open during swipe → don't re-show
 }
 
 // ── Series view (#96) ────────────────────────────────────────────────────
@@ -659,7 +709,7 @@ function seriesMiniHtml(c, currentId, withCaption) {
         ? `<div class="small text-truncate mt-1" title="${esc(c.title)}">${num ? num + ' · ' : ''}${esc(c.title)}</div>`
         : (num ? `<div class="text-muted text-center" style="font-size:.65rem;line-height:1.4;">${num}</div>` : '');
     return `<div class="col-4 col-sm-3 col-lg-2 mb-2">
-        <div class="card books-card status-${c.status}" style="cursor:pointer;"${cur} onclick="openBookDetails('${cardKey(c)}')" title="${esc(c.title)}">
+        <div class="card books-card status-${c.status}" data-bid="${c.book_id}" style="cursor:pointer;"${cur} onclick="openBookDetails('${cardKey(c)}')" title="${esc(c.title)}">
             <div class="books-cover">${cover}</div>
         </div>${caption}</div>`;
 }
