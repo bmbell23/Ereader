@@ -13,6 +13,7 @@ import android.webkit.WebResourceError;
 import android.webkit.DownloadListener;
 import android.webkit.URLUtil;
 import android.webkit.JavascriptInterface;
+import android.webkit.ValueCallback;
 import android.content.Intent;
 import android.net.Uri;
 import android.net.ConnectivityManager;
@@ -35,6 +36,12 @@ import java.lang.ref.WeakReference;
 
 public class MainActivity extends Activity {
     private WebView webView;
+
+    // Pending callback for a WebView <input type="file"> picker (#98). Android
+    // WebViews drop file-input taps unless we override onShowFileChooser, launch
+    // a picker, and hand the chosen Uri(s) back through this callback.
+    private ValueCallback<Uri[]> filePathCallback;
+    private static final int REQUEST_FILE_CHOOSER = 0xF11E;
 
     // When true, the web UI has explicitly asked for the system bars to be
     // visible (e.g. reader menu is open). onWindowFocusChanged respects this
@@ -201,7 +208,32 @@ public class MainActivity extends Activity {
         webView.clearCache(true);
 
         webView.setWebViewClient(new OfflineShellWebViewClient());
-        webView.setWebChromeClient(new WebChromeClient());
+        // Custom chrome client so <input type="file"> (e.g. book-cover Upload on
+        // the Books page) actually opens the system photo picker. (#98)
+        webView.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public boolean onShowFileChooser(WebView view,
+                                             ValueCallback<Uri[]> callback,
+                                             FileChooserParams params) {
+                // Drop any previous pending callback (cancel it) before storing ours.
+                if (filePathCallback != null) {
+                    filePathCallback.onReceiveValue(null);
+                }
+                filePathCallback = callback;
+                try {
+                    // createIntent() honors accept="image/*" + multiple from the
+                    // page; wrap in a chooser so the user can pick gallery/files.
+                    Intent intent = params.createIntent();
+                    intent.addCategory(Intent.CATEGORY_OPENABLE);
+                    startActivityForResult(Intent.createChooser(intent, "Select image"),
+                                           REQUEST_FILE_CHOOSER);
+                    return true;
+                } catch (Exception e) {
+                    filePathCallback = null;
+                    return false;   // let the WebView know we couldn't open a picker
+                }
+            }
+        });
 
         // JS bridge: lets reader.html show/hide the Android system bars so
         // the user can use system gestures (swipe up to go home, etc) when
@@ -233,6 +265,21 @@ public class MainActivity extends Activity {
         });
 
         webView.loadUrl("http://100.69.184.113:8090/");
+    }
+
+    // Return the picked image Uri(s) to the WebView's file input. Always pass a
+    // value back (null on cancel) or the input stays stuck and won't reopen. (#98)
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if (requestCode == REQUEST_FILE_CHOOSER) {
+            if (filePathCallback != null) {
+                Uri[] results = WebChromeClient.FileChooserParams.parseResult(resultCode, data);
+                filePathCallback.onReceiveValue(results);
+                filePathCallback = null;
+            }
+            return;
+        }
+        super.onActivityResult(requestCode, resultCode, data);
     }
 
     // ---- Offline app shell (#23) ----

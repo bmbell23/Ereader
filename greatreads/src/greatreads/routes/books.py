@@ -300,11 +300,26 @@ async def download_cover_from_url(
     # Save the file as {book_id}.jpg
     file_path = covers_dir / f"{book_id}.jpg"
 
+    # A real browser-style User-Agent + redirect following; many image hosts
+    # (Wikimedia, Amazon, Goodreads) 403 the default httpx UA, and some URLs
+    # redirect to a CDN. (#98)
+    headers = {
+        "User-Agent": ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                       "(KHTML, like Gecko) Chrome/124.0 Safari/537.36 GreatReads/cover-fetch"),
+        "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+        "Referer": str(cover_request.url),
+    }
     try:
         # Download the image
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True, headers=headers) as client:
             response = await client.get(cover_request.url)
             response.raise_for_status()
+
+            # Guard against saving an HTML error page as a .jpg
+            ctype = response.headers.get("content-type", "")
+            if not ctype.lower().startswith("image/"):
+                raise HTTPException(status_code=400,
+                                    detail=f"URL did not return an image (got '{ctype or 'unknown'}').")
 
             # Save the image
             with file_path.open("wb") as f:
@@ -322,6 +337,8 @@ async def download_cover_from_url(
             "book_id": book_id,
             "cover_version": cover_version
         }
+    except HTTPException:
+        raise
     except httpx.HTTPError as e:
         raise HTTPException(status_code=400, detail=f"Failed to download image: {str(e)}")
     except Exception as e:
