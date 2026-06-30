@@ -1120,8 +1120,9 @@ function grStartReadingSession() {
     const pm = bootstrap.Modal.getInstance(document.getElementById('physProgressModal'));
     if (pm) pm.hide();
 
-    _sess = { readingId: reading.id, accSec: 0, startMs: Date.now(), running: true, tid: null,
-              startPct: (reading.current_progress_percent || 0) };  // session start position (#78)
+    const _sessNow = Date.now();
+    _sess = { readingId: reading.id, accSec: 0, startMs: _sessNow, origStartMs: _sessNow, running: true, tid: null,
+              startPct: (reading.current_progress_percent || 0) };  // origStartMs = true session start, never reset on resume (#89); startMs = current running segment's start; startPct = session start position (#78)
     _grForceWake = true;   // never let the screen time out during a reading session
     document.getElementById('sessBookTitle').textContent = (reading.book && reading.book.title) || '';
     document.getElementById('sessState').textContent = 'Reading…';
@@ -1174,7 +1175,10 @@ function grSessionDone() {
     const mins = Math.round(_sessElapsedSec() / 60);
     // Capture the sitting's timing + start position before tearing _sess down, so
     // the save can record a Physical reading_sessions row (#78).
-    const session = { startMs: _sess.startMs, seconds: _sessElapsedSec(), startPct: _sess.startPct || 0 };
+    // startMs = the TRUE session start (origStartMs), so started_at→ended_at spans the
+    // real elapsed window even across pauses; seconds = active reading time (pauses
+    // excluded) → session-time for WPM. (#89)
+    const session = { startMs: _sess.origStartMs, seconds: _sessElapsedSec(), startPct: _sess.startPct || 0 };
     if (_sess.tid) clearInterval(_sess.tid);
     document.removeEventListener('visibilitychange', _sessVis);
     _grForceWake = false;             // session over → revert to the global setting

@@ -2161,11 +2161,15 @@ function renderGoalChart() {
             if (!words[f]) return;                       // unknown/legacy format
             const st = ss.startedAt, en = ss.endedAt, durMs = en - st;
             if (!(durMs > 0)) return;
-            const durMin = durMs / 60000, wTot = ss.words || 0;
+            // The bar spans the ELAPSED window (start→end). Words and the ACTIVE reading
+            // time (ss.minutes, pauses excluded) are pro-rated across the slots the
+            // window overlaps, so paused gaps don't inflate the Time metric and the
+            // Today view's minutes match the daily reading_activity totals. (#89)
+            const actMin = ss.minutes || 0, wTot = ss.words || 0;
             for (let s = 0; s < SLOTS; s++) {
                 const slotStart = dayStartMs + s * SLOT_MS, slotEnd = slotStart + SLOT_MS;
                 const ov = Math.min(en, slotEnd) - Math.max(st, slotStart);
-                if (ov > 0) { const fr = ov / durMs; mins[f][s] += durMin * fr; words[f][s] += wTot * fr; }
+                if (ov > 0) { const fr = ov / durMs; mins[f][s] += actMin * fr; words[f][s] += wTot * fr; }
             }
         });
         title = (chartDate === _todayStr() ? 'Today'
