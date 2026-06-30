@@ -7,7 +7,8 @@ import json
 from typing import Dict, Optional, List
 from pathlib import Path
 import requests
-from bs4 import BeautifulSoup
+# bs4 is imported lazily (only the HowLongToRead scraping strategy needs it) so the
+# discovery package stays importable in containers without beautifulsoup4 installed.
 
 
 class WordCountEstimator:
@@ -214,6 +215,7 @@ class WordCountEstimator:
             if response.status_code != 200:
                 return None
             
+            from bs4 import BeautifulSoup  # lazy: only this strategy needs bs4
             soup = BeautifulSoup(response.text, 'html.parser')
             
             # Look for word count in the results

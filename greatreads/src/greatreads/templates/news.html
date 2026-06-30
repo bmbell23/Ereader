@@ -1,0 +1,234 @@
+{% extends "base.html" %}
+{% block title %}GreatReads - News{% endblock %}
+
+{% block content %}
+<style>
+    .news-col { max-width: 820px; margin-left: auto; margin-right: auto; }
+    .news-card { display: flex; gap: 12px; align-items: flex-start; }
+    .news-cover { width: 56px; height: 84px; flex: 0 0 56px; border-radius: 4px;
+        object-fit: cover; background: #e9ecef; }
+    .news-cover.placeholder { display: flex; align-items: center; justify-content: center;
+        color: #adb5bd; font-size: 1.4rem; }
+    .news-meta { flex: 1; min-width: 0; }
+    .news-title { font-weight: 600; line-height: 1.25; }
+    .news-badge-up { background: #0d6efd; }
+    .news-badge-new { background: #198754; }
+    .news-series { font-size: 0.72rem; color: #6c757d; }
+    .news-date { font-variant-numeric: tabular-nums; }
+    .manage-author-row { display: flex; align-items: center; justify-content: space-between;
+        gap: 8px; padding: 2px 0; font-size: 0.85rem; }
+    #manageAuthors { max-height: 320px; overflow-y: auto; }
+</style>
+
+<div class="news-col">
+    <!-- Header: title + tabs + actions -->
+    <div class="d-flex align-items-center flex-wrap gap-2 mb-3">
+        <h4 class="mb-0 me-auto"><i class="fas fa-newspaper me-2 text-primary"></i>News</h4>
+        <div class="btn-group btn-group-sm" role="group">
+            <button type="button" class="btn btn-outline-secondary active" id="tabUpcoming" onclick="setNewsTab('upcoming')">Upcoming</button>
+            <button type="button" class="btn btn-outline-secondary" id="tabNew" onclick="setNewsTab('new')">New</button>
+            <button type="button" class="btn btn-outline-secondary" id="tabComics" onclick="setNewsTab('comics')">Comics</button>
+            <button type="button" class="btn btn-outline-secondary" id="tabReprints" onclick="setNewsTab('reprints')">Reprints</button>
+        </div>
+        <button type="button" class="btn btn-sm btn-outline-primary" id="checkNowBtn" onclick="checkNow()">
+            <i class="fas fa-rotate me-1"></i>Check now
+        </button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="collapse" data-bs-target="#managePanel">
+            <i class="fas fa-user-gear me-1"></i>Authors
+        </button>
+    </div>
+
+    <p class="text-muted small mb-3">
+        Scheduled releases from authors you've read, detected via Google Books. Catches books a
+        publisher has catalogued (title + ISBN + date) — not yet-unannounced sequels.
+    </p>
+
+    <!-- Manage watched authors -->
+    <div class="collapse mb-3" id="managePanel">
+        <div class="card"><div class="card-body">
+            <div class="mb-2">
+                <label class="form-label small mb-1">Watch an author you haven't read</label>
+                <div class="input-group input-group-sm">
+                    <input type="text" class="form-control" id="extraAuthorInput" placeholder="e.g. Rebecca Yarros">
+                    <button class="btn btn-outline-primary" onclick="addExtra()">Add</button>
+                </div>
+            </div>
+            <div class="small text-muted mb-1">Watched authors <span id="watchCount"></span> — toggle off to mute.</div>
+            <div id="manageAuthors" class="border rounded p-2"><div class="text-muted small">Loading…</div></div>
+        </div></div>
+    </div>
+
+    <!-- Feed -->
+    <div id="newsFeed"><div class="text-muted text-center py-5">Loading…</div></div>
+</div>
+
+<script>
+let newsTab = 'upcoming';
+let newsItems = [];
+
+document.addEventListener('DOMContentLoaded', async () => {
+    await loadFeed();
+    // Opening the page clears the unread badge.
+    try { await GreatReads.apiCall('/news/seen', { method: 'POST', data: {} }); } catch (e) {}
+    if (typeof loadNewsBadge === 'function') loadNewsBadge();
+});
+
+function setNewsTab(t) {
+    newsTab = t;
+    ['Upcoming', 'New', 'Comics', 'Reprints'].forEach(x =>
+        document.getElementById('tab' + x).classList.toggle('active', x.toLowerCase() === t));
+    renderFeed();
+}
+
+// Comics and reprints get their own tabs; the novel tabs (Upcoming/New) show only
+// genuinely-new novels (category === 'book').
+function passesTab(i) {
+    if (newsTab === 'comics') return i.category === 'comic';
+    if (newsTab === 'reprints') return i.category === 'reprint';
+    return i.kind === newsTab && i.category === 'book';
+}
+
+async function loadFeed() {
+    try {
+        const r = await GreatReads.apiCall('/news/');
+        newsItems = (r && r.items) || [];
+    } catch (e) { newsItems = []; }
+    renderFeed();
+}
+
+function fmtDate(iso, precision) {
+    if (!iso) return '';
+    const [y, m, d] = iso.split('-').map(Number);
+    const MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    if (precision === 'year') return String(y);
+    if (precision === 'month') return `${MON[m-1]} ${y}`;
+    return `${MON[m-1]} ${d}, ${y}`;
+}
+
+function renderFeed() {
+    const el = document.getElementById('newsFeed');
+    const items = newsItems.filter(passesTab);
+    if (!items.length) {
+        el.innerHTML = `<div class="text-muted text-center py-5">
+            No ${newsTab === 'all' ? '' : newsTab + ' '}releases yet.
+            Try <strong>Check now</strong>, or add authors under <strong>Authors</strong>.</div>`;
+        return;
+    }
+    el.innerHTML = items.map(i => {
+        const cover = i.thumbnail_url
+            ? `<img class="news-cover" src="${i.thumbnail_url}" alt="" loading="lazy">`
+            : `<div class="news-cover placeholder"><i class="fas fa-book"></i></div>`;
+        const badge = i.kind === 'upcoming'
+            ? '<span class="badge news-badge-up">Upcoming</span>'
+            : '<span class="badge news-badge-new">New</span>';
+        const comicBadge = i.category === 'comic'
+            ? '<span class="badge bg-purple" style="background:#6f42c1;">Graphic Novel</span>' : '';
+        const reprintBadge = i.category === 'reprint'
+            ? '<span class="badge bg-secondary" title="New edition of an older book">Reprint</span>' : '';
+        const trackedBadge = i.tracked
+            ? '<span class="badge bg-warning text-dark" title="In your library list — you don\'t own a copy yet">Tracked</span>' : '';
+        const seriesTxt = i.matched_series
+            ? i.matched_series + (i.series_number != null ? ` #${i.series_number}` : '')
+            : (i.series_number != null ? `Book ${i.series_number}` : '');
+        const metaBits = [seriesTxt, i.genre].filter(Boolean).join(' · ');
+        const series = metaBits ? `<div class="news-series">${metaBits}</div>` : '';
+        const low = i.low_confidence
+            ? ' <i class="fas fa-circle-question text-muted" title="Incomplete metadata"></i>' : '';
+        const link = i.preview_link
+            ? `<a href="${i.preview_link}" target="_blank" rel="noopener" class="ms-2 small">Preview</a>` : '';
+        return `<div class="card mb-2"><div class="card-body py-2 news-card">
+            ${cover}
+            <div class="news-meta">
+                <div class="d-flex justify-content-between gap-2">
+                    <div class="news-title">${i.title || ''}${low}</div>
+                    <button class="btn btn-sm btn-link text-muted p-0" title="Dismiss"
+                            onclick="dismissItem(${i.id})"><i class="fas fa-xmark"></i></button>
+                </div>
+                ${i.subtitle ? `<div class="text-muted small">${i.subtitle}</div>` : ''}
+                <div class="small text-muted">${i.author_name || ''}</div>
+                ${series}
+                <div class="mt-1 d-flex align-items-center flex-wrap gap-1">${badge}${comicBadge}${reprintBadge}${trackedBadge}
+                    <span class="news-date small text-muted ms-1">${fmtDate(i.published_date, i.date_precision)}</span>
+                    ${link}
+                </div>
+            </div>
+        </div></div>`;
+    }).join('');
+}
+
+async function dismissItem(id) {
+    try { await GreatReads.apiCall(`/news/${id}/dismiss`, { method: 'POST' }); } catch (e) {}
+    newsItems = newsItems.filter(i => i.id !== id);
+    renderFeed();
+}
+
+let _polling = false;
+async function checkNow() {
+    if (_polling) return;
+    _polling = true;
+    const btn = document.getElementById('checkNowBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Checking…';
+    try {
+        await GreatReads.apiCall('/news/poll', { method: 'POST' });
+        showToast('Checking for new releases — this runs in the background. Refresh in a minute.', 'info');
+    } catch (e) {}
+    // The poll is async server-side; give it a beat, then reload the feed.
+    setTimeout(async () => {
+        await loadFeed();
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-rotate me-1"></i>Check now';
+        _polling = false;
+    }, 8000);
+}
+
+// ── manage authors ───────────────────────────────────────────────────────
+async function loadWatch() {
+    const box = document.getElementById('manageAuthors');
+    let w;
+    try { w = await GreatReads.apiCall('/news/watch'); }
+    catch (e) { box.innerHTML = '<div class="text-danger small">Could not load authors.</div>'; return; }
+    const excl = new Set((w.excluded || []).map(s => s.toLowerCase()));
+    const extra = new Set((w.extra || []).map(s => s.toLowerCase()));
+    document.getElementById('watchCount').textContent = `(${(w.effective || []).length})`;
+    // Show auto authors (read) + any extra ones; each with an on/off toggle.
+    const all = [...new Set([...(w.auto || []), ...(w.extra || [])])].sort((a, b) => a.localeCompare(b));
+    box.innerHTML = all.map(name => {
+        const on = !excl.has(name.toLowerCase());
+        const isExtra = extra.has(name.toLowerCase());
+        return `<div class="manage-author-row">
+            <span>${name} ${isExtra ? '<span class="badge bg-light text-secondary">added</span>' : ''}</span>
+            <div class="form-check form-switch m-0">
+                <input class="form-check-input" type="checkbox" ${on ? 'checked' : ''}
+                       onchange="toggleAuthor('${name.replace(/'/g, "\\'")}', this.checked, ${isExtra})">
+            </div>
+        </div>`;
+    }).join('') || '<div class="text-muted small">No read authors yet.</div>';
+}
+
+async function toggleAuthor(name, on, isExtra) {
+    try {
+        if (isExtra && !on) {
+            // Removing an added (un-read) author entirely.
+            await GreatReads.apiCall('/news/watch/uninclude', { method: 'POST', data: { author: name } });
+        } else if (on) {
+            await GreatReads.apiCall('/news/watch/unexclude', { method: 'POST', data: { author: name } });
+        } else {
+            await GreatReads.apiCall('/news/watch/exclude', { method: 'POST', data: { author: name } });
+        }
+    } catch (e) {}
+    loadWatch();
+}
+
+async function addExtra() {
+    const input = document.getElementById('extraAuthorInput');
+    const name = input.value.trim();
+    if (!name) return;
+    try { await GreatReads.apiCall('/news/watch/include', { method: 'POST', data: { author: name } }); } catch (e) {}
+    input.value = '';
+    loadWatch();
+}
+
+document.getElementById('managePanel').addEventListener('shown.bs.collapse', loadWatch);
+</script>
+{% endblock %}

@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from .config import settings
 from .database import create_tables, get_db, SessionLocal
-from .routes import books, readings, chains, library, settings as settings_routes, stats, auth, inventory, reports, import_routes, bookshelves
+from .routes import books, readings, chains, library, settings as settings_routes, stats, auth, inventory, reports, import_routes, bookshelves, news
 from . import ereader_api  # absorbed Ereader backend (:8091), routes carry /api/... (#22)
 from .auth import get_current_user_from_cookie
 
@@ -84,6 +84,20 @@ def _auto_sync():
         db.close()
 
 
+def _poll_news():
+    """Scheduled job: poll Google Books for new/upcoming releases by watched authors (#68)."""
+    db = SessionLocal()
+    try:
+        from .services.news_service import poll_releases
+        logger.info("Daily news poll starting…")
+        result = poll_releases(db)
+        logger.info("Daily news poll complete: %s", result)
+    except Exception as exc:
+        logger.error("Daily news poll failed: %s", exc)
+    finally:
+        db.close()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager."""
@@ -124,9 +138,16 @@ async def lifespan(app: FastAPI):
             coalesce=True,
             max_instances=1,
         )
+        # Daily News poll (#68) — Google Books is keyed; off-hours to spread quota.
+        scheduler.add_job(
+            _poll_news,
+            CronTrigger(hour=5, minute=30, timezone="America/Denver"),
+            id="daily_news_poll",
+            replace_existing=True,
+        )
         scheduler.start()
         logger.info(
-            "Schedulers started: midnight chain-recalc + auto-sync every %d min.",
+            "Schedulers started: midnight chain-recalc + auto-sync every %d min + daily news poll.",
             AUTO_SYNC_INTERVAL_MINUTES,
         )
     except Exception as exc:
@@ -190,6 +211,7 @@ app.include_router(stats.router, prefix="/api/stats", tags=["stats"])
 app.include_router(reports.router, prefix="/api/reports", tags=["reports"])
 app.include_router(import_routes.router, prefix="/api/import", tags=["import"])
 app.include_router(bookshelves.router, prefix="/api/bookshelves", tags=["bookshelves"])
+app.include_router(news.router, prefix="/api/news", tags=["news"])
 app.include_router(ereader_api.router, tags=["ereader"])  # no prefix — routes already carry /api/... (#22)
 
 
@@ -247,6 +269,13 @@ async def highlights_page(request: Request, db: Session = Depends(get_db)):
     """Highlights & bookmarks page (data served by the Ereader API)."""
     current_user = get_current_user_from_cookie(request, db)
     return templates.TemplateResponse(request, "highlights.html", {"current_user": current_user})
+
+
+@app.get("/news", response_class=HTMLResponse)
+async def news_page(request: Request, db: Session = Depends(get_db)):
+    """News page — upcoming/new releases from watched authors (#68)."""
+    current_user = get_current_user_from_cookie(request, db)
+    return templates.TemplateResponse(request, "news.html", {"current_user": current_user})
 
 
 @app.get("/settings", response_class=HTMLResponse)

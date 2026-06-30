@@ -4,9 +4,15 @@ Google Books API Client
 Provides methods to query Google Books API for book discovery.
 """
 
+import re
 import requests
 from typing import List, Dict, Optional
 from time import sleep
+
+
+def _redact(msg: object) -> str:
+    """Strip any `key=…` (the API key) out of an error/URL string before logging."""
+    return re.sub(r'key=[\w-]+', 'key=REDACTED', str(msg))
 
 
 class GoogleBooksClient:
@@ -92,7 +98,7 @@ class GoogleBooksClient:
                 sleep(0.5)
                 
             except requests.exceptions.RequestException as e:
-                print(f"Error querying Google Books API: {e}")
+                print(f"Error querying Google Books API: {_redact(e)}")
                 break
         
         return all_books
@@ -139,6 +145,15 @@ class GoogleBooksClient:
                 elif identifier.get('type') == 'ISBN_13':
                     isbn_13 = identifier.get('identifier')
             
+            # Series number (when Google provides it via seriesInfo) — name isn't here.
+            series_number = None
+            bd = volume_info.get('seriesInfo', {}).get('bookDisplayNumber')
+            if bd:
+                try:
+                    series_number = float(bd)
+                except (ValueError, TypeError):
+                    series_number = None
+
             # Build normalized book data
             book = {
                 'title': volume_info.get('title'),
@@ -150,6 +165,7 @@ class GoogleBooksClient:
                 'description': volume_info.get('description'),
                 'page_count': volume_info.get('pageCount'),
                 'categories': volume_info.get('categories', []),
+                'series_number': series_number,
                 'language': volume_info.get('language'),
                 'isbn_10': isbn_10,
                 'isbn_13': isbn_13,
@@ -164,6 +180,31 @@ class GoogleBooksClient:
             print(f"Error normalizing book data: {e}")
             return None
     
+    def get_editions(self, title: str, author: str, max_results: int = 20) -> List[Dict]:
+        """All editions of one specific work (intitle+inauthor), for reprint detection.
+
+        Returns normalized records; the caller takes the min published year across them
+        to decide whether a "new" listing is really a reprint of an old book, and to pick
+        a cleaner title / a cover when the author-search edition lacked one.
+        """
+        params = {'q': f'intitle:"{title}" inauthor:"{author}"',
+                  'maxResults': min(max_results, 40), 'langRestrict': 'en'}
+        if self.api_key:
+            params['key'] = self.api_key
+        try:
+            response = self.session.get(self.BASE_URL, params=params, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+            out = []
+            for item in data.get('items', []):
+                b = self._normalize_book_data(item)
+                if b:
+                    out.append(b)
+            return out
+        except requests.exceptions.RequestException as e:
+            print(f"Error querying Google Books API: {_redact(e)}")
+            return []
+
     def get_book_by_isbn(self, isbn: str) -> Optional[Dict]:
         """
         Get book details by ISBN.

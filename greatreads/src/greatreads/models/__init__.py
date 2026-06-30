@@ -8,5 +8,6 @@ from .shelf import Shelf
 from .user_settings import UserSettings
 from .user import User
 from .external_import import ExternalImport
+from .news_item import NewsItem
 
-__all__ = ["Book", "Reading", "Inventory", "Shelf", "UserSettings", "User", "Tag", "book_tags", "ExternalImport"]
+__all__ = ["Book", "Reading", "Inventory", "Shelf", "UserSettings", "User", "Tag", "book_tags", "ExternalImport", "NewsItem"]
