@@ -660,6 +660,8 @@ document.addEventListener('DOMContentLoaded', function() {
     renderSortUI();
 });
 
+// Refresh Journal after a shared Edit Book save/delete (#110)
+window.bkeHooks = { afterSave: () => loadJournalReadings(), afterDelete: () => loadJournalReadings() };
 async function loadJournalReadings() {
     try {
         const readings = await GreatReads.apiCall('/readings/journal');

@@ -780,14 +780,15 @@ function grOpenBookActions(book, opts = {}) {
                     <span id="hlCount" class="badge bg-secondary ms-auto">0</span>
                 </a>` : '';
 
-    // Edit Book — jump to the book's edit view (page count, etc.). Shown on every
-    // page via the deep-link library?editBook=<id> (#27). Opt out with
+    // Edit Book — open the shared in-place editor (#110). bkeOpen is global on
+    // every authed page (book_edit.js). This is the single Edit Book action for
+    // every openBookActions popup; pages must NOT add their own. Opt out with
     // opts.editBook === false.
     const editBookLink = (opts.editBook !== false && book.id != null) ? `
-                <a class="btn btn-sm btn-outline-secondary"
-                   href="${BASE_PATH}/library?editBook=${book.id}">
+                <button type="button" class="btn btn-sm btn-outline-secondary"
+                        onclick="bkeOpen(${book.id})">
                     <i class="fas fa-pen-to-square me-2 text-primary"></i>Edit Book
-                </a>` : '';
+                </button>` : '';
 
     // "See Reading Sessions" — read-only session history (#77). Hidden until the
     // async summary below confirms there are qualified sessions; shown on every

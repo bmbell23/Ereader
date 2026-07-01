@@ -287,6 +287,9 @@
             </div>
         </div>
     </div>
+
+    <!-- Shared Edit Book modal (#110): available on every page via bkeOpen(bookId) -->
+    {% include "_book_edit_modal.html" %}
     {% endif %}
 
 
@@ -365,6 +368,8 @@
 
     <!-- Custom JS -->
     <script src="{{ url_for('static', path='/js/app.js') }}?v=2.0.10"></script>
+    <!-- Shared Edit Book modal behavior (#110); needs GreatReads.* from app.js above -->
+    {% if current_user %}<script src="{{ url_for('static', path='/js/book_edit.js') }}?v=1"></script>{% endif %}
 
     <!-- Loading screen: show a random saved highlight while the page's data
          loads, instead of a bare spinner / "Loading…" (#55). Renders into the

@@ -223,70 +223,6 @@
     </div>
 </div>
 
-<!-- In-page Edit Book modal (#88) — editing stays on the Books page -->
-<div class="modal fade" id="bkEditModal" tabindex="-1">
-    <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title">Edit book</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-            </div>
-            <div class="modal-body">
-                <input type="hidden" id="bkeId">
-                <div class="row g-3">
-                    <div class="col-12 col-sm-4">
-                        <div class="bd-cover mb-2" id="bkeCover" style="max-width:170px;"></div>
-                        <div class="d-grid gap-1" style="max-width:170px;">
-                            <label class="btn btn-sm btn-outline-secondary mb-0">
-                                <i class="fas fa-upload me-1"></i>Upload
-                                <input type="file" id="bkeCoverFile" accept="image/*" hidden onchange="bkeUploadFile()">
-                            </label>
-                            <div class="input-group input-group-sm">
-                                <input type="text" class="form-control" id="bkeCoverUrl" placeholder="Image URL">
-                                <button class="btn btn-outline-secondary" type="button" onclick="bkeCoverFromUrl()">Fetch</button>
-                            </div>
-                            <button class="btn btn-sm btn-outline-danger" type="button" onclick="bkeRemoveCover()">
-                                <i class="fas fa-trash me-1"></i>Remove cover</button>
-                        </div>
-                    </div>
-                    <div class="col-12 col-sm-8">
-                        <div class="row g-2">
-                            <div class="col-12"><label class="form-label small mb-0">Title</label>
-                                <input class="form-control form-control-sm" id="bkeTitle" list="bkeTitleList" autocomplete="off"></div>
-                            <div class="col-6"><label class="form-label small mb-0">Author first name</label>
-                                <input class="form-control form-control-sm" id="bkeAuthorFirst" list="bkeAuthorFirstList" autocomplete="off"></div>
-                            <div class="col-6"><label class="form-label small mb-0">Author last name</label>
-                                <input class="form-control form-control-sm" id="bkeAuthorLast" list="bkeAuthorLastList" autocomplete="off"></div>
-                            <div class="col-8"><label class="form-label small mb-0">Series</label>
-                                <input class="form-control form-control-sm" id="bkeSeries" list="bkeSeriesList" autocomplete="off"></div>
-                            <div class="col-4"><label class="form-label small mb-0">Series #</label>
-                                <input class="form-control form-control-sm" id="bkeSeriesNum" type="number" step="0.1"></div>
-                            <div class="col-6"><label class="form-label small mb-0">Universe</label>
-                                <input class="form-control form-control-sm" id="bkeUniverse" list="bkeUniverseList" autocomplete="off"></div>
-                            <div class="col-6"><label class="form-label small mb-0">Genre</label>
-                                <input class="form-control form-control-sm" id="bkeGenre" list="bkeGenreList" autocomplete="off"></div>
-                            <div class="col-6"><label class="form-label small mb-0">Release date</label>
-                                <input class="form-control form-control-sm" id="bkeDate" type="date"></div>
-                            <div class="col-3"><label class="form-label small mb-0">Pages</label>
-                                <input class="form-control form-control-sm" id="bkePages" type="number" min="0"></div>
-                            <div class="col-3"><label class="form-label small mb-0">Words</label>
-                                <input class="form-control form-control-sm" id="bkeWords" type="number" min="0"></div>
-                            <div class="col-12"><label class="form-label small mb-0">ISBN</label>
-                                <input class="form-control form-control-sm" id="bkeIsbn"></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-outline-danger me-auto" onclick="bkeDelete()">
-                    <i class="fas fa-trash me-1"></i>Delete book</button>
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                <button type="button" class="btn btn-outline-primary" id="bkeSaveNextBtn" onclick="bkeSaveAndNext()" title="Save and edit the next book in this view">Save &amp; Next <i class="fas fa-arrow-right ms-1"></i></button>
-                <button type="button" class="btn btn-primary" onclick="bkeSave()">Save changes</button>
-            </div>
-        </div>
-    </div>
-</div>
 
 <!-- Series view (#96) — every book in a series, click any to open its details -->
 <div class="modal fade" id="seriesModal" tabindex="-1">
@@ -354,9 +290,40 @@ document.addEventListener('DOMContentLoaded', async () => {
     await loadShelf(true);
     setupInfiniteScroll();
     setupDetailSwipe();
-    wireAutocomplete();   // custom typeahead on the edit/bulk fields (#107)
-    bkeLoadLists();       // preload suggestion values so they're ready on first open
+    // the shared Edit Book module (book_edit.js) wires autocomplete + preloads lists
 });
+
+// Books-page behavior for the shared Edit Book modal (#110): patch cards in place
+// (keep scroll #99) after save/delete, and supply the Save & Next order from the grid.
+window.bkeHooks = {
+    afterSave(id, data, book) {
+        patchLocalCard(id, {
+            title: data.title,
+            author: [data.author_name_first, data.author_name_second].filter(Boolean).join(' '),
+            series: data.series, series_number: data.series_number,
+            universe: data.universe, genre: data.genre,
+            word_count: data.word_count, page_count: data.page_count,
+            date: data.date_published,
+            has_cover: !!(book && book.cover),
+            cover_version: Math.floor(Date.now() / 1000),
+        });
+        renderKeepScroll();
+    },
+    afterDelete(id) {
+        cards = cards.filter(c => !(c.kind === 'local' && c.book_id === id));
+        delete cardReg['L' + id];
+        shelfTotal = Math.max(0, shelfTotal - 1);
+        renderKeepScroll();
+    },
+    nextId(afterId) {
+        const list = visibleCards();
+        const i = list.findIndex(c => c.kind === 'local' && c.book_id === afterId);
+        if (i < 0) return null;
+        for (let j = i + 1; j < list.length; j++)
+            if (list[j].kind === 'local') return list[j].book_id;
+        return null;
+    },
+};
 
 function setStatus(s) {
     if (s === shelfStatus) return;
@@ -825,230 +792,6 @@ async function checkNow() {
     }, 8000);
 }
 
-// ── in-page Edit Book ────────────────────────────────────────────────────
-let bkeBook = null, bkeListsLoaded = false;
-
-// Typeahead sources (#92) → now feed a custom autocomplete (#107). Native
-// <datalist> doesn't render in Android WebView, so we keep the values here and
-// draw our own dropdown (see attachAutocomplete). Powers edit + bulk-edit forms.
-const bkeSug = { first: [], last: [], series: [], universe: [], genre: [], title: [] };
-
-async function bkeLoadLists() {
-    if (bkeListsLoaded) return;
-    bkeListsLoaded = true;
-    const load = async (path, key) => {
-        try { const r = await GreatReads.apiCall(path);
-            bkeSug[key] = Array.isArray(r) ? r : (r.items || []); }
-        catch (e) {}
-    };
-    await Promise.all([
-        load('/books/search/author-first-names', 'first'),
-        load('/books/search/author-last-names', 'last'),
-        load('/books/search/series', 'series'),
-        load('/books/search/genres', 'genre'),
-        load('/books/search/universes', 'universe'),
-        load('/books/search/titles', 'title'),
-    ]);
-}
-
-// Custom autocomplete (#107): a tappable suggestion dropdown, WebView-safe where
-// native <datalist> is not. The menu is fixed-positioned on document.body (so a
-// scrollable modal can't clip it) and reads live from bkeSug[key].
-function attachAutocomplete(inputId, key) {
-    const input = document.getElementById(inputId);
-    if (!input || input.dataset.acWired) return;
-    input.dataset.acWired = '1';
-    input.setAttribute('autocomplete', 'off');
-    input.removeAttribute('list');                     // drop the broken native datalist
-    const menu = document.createElement('div');
-    menu.className = 'ac-menu d-none';
-    document.body.appendChild(menu);
-    let items = [], active = -1;
-    const place = () => { const r = input.getBoundingClientRect();
-        menu.style.left = r.left + 'px'; menu.style.top = r.bottom + 'px'; menu.style.width = r.width + 'px'; };
-    const hide = () => { menu.classList.add('d-none'); active = -1; };
-    const hl = () => [...menu.children].forEach((c, i) => c.classList.toggle('ac-active', i === active));
-    const render = () => {
-        const q = input.value.trim().toLowerCase();
-        const src = bkeSug[key] || [];
-        let matches = src;
-        if (q) { const s = [], h = [];
-            for (const v of src) { const lv = String(v).toLowerCase();
-                if (lv.startsWith(q)) s.push(v); else if (lv.includes(q)) h.push(v); }
-            matches = s.concat(h);
-        }
-        items = matches.slice(0, 8);
-        if (!items.length) { hide(); return; }
-        active = -1;
-        menu.innerHTML = items.map((v, i) => `<div class="ac-item" data-i="${i}">${esc(String(v))}</div>`).join('');
-        place(); menu.classList.remove('d-none');
-    };
-    const choose = v => { input.value = v; hide(); };
-    input.addEventListener('focus', render);
-    input.addEventListener('input', render);
-    input.addEventListener('blur', () => setTimeout(hide, 150));   // let a tap land first
-    input.addEventListener('keydown', e => {
-        if (menu.classList.contains('d-none')) return;
-        if (e.key === 'ArrowDown') { active = Math.min(active + 1, items.length - 1); hl(); e.preventDefault(); }
-        else if (e.key === 'ArrowUp') { active = Math.max(active - 1, 0); hl(); e.preventDefault(); }
-        else if (e.key === 'Enter') { if (active >= 0) { choose(items[active]); e.preventDefault(); } }
-        else if (e.key === 'Escape') hide();
-    });
-    // pointerdown fires before blur and covers touch + mouse (WebView is Chromium)
-    menu.addEventListener('pointerdown', e => {
-        const it = e.target.closest('.ac-item'); if (!it) return;
-        e.preventDefault(); choose(items[+it.dataset.i]);
-    });
-    window.addEventListener('resize', () => { if (!menu.classList.contains('d-none')) place(); });
-    document.addEventListener('scroll', () => { if (!menu.classList.contains('d-none')) hide(); }, true);
-}
-
-function wireAutocomplete() {
-    [['bkeAuthorFirst', 'first'], ['blkAuthorFirst', 'first'],
-     ['bkeAuthorLast', 'last'], ['blkAuthorLast', 'last'],
-     ['bkeSeries', 'series'], ['blkSeries', 'series'],
-     ['bkeUniverse', 'universe'], ['blkUniverse', 'universe'],
-     ['bkeGenre', 'genre'], ['blkGenre', 'genre'],
-     ['bkeTitle', 'title'],
-    ].forEach(([id, key]) => attachAutocomplete(id, key));
-}
-
-async function bkeOpen(bookId) {
-    bkeLoadLists();
-    bootstrap.Modal.getInstance(document.getElementById('bookDetailsModal'))?.hide();
-    let b;
-    try { b = await GreatReads.apiCall('/books/' + bookId); }
-    catch (e) { showToast('Could not load book', 'danger'); return; }
-    bkeBook = b;
-    const set = (id, v) => { document.getElementById(id).value = (v != null ? v : ''); };
-    set('bkeId', b.id); set('bkeTitle', b.title);
-    set('bkeAuthorFirst', b.author_name_first); set('bkeAuthorLast', b.author_name_second);
-    set('bkeSeries', b.series); set('bkeSeriesNum', b.series_number);
-    set('bkeUniverse', b.universe); set('bkeGenre', b.genre); set('bkeDate', b.date_published);
-    set('bkePages', b.page_count); set('bkeWords', b.word_count); set('bkeIsbn', b.isbn_id);
-    set('bkeCoverUrl', '');
-    bkeRenderCover();
-    // "Save & Next" only makes sense when there's a next editable book in view (#104)
-    const nb = document.getElementById('bkeSaveNextBtn');
-    if (nb) nb.disabled = bkeNextLocalId(b.id) == null;
-    bootstrap.Modal.getOrCreateInstance(document.getElementById('bkEditModal')).show();
-}
-
-function bkeRenderCover() {
-    const base = window.APP_BASE_PATH || '', b = bkeBook;
-    document.getElementById('bkeCover').innerHTML = (b && b.cover)
-        ? `<img src="${base}/static/covers/${b.id}.jpg?v=${Date.now()}" alt="" style="width:100%;height:100%;object-fit:cover;" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">${phCover(b.title, b.author, 'none')}`
-        : phCover(b ? b.title : '', b ? b.author : '', 'flex');
-}
-
-// Save the edit modal's fields (PUT + patch the card in place, keep scroll #99).
-// Returns the saved book id on success, or null on failure — callers decide
-// whether to close the modal (bkeSave) or advance to the next book (#104).
-async function _bkeSaveCore() {
-    const id = document.getElementById('bkeId').value;
-    const v = id2 => { const x = document.getElementById(id2).value.trim(); return x === '' ? null : x; };
-    const num = (id2, fn) => { const x = document.getElementById(id2).value; return x === '' ? null : fn(x); };
-    const data = {
-        title: document.getElementById('bkeTitle').value.trim(),
-        author_name_first: v('bkeAuthorFirst'), author_name_second: v('bkeAuthorLast'),
-        series: v('bkeSeries'), universe: v('bkeUniverse'), genre: v('bkeGenre'),
-        series_number: num('bkeSeriesNum', parseFloat),
-        date_published: document.getElementById('bkeDate').value || null,
-        page_count: num('bkePages', parseInt), word_count: num('bkeWords', parseInt),
-        isbn_id: num('bkeIsbn', parseInt),
-    };
-    try {
-        await GreatReads.apiCall('/books/' + id, { method: 'PUT', data });
-        showToast('Book updated', 'success');
-        // patch the card in place so we keep scroll + filter, no reload (#99)
-        patchLocalCard(parseInt(id, 10), {
-            title: data.title,
-            author: [data.author_name_first, data.author_name_second].filter(Boolean).join(' '),
-            series: data.series, series_number: data.series_number,
-            universe: data.universe, genre: data.genre,
-            word_count: data.word_count, page_count: data.page_count,
-            date: data.date_published,
-            has_cover: !!(bkeBook && bkeBook.cover),
-            cover_version: Math.floor(Date.now() / 1000),
-        });
-        renderKeepScroll();
-        return parseInt(id, 10);
-    } catch (e) { showToast('Save failed', 'danger'); return null; }
-}
-
-async function bkeSave() {
-    if (await _bkeSaveCore() != null)
-        bootstrap.Modal.getInstance(document.getElementById('bkEditModal'))?.hide();
-}
-
-// The next editable (local) book after the one being edited, in the current
-// visible order (respects the active search/filter/sort) — null at the end (#104).
-function bkeNextLocalId(afterId) {
-    const list = visibleCards();
-    const i = list.findIndex(c => c.kind === 'local' && c.book_id === afterId);
-    if (i < 0) return null;
-    for (let j = i + 1; j < list.length; j++)
-        if (list[j].kind === 'local') return list[j].book_id;
-    return null;
-}
-
-// Save, then jump straight into editing the next book in this view (#104).
-async function bkeSaveAndNext() {
-    const curId = parseInt(document.getElementById('bkeId').value, 10);
-    const nextId = bkeNextLocalId(curId);   // resolve before save (order is stable across an in-place edit)
-    if (await _bkeSaveCore() == null) return;
-    if (nextId != null) {
-        bkeOpen(nextId);   // repopulate the still-open modal with the next book
-    } else {
-        bootstrap.Modal.getInstance(document.getElementById('bkEditModal'))?.hide();
-        showToast('Saved — that was the last book in this view.', 'info');
-    }
-}
-
-async function bkeDelete() {
-    const id = document.getElementById('bkeId').value;
-    const title = document.getElementById('bkeTitle').value || 'this book';
-    if (!confirm(`Delete “${title}”?\n\nThis permanently removes the book and its reading/inventory records. This can't be undone.`)) return;
-    try {
-        await GreatReads.apiCall('/books/' + id, { method: 'DELETE' });
-        showToast('Book deleted', 'success');
-        bootstrap.Modal.getInstance(document.getElementById('bkEditModal'))?.hide();
-        // drop the card in place; keep scroll + filter (#99)
-        const dbid = parseInt(id, 10);
-        cards = cards.filter(c => !(c.kind === 'local' && c.book_id === dbid));
-        delete cardReg['L' + dbid];
-        shelfTotal = Math.max(0, shelfTotal - 1);
-        renderKeepScroll();
-    } catch (e) { showToast('Delete failed', 'danger'); }
-}
-
-async function bkeUploadFile() {
-    const f = document.getElementById('bkeCoverFile').files[0];
-    if (!f) return;
-    const id = document.getElementById('bkeId').value, fd = new FormData();
-    fd.append('file', f);
-    try { await GreatReads.apiCall(`/books/${id}/cover`, { method: 'POST', data: fd });
-        if (bkeBook) bkeBook.cover = true; bkeRenderCover(); showToast('Cover updated', 'success'); }
-    catch (e) { showToast('Upload failed', 'danger'); }
-    document.getElementById('bkeCoverFile').value = '';
-}
-
-async function bkeCoverFromUrl() {
-    const url = document.getElementById('bkeCoverUrl').value.trim();
-    if (!url) return;
-    const id = document.getElementById('bkeId').value;
-    try { await GreatReads.apiCall(`/books/${id}/cover/from-url`, { method: 'POST', data: { url } });
-        if (bkeBook) bkeBook.cover = true; bkeRenderCover();
-        document.getElementById('bkeCoverUrl').value = ''; showToast('Cover downloaded', 'success'); }
-    catch (e) { showToast('Could not fetch image', 'danger'); }
-}
-
-async function bkeRemoveCover() {
-    const id = document.getElementById('bkeId').value;
-    try { await GreatReads.apiCall(`/books/${id}/cover`, { method: 'DELETE' });
-        if (bkeBook) bkeBook.cover = false; bkeRenderCover(); showToast('Cover removed', 'success'); }
-    catch (e) { showToast('Remove failed', 'danger'); }
-}
 
 // ── followed authors ─────────────────────────────────────────────────────
 async function loadWatch() {

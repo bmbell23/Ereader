@@ -1226,6 +1226,8 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 });
 
+// Refresh TBR after a shared Edit Book save/delete (#110)
+window.bkeHooks = { afterSave: () => loadTBRReadings(), afterDelete: () => loadTBRReadings() };
 async function loadTBRReadings() {
     try {
         const readings = await GreatReads.apiCall('/readings/tbr');
@@ -1534,10 +1536,8 @@ function openReadingActions(readingId) {
         <button type="button" class="btn btn-sm btn-outline-success" onclick="tbrStartFromPopup(${reading.id})">
             <i class="fas fa-play me-2"></i>Start Reading
         </button>`;
-    const actionsHtml = startBtn + `
-        <button type="button" class="btn btn-sm btn-outline-secondary" onclick="tbrEditFromPopup(${reading.id})">
-            <i class="fas fa-edit me-2 text-primary"></i>Edit Reading
-        </button>`;
+    // Edit Book is the built-in shared action; TBR adds only Start Reading (#109/#110)
+    const actionsHtml = startBtn;
 
     GreatReads.openBookActions(reading.book, {
         reading: r2,

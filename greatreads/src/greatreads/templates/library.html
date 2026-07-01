@@ -774,9 +774,6 @@ function openBookActions(bookId) {
 
     // The Highlights link (+ async count) is provided by the shared popup itself.
     const actionsHtml = `
-                <button type="button" class="btn btn-sm btn-outline-secondary" onclick="libViewDetails(${book.id})">
-                    <i class="fas fa-pen-to-square me-2 text-primary"></i>Edit Book
-                </button>
                 <button type="button" class="btn btn-sm btn-outline-secondary" onclick="libAddToTBR(${book.id})">
                     <i class="fas fa-plus me-2 text-success"></i>Add to TBR
                 </button>
@@ -865,6 +862,8 @@ async function libClearProgress(id) {
     }
 }
 
+// Refresh Library after a shared Edit Book save/delete (#110)
+window.bkeHooks = { afterSave: () => refreshLibraryData(), afterDelete: () => refreshLibraryData() };
 async function refreshLibraryData() {
     try {
         allBooks = await GreatReads.apiCall('/library/books?limit=10000');
