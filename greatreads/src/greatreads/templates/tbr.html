@@ -1536,14 +1536,17 @@ function openReadingActions(readingId) {
         <button type="button" class="btn btn-sm btn-outline-success" onclick="tbrStartFromPopup(${reading.id})">
             <i class="fas fa-play me-2"></i>Start Reading
         </button>`;
-    // Edit Book is the built-in shared action; TBR adds only Start Reading (#109/#110)
-    const actionsHtml = startBtn;
+    // Unified popup buttons (#111): Start Reading is the variable action (only when
+    // not started); Edit Reading + Edit Book are placed by the shared popup.
+    const editReadingHtml = `<button type="button" class="btn btn-sm btn-outline-secondary" onclick="tbrEditFromPopup(${reading.id})">
+        <i class="fas fa-edit me-2 text-primary"></i>Edit Reading</button>`;
 
     GreatReads.openBookActions(reading.book, {
         reading: r2,
         extraInfoHtml: GreatReads.readingExtraInfoHtml(r2),
         detailRows,
-        actionsHtml,
+        primaryActionHtml: startBtn,
+        editReadingHtml,
     });
 }
 

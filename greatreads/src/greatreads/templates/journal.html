@@ -826,19 +826,28 @@ function openReadingActions(readingId) {
     const reading = allReadings.find(r => r.id === readingId);
     if (!reading || !reading.book) return;
 
-    const actionsHtml = `
-        <button type="button" class="btn btn-sm btn-outline-secondary" onclick="journalEditFromPopup(${reading.id})">
-            <i class="fas fa-edit me-2 text-primary"></i>Edit Reading
-        </button>
-        <button type="button" class="btn btn-sm btn-outline-secondary" onclick="journalDeleteFromPopup(${reading.id})">
-            <i class="fas fa-trash me-2 text-danger"></i>Delete Reading
-        </button>`;
+    // Unified popup buttons (#111): finished book → "Add reread to TBR" is the
+    // variable action; Edit Reading + Edit Book are placed by the shared popup.
+    // Delete Reading is a temporary extra (moving into the Edit Reading modal).
+    const primaryActionHtml = `<button type="button" class="btn btn-sm btn-outline-secondary" onclick="journalAddReread(${reading.book.id})">
+        <i class="fas fa-plus me-2 text-success"></i>Add reread to TBR</button>`;
+    const editReadingHtml = `<button type="button" class="btn btn-sm btn-outline-secondary" onclick="journalEditFromPopup(${reading.id})">
+        <i class="fas fa-edit me-2 text-primary"></i>Edit Reading</button>`;
+    const actionsHtml = `<button type="button" class="btn btn-sm btn-outline-secondary" onclick="journalDeleteFromPopup(${reading.id})">
+        <i class="fas fa-trash me-2 text-danger"></i>Delete Reading</button>`;
 
     GreatReads.openBookActions(reading.book, {
         reading: reading,
-        extraInfoHtml: GreatReads.readingExtraInfoHtml(reading) + journalRatingsHtml(reading),
+        extraInfoHtml: GreatReads.readingExtraInfoHtml(reading),   // ratings → View Ratings popup (#111)
+        primaryActionHtml,
+        editReadingHtml,
         actionsHtml,
     });
+}
+
+// "Add reread to TBR" (#111): send a finished book back to the Add-Reading flow.
+function journalAddReread(bookId) {
+    window.location.href = "{{ url_for('tbr_page') }}?addReading=" + bookId;
 }
 
 function hideOpenBookModal() {

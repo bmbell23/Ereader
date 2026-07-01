@@ -549,12 +549,12 @@ async function loadCurrentlyReading() {
                     reading,
                     extraInfoHtml: (GreatReads.readingExtraInfoHtml
                         ? GreatReads.readingExtraInfoHtml(reading) : undefined),
-                    // Edit Book (metadata) is the built-in shared action (#110);
-                    // Edit Reading = dates/media; Finish Book = finish → review form (#108).
-                    actionsHtml: `<button type="button" class="btn btn-sm btn-outline-primary" onclick="homeEditReading(${reading.id})">
-                        <i class="fas fa-edit me-2 text-primary"></i>Edit Reading</button>
-                        <button type="button" class="btn btn-sm btn-outline-success" onclick="homeFinishReading(${reading.id})">
+                    // Unified popup buttons (#111): Finish is the variable action;
+                    // Edit Reading + Edit Book are placed by the shared popup.
+                    primaryActionHtml: `<button type="button" class="btn btn-sm btn-outline-success" onclick="homeFinishReading(${reading.id})">
                         <i class="fas fa-flag-checkered me-2 text-success"></i>Finish Book</button>`,
+                    editReadingHtml: `<button type="button" class="btn btn-sm btn-outline-secondary" onclick="homeEditReading(${reading.id})">
+                        <i class="fas fa-edit me-2 text-primary"></i>Edit Reading</button>`,
                 });
             });
             list.appendChild(el);

@@ -760,7 +760,7 @@ function grOpenBookActions(book, opts = {}) {
             </div>
         </div>` : `
         <div class="col-12 text-center text-muted small pb-1">
-            <i class="fas fa-book me-1"></i>Tracked book — no ebook or audiobook file linked.
+            <i class="fas fa-book me-1"></i>This book is not in your library.
         </div>`;
 
     // The progress display is the tap-to-log entry for any in-progress reading
@@ -772,6 +772,8 @@ function grOpenBookActions(book, opts = {}) {
     // Highlights link — shown on any page when the book is a linked ebook. Hidden
     // until the async count below confirms there are some. (Library/TBR/Journal all
     // get this for free.) Opt out with opts.highlights === false.
+    // Highlights — shown for a linked ebook only once the async count confirms
+    // there are some (revealed below).
     const showHl = opts.highlights !== false && !!book.calibre_id;
     const hlLink = showHl ? `
                 <a id="hlActionBtn" class="btn btn-sm btn-outline-secondary d-none"
@@ -794,8 +796,14 @@ function grOpenBookActions(book, opts = {}) {
     // async summary below confirms there are qualified sessions; shown on every
     // caller (Home in-progress, Journal finished) via book.id. Opt out with
     // opts.sessions === false.
-    const showSessions = opts.sessions !== false && book.id != null;
-    const sessionsBtn = showSessions ? `
+    // Session stats (Reading Sessions + Avg) show for any started book — in-progress
+    // OR finished; the "See Reading Sessions" button is finished-only (#111).
+    const startedNotFinished = !!(r && r.is_started && !r.is_finished);
+    const hasFinishedRead = !!(r && r.is_finished) ||
+        (Array.isArray(book.readings) && book.readings.some(x => x.date_finished_actual));
+    const showSessionsStats = opts.sessions !== false && book.id != null && (startedNotFinished || hasFinishedRead);
+    const showSessionsBtn = opts.sessions !== false && book.id != null && hasFinishedRead;
+    const sessionsBtn = showSessionsBtn ? `
                 <button type="button" id="seeSessionsBtn" class="btn btn-sm btn-outline-secondary"
                         onclick="GreatReads.showReadingSessions(${book.id}, '${titleEnc}')">
                     <i class="fas fa-clock-rotate-left me-2 text-info"></i>See Reading Sessions
@@ -812,7 +820,29 @@ function grOpenBookActions(book, opts = {}) {
                     <i class="fas fa-rotate-left me-2 text-warning"></i>Reset word-credit mark
                 </button>` : '';
 
-    const secondaryInner = `${hlLink}${opts.actionsHtml || ''}${sessionsBtn}${resetCreditBtn}${editBookLink}`;
+    // View Ratings (#111): only when the passed reading has any category rating.
+    // Opens a separate popup (keeps the main popup clean and, later, handles a book
+    // read/rated more than once).
+    const ratingKeys = ['rating_enjoyment', 'rating_writing', 'rating_characters',
+        'rating_world_building', 'rating_readability', 'rating_horror', 'rating_spice'];
+    const hasRatingsIn = x => !!x && x.id != null && ratingKeys.some(k => (x[k] || 0) > 0);
+    // Look across ALL of the book's readings, not just the popup's reading — e.g. on
+    // Library the popup's reading is the in-progress/not-started one, but a *past*
+    // reading may be the rated one (#111). (Multi-rated → picker in a later phase.)
+    const ratedReadings = (Array.isArray(book.readings) ? book.readings : []).filter(hasRatingsIn);
+    const ratingReadingId = hasRatingsIn(r) ? r.id : (ratedReadings[0] ? ratedReadings[0].id : null);
+    const viewRatingsBtn = ratingReadingId != null ? `
+                <button type="button" class="btn btn-sm btn-outline-secondary"
+                        onclick="GreatReads.showRatings(${ratingReadingId})">
+                    <i class="fas fa-star me-2" style="color:#e0a800;"></i>View Ratings
+                </button>` : '';
+
+    // Unified button order (#111): Highlights → variable primary action → View
+    // Ratings → [extras] → See Reading Sessions → Edit Reading → Edit Book.
+    // opts.primaryActionHtml = the one state-specific action (Finish / Start / Add
+    // to TBR / Add reread); opts.editReadingHtml = the Edit Reading button (pages
+    // with a reading modal); opts.actionsHtml = remaining extras (temporary).
+    const secondaryInner = `${hlLink}${opts.primaryActionHtml || ''}${viewRatingsBtn}${opts.actionsHtml || ''}${sessionsBtn}${resetCreditBtn}${opts.editReadingHtml || ''}${editBookLink}`;
     const secondary = secondaryInner.trim() ? `
         <div class="col-12">
             <div class="open-secondary">${secondaryInner}</div>
@@ -859,9 +889,9 @@ function grOpenBookActions(book, opts = {}) {
     // Reading-session stats (#77): count + average sitting length, and reveal the
     // "See Reading Sessions" button. One summary call serves both; only shows once
     // there are qualified sessions (books read before session logging show nothing).
-    if (showSessions) {
-        // Always show the two rows (even at 0 / —) so they're visible before any
-        // session is logged; the button is always present too.
+    if (showSessionsStats) {
+        // Show the two rows for any started book (even at 0 / —); the button is
+        // finished-only and handled separately (#111).
         const renderSessionStats = (sessions, minutes) => {
             const det = document.querySelector('#openBookOptions .open-details');
             if (!det) return;
@@ -894,7 +924,7 @@ function grOpenBookActions(book, opts = {}) {
                 const pct = Math.round(p.progress * 100);
                 const hwm = (typeof p.maxProgress === 'number') ? p.maxProgress : null;
                 const stuck = hwm != null && hwm > p.progress + 0.005;
-                if (det) {
+                if (det && ipReading) {   // reading position only for in-progress books (#111)
                     let rows = `<div class="d-flex justify-content-between gap-3">
                         <span class="text-muted">Reading position</span>
                         <span class="fw-medium text-end">${pct}%${p.page ? ` · p. ${p.page}` : ''}</span></div>`;
@@ -909,6 +939,33 @@ function grOpenBookActions(book, opts = {}) {
     }
 
     if (typeof opts.onShow === 'function') opts.onShow(book);
+}
+
+// "View Ratings" (#111): show a reading's category star ratings in a popup that
+// stacks above the book-actions popup. (A multi-read picker comes in a later phase.)
+async function grShowRatings(readingId) {
+    const body = document.getElementById('vrModalBody');
+    if (!body) return;
+    body.innerHTML = '<div class="text-muted small">Loading…</div>';
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('viewRatingsModal')).show();
+    let reading;
+    try { reading = await apiCall(`/readings/${readingId}`); }
+    catch (e) { body.innerHTML = '<div class="text-danger small">Could not load ratings.</div>'; return; }
+    const cats = [
+        ['Enjoyment', reading.rating_enjoyment, 'fa-star', '#e0a800'],
+        ['Writing', reading.rating_writing, 'fa-star', '#e0a800'],
+        ['Characters', reading.rating_characters, 'fa-star', '#e0a800'],
+        ['World building', reading.rating_world_building, 'fa-star', '#e0a800'],
+        ['Readability', reading.rating_readability, 'fa-star', '#e0a800'],
+        ['Horror', reading.rating_horror, 'fa-droplet', '#dc3545'],
+        ['Spice', reading.rating_spice, 'fa-pepper-hot', '#dc3545'],
+    ];
+    const rows = cats.filter(([, v]) => v > 0).map(([label, v, icon, color]) =>
+        `<div class="d-flex justify-content-between gap-3 py-1 border-bottom">
+            <span class="text-muted">${label}</span>
+            <span class="fw-medium text-end">${v}<i class="fas ${icon} ms-1" style="color:${color};"></i></span>
+        </div>`).join('');
+    body.innerHTML = rows || '<div class="text-muted small">No ratings recorded for this reading.</div>';
 }
 
 // "See Reading Sessions" (#77): read-only list of every qualified sitting for a
@@ -1361,6 +1418,7 @@ window.GreatReads = {
     showEditModal,
     openBookActions: grOpenBookActions,
     showReadingSessions: grShowReadingSessions,
+    showRatings: grShowRatings,
     resetCreditMark: grResetCreditMark,
     updatePhysicalProgress: grUpdatePhysicalProgress,
     startReadingSession: grStartReadingSession,

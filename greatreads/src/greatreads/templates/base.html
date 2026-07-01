@@ -209,6 +209,20 @@
         </div>
     </div>
 
+    <!-- View Ratings (#111): per-reading star ratings, stacks above #openBookModal.
+         Multi-read picker is a later phase. -->
+    <div class="modal fade" id="viewRatingsModal" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title text-truncate" id="vrModalTitle"><i class="fas fa-star me-2" style="color:#e0a800;"></i>Ratings</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body" id="vrModalBody"></div>
+            </div>
+        </div>
+    </div>
+
     <!-- Lightweight physical-progress update popup (#33). Distinct id from the
          richer per-page updateProgressModal (e.g. tbr.html) to avoid collision. -->
     <div class="modal fade" id="physProgressModal" tabindex="-1">
