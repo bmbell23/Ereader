@@ -272,6 +272,41 @@
             page-break-before: auto !important;
             -webkit-column-break-before: auto !important;
         }
+        /* Class-based headings promoted from publisher <div class="title-*">/
+           "subtitle-*" markup (Tor/Macmillan et al., #112). We strip the
+           publisher's font-size/text-align in injectScopedEpubCss, so restore
+           heading presentation here. No break-before: each chapter is its own
+           spine file and already starts a fresh column via .epub-spine-item —
+           adding a break here would risk a blank page. break-after:avoid keeps
+           the title from being orphaned at the foot of a column. */
+        #epub-content .epub-heading {
+            text-align: center;
+            font-weight: bold;
+            line-height: 1.25;
+            break-after: avoid;
+            page-break-after: avoid;
+        }
+        #epub-content .epub-heading-title {
+            font-size: 1.7em;
+            margin: 1.4em 0 0.2em;
+        }
+        #epub-content .epub-heading-sub {
+            font-size: 1.25em;
+            margin: 0 0 1.3em;
+            color: #333;
+        }
+        /* In-book links (footnote refs, cross-references, and this publisher's
+           chapter-title links) should read as body text — not blue underlined
+           web links. color:inherit ties them to the text colour, so they'll
+           also follow a future dark-mode palette automatically (#112). Needs
+           !important because the publisher's own text-decoration survives the
+           injectScopedEpubCss filter and is appended after this rule. */
+        #epub-content a,
+        #epub-content a:link,
+        #epub-content a:visited {
+            color: inherit !important;
+            text-decoration: none !important;
+        }
         /* Separator injected between EPUB spine items (chapter files) so that
            the join between two concatenated files always starts on a new page. */
         #epub-content .epub-chapter-sep {
@@ -359,28 +394,29 @@
             flex: 0 0 50% !important;
         }
         .reader-controls {
+            /* Full-screen sheet (#113): covers the entire reader. It was a
+               50vh bottom sheet, which left the top half of the page visible —
+               so opening it exposed the page reflowing behind it (toggleMenu
+               shows the Android system bars, which resizes the viewport and
+               triggers a repaginate). Full-screen masks that entirely; the
+               repaginate itself is also now suppressed while the panel is open
+               (see scheduleRepaginate). Mirrors the full-screen TOC overlay. */
             position: fixed;
+            top: 0;
             bottom: 0;
             left: 0;
             right: 0;
-            background: rgba(255, 255, 255, 0.98);
+            background: #ffffff;
             color: #212529;
-            border-top: 1px solid #e9ecef;
-            box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.15);
-            /* Extra top padding so the absolutely-positioned .menu-close (top:10px)
-               doesn't end up under the Android status bar when the menu grows tall
-               enough to push its top edge to the screen top.  Same pattern on the
-               full-screen TOC and bookmark overlays below. */
-            padding: calc(env(safe-area-inset-top, 0px) + 32px) 20px 20px 20px;
+            /* Top padding clears the absolutely-positioned .menu-close and the
+               Android status bar; bottom padding clears the gesture bar. */
+            padding: calc(env(safe-area-inset-top, 0px) + 56px) 20px calc(env(safe-area-inset-bottom, 0px) + 24px) 20px;
             display: none;
             flex-direction: column;
             gap: 20px;
             /* Must be above #page-progress (9000) so the stats bar doesn't bleed
                through on top of the open menu. */
             z-index: 10000;
-            border-top-left-radius: 20px;
-            border-top-right-radius: 20px;
-            max-height: 50vh;
             overflow-y: auto;
         }
         .reader-controls.visible {
@@ -684,7 +720,7 @@
         }
         .menu-close {
             position: absolute;
-            top: 10px;
+            top: calc(env(safe-area-inset-top, 0px) + 10px);
             right: 15px;
             background: none;
             border: none;
@@ -1703,10 +1739,40 @@
                 try { window.Android.keepScreenOn(false); } catch (_) {}
             }
         }
+        // ---------- Immersive (edge-to-edge) ----------
+        // Keep the reader immersive so the Android status + gesture bars stay
+        // hidden. The native app can hand the window back non-immersive on cold
+        // start or when returning from background, so we assert it explicitly:
+        // on load, on becoming visible, and whenever a full-screen overlay
+        // opens/closes. The full-screen Reading-Options + TOC overlays no longer
+        // flash the bars in/out (that toggle caused a viewport resize → page
+        // reflow "jump", #113); search still shows them on purpose for the soft
+        // keyboard and restores immersive on close.
+        function assertImmersive() {
+            if (window.Android && typeof window.Android.hideSystemBars === 'function') {
+                try { window.Android.hideSystemBars(); } catch (_) {}
+            }
+        }
+        assertImmersive();
+        window.addEventListener('load', assertImmersive);
+        // The "add font" text input needs the soft keyboard. Like the search
+        // box, briefly show the system bars while it's focused so the keyboard
+        // lays out correctly, then restore immersive on blur (#113). Every other
+        // control in the panel is keyboard-free, so this is the only exception.
+        (function () {
+            const el = document.getElementById('add-font-input');
+            if (!el) return;
+            el.addEventListener('focus', () => {
+                try { if (window.Android && window.Android.showSystemBars) window.Android.showSystemBars(); } catch (_) {}
+            });
+            el.addEventListener('blur', assertImmersive);
+        })();
+
         // Re-acquire after the tab becomes visible again (e.g. returning from another app).
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'visible') {
                 applyWakeLock();
+                assertImmersive();
                 // Re-assert the locked brightness — Android may have handed the
                 // window back to auto-brightness while we were backgrounded (#50).
                 try { applyReaderBrightness(loadBrightnessPref()); } catch (_) {}
@@ -2496,6 +2562,33 @@
                 }
             })();
 
+            // Class-based heading markup (Tor/Macmillan et al.).
+            //
+            // Some publishers ship EVERY block as a styled <div> and use no
+            // <p>/<h*> at all: chapter titles arrive as
+            // <div class="title-chapter">One</div> +
+            // <div class="subtitle-chapter">…</div>. We strip the publisher
+            // stylesheet's layout props (font-size / text-align never survive
+            // injectScopedEpubCss), so without help these render as ordinary
+            // body text — no visible chapter break. Tag the title/subtitle
+            // family with .epub-heading so our own CSS can restyle them AND so
+            // the TOC-fallback + progress machinery can see them as headings.
+            //
+            // Matched: a class TOKEN that is (or starts) "title"/"subtitle" —
+            // "title", "title-chapter", "title-part", "subtitle-chapter", … .
+            // Deliberately NOT matched: "titlePage" (no \b/‑ after "title"),
+            // "toc_entry_titlePage"/"subtitle…" mid-token (needs start/space
+            // before the token). Runs AFTER scene-break detection so the added
+            // class can't perturb the dominant-body-class heuristic above.
+            epubContent.querySelectorAll('div[class], p[class]').forEach(el => {
+                const cls = ' ' + (el.className || '') + ' ';
+                if (/(^|\s)title(\s|-)/i.test(cls)) {
+                    el.classList.add('epub-heading', 'epub-heading-title');
+                } else if (/(^|\s)subtitle(\s|-)/i.test(cls)) {
+                    el.classList.add('epub-heading', 'epub-heading-sub');
+                }
+            });
+
             // Tag every leaf block element with a stable data-anchor="N".
             // Done on the live DOM (not the parsed tree) so the queries below
             // can reuse the same nodes.
@@ -2506,10 +2599,15 @@
             // page that anchor currently lives on (works regardless of font
             // size / dual-page / fold state).
             tocItems = [];
-            epubContent.querySelectorAll('h1, h2, h3').forEach(heading => {
+            // Real headings, plus class-based chapter titles (.epub-heading-title)
+            // for div-markup EPUBs. The latter only matters when a book has no
+            // nav.xhtml / toc.ncx (below we prefer tocTree when present); div
+            // titles are level 1 since there's no reliable tag-depth to read.
+            epubContent.querySelectorAll('h1, h2, h3, .epub-heading-title').forEach(heading => {
+                const isTag = /^H[1-6]$/.test(heading.tagName);
                 tocItems.push({
                     title: heading.textContent.trim(),
-                    level: parseInt(heading.tagName.substring(1)),
+                    level: isTag ? parseInt(heading.tagName.substring(1)) : 1,
                     anchor: parseInt(heading.dataset.anchor, 10)
                 });
             });
@@ -2568,9 +2666,39 @@
         // anchor per paragraph, which is the granularity the user actually
         // experiences as "the words at the top of the page".
         const ANCHOR_SELECTOR = 'p, h1, h2, h3, h4, h5, h6, li, blockquote, pre, figure, img, table, hr, dd, dt';
+        // Inline tags that don't disqualify a <div>/<p> from being a leaf text
+        // block (used only in the div-markup fallback below).
+        const ANCHOR_INLINE_OK = /^(BR|SPAN|A|EM|I|B|STRONG|U|SUB|SUP|SMALL|BIG|FONT|Q|CITE|ABBR|MARK|TIME|CODE|S|DEL|INS|WBR|BDI|BDO|RUBY|RT|RP)$/;
+        // Our injected layout sentinels + per-file wrappers — never content.
+        const ANCHOR_SKIP_CLASS = /\b(epub-chapter-sep|dual-page-chapter-spacer|epub-spine-item)\b/;
         function annotateAnchors(rootEl) {
             let i = 0;
-            rootEl.querySelectorAll(ANCHOR_SELECTOR).forEach(el => {
+            // Common case: the EPUB uses real semantic block tags. Anchor them
+            // exactly as before — unchanged numbering, so saved positions
+            // (stored by anchor index) stay valid across this change.
+            const semanticCount = rootEl.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li').length;
+            if (semanticCount >= 10) {
+                rootEl.querySelectorAll(ANCHOR_SELECTOR).forEach(el => {
+                    el.dataset.anchor = String(i++);
+                });
+                return;
+            }
+            // Div-markup EPUB (Tor/Macmillan et al.): no usable <p>/<h*> — the
+            // whole book is styled <div>s. Anchor real anchorable tags AND
+            // leaf-level <div> content blocks (inline children only, carrying
+            // text), in document order. Without this such books get ~zero
+            // anchors, so the TOC never resolves and the progress bar reports a
+            // stale chapter (#112). Wrappers (div.chapter / frontMatter / …) and
+            // our sentinels are skipped by the leaf + class guards; standalone
+            // media keeps its own anchor via ANCHOR_SELECTOR.
+            rootEl.querySelectorAll(ANCHOR_SELECTOR + ', div').forEach(el => {
+                if (el.dataset.anchor != null) return;
+                if (el.tagName !== 'DIV') { el.dataset.anchor = String(i++); return; }
+                if (ANCHOR_SKIP_CLASS.test(el.className || '')) return;
+                const hasBlockChild = Array.from(el.children)
+                    .some(c => !ANCHOR_INLINE_OK.test(c.tagName));
+                if (hasBlockChild) return;                       // wrapper, not a leaf
+                if ((el.textContent || '').trim() === '') return; // empty spacer
                 el.dataset.anchor = String(i++);
             });
         }
@@ -2884,6 +3012,10 @@
             const vv = window.visualViewport;
             pageWidth = Math.round((vv && vv.width) || window.innerWidth || document.documentElement.clientWidth);
             const vpHeight = Math.round((vv && vv.height) || window.innerHeight || document.documentElement.clientHeight);
+            // Remember what we paginated for so scheduleRepaginate can drop
+            // resizes that don't actually change the viewport (#113).
+            _lastPaginatedW = pageWidth;
+            _lastPaginatedH = vpHeight;
 
             // Make the viewport and content exactly one viewport wide so transforms
             // align pixel-for-pixel with the column stride.
@@ -6295,7 +6427,28 @@
         // Debounced re-pagination on viewport change. Foldables fire resize twice
         // (posture change + final size) so we wait for things to settle.
         let _resizeTimer = null;
+        // Viewport dims (px) the current pagination was computed for. Set by
+        // calculatePages; read by scheduleRepaginate to drop no-op resizes.
+        let _lastPaginatedW = 0, _lastPaginatedH = 0;
+
         function scheduleRepaginate() {
+            // Ignore resizes fired while the Reading-Options panel is open. It's
+            // full-screen, so nothing is visible to reflow, and the only resize
+            // it triggers is the transient Android system-bar toggle in
+            // toggleMenu — which reverses when the panel closes (#113). Skipping
+            // avoids churning layout under the cover (and the jump that used to
+            // show when the panel was a half-height sheet).
+            const rc = document.getElementById('reader-controls');
+            if (rc && rc.classList.contains('visible')) return;
+            // Drop no-op resizes: if the viewport is the same size we last
+            // paginated for, there's nothing to recompute. This catches the
+            // system-bar toggle reversing on panel close (viewport returns to
+            // the exact pre-open dims) so closing the panel doesn't flash.
+            const _vv = window.visualViewport;
+            const _w = Math.round((_vv && _vv.width)  || window.innerWidth  || 0);
+            const _h = Math.round((_vv && _vv.height) || window.innerHeight || 0);
+            if (_w === _lastPaginatedW && _h === _lastPaginatedH) return;
+
             // Dismiss the highlight popup + selection handles immediately. They
             // are positioned with absolute viewport pixel coords (see
             // _placePopup / _positionHLHandles) captured before the rotation, so
@@ -6377,19 +6530,13 @@
             const controls = document.getElementById('reader-controls');
             const backdrop = document.getElementById('reader-controls-backdrop');
             controls.classList.toggle('visible');
-            // While the menu is open, also drop out of Android immersive
-            // mode so the system gesture insets are reported again and the
-            // user can swipe up to go home / switch apps. Restored when the
-            // menu is dismissed. `window.Android` is only defined inside the
-            // native WebView, so this is a no-op in a regular browser.
             const open = controls.classList.contains('visible');
             if (backdrop) backdrop.style.display = open ? 'block' : 'none';
-            try {
-                if (window.Android && typeof window.Android.showSystemBars === 'function') {
-                    if (open) window.Android.showSystemBars();
-                    else      window.Android.hideSystemBars();
-                }
-            } catch (_) {}
+            // Stay immersive: the panel is full-screen, so it needs no system
+            // bars. Previously we showed them on open / hid them on close, which
+            // resized the viewport and reflowed the page underneath (the "jump",
+            // #113). Re-assert immersive on both edges so a stray bar can't stick.
+            assertImmersive();
         }
 
         // ---- EPUB TOC parsing helpers ----------------------------------------
