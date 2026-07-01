@@ -296,6 +296,22 @@ function showEditModal(reading) {
 
     // Populate form fields
     document.getElementById('editReadingId').value = reading.id;
+    // Stash the book's ereader progress keys so "Clear Reading Progress" can also
+    // clear the linked ebook/audiobook progress, not just the reading field (#111).
+    { const b = reading.book || {}, keys = [];
+      if (b.calibre_id) keys.push(String(b.calibre_id));
+      if (b.abs_id) keys.push('abs:' + b.abs_id);
+      modal.dataset.progressKeys = keys.join(','); }
+    // Reveal "Reset word-credit mark" only when the #79 mark is stuck ahead of
+    // progress for this book (#86 → Edit Reading, #111).
+    { const rc = document.getElementById('editResetCreditBtn');
+      if (rc) { rc.classList.add('d-none'); rc.dataset.key = '';
+        const key = (modal.dataset.progressKeys || '').split(',').filter(Boolean)[0];
+        if (key) fetch(`${GR_EREADER_API}/progress/${encodeURIComponent(key)}`)
+            .then(r => r.ok ? r.json() : null)
+            .then(p => { if (p && typeof p.progress === 'number' && typeof p.maxProgress === 'number'
+                && p.maxProgress > p.progress + 0.005) { rc.dataset.key = key; rc.classList.remove('d-none'); } })
+            .catch(() => {}); } }
     document.getElementById('editBookTitle').textContent = reading.book.title;
     document.getElementById('editAuthor').textContent = reading.book.author;
     document.getElementById('editMedia').value = reading.media || '';
@@ -809,16 +825,10 @@ function grOpenBookActions(book, opts = {}) {
                     <i class="fas fa-clock-rotate-left me-2 text-info"></i>See Reading Sessions
                 </button>` : '';
 
-    // "Reset word-credit mark" (#86): unsticks the #79 high-water-mark when it got
-    // poisoned (e.g. a broken EPUB reported a spurious-high spot) so forward reading
-    // credits words again. Hidden until the async progress fetch below confirms the
-    // mark is actually ahead of the current position.
+    // Word-credit mark (#86): the popup still surfaces the "Word credit resumes past
+    // X%" row when the #79 high-water-mark is stuck ahead of progress, but the RESET
+    // action now lives in the Edit Reading modal (#111).
     const progKey = book.calibre_id ? String(book.calibre_id) : (book.abs_id ? 'abs:' + book.abs_id : '');
-    const resetCreditBtn = progKey ? `
-                <button type="button" id="resetCreditBtn" class="btn btn-sm btn-outline-secondary d-none"
-                        onclick="GreatReads.resetCreditMark('${progKey.replace(/'/g, '%27')}')">
-                    <i class="fas fa-rotate-left me-2 text-warning"></i>Reset word-credit mark
-                </button>` : '';
 
     // View Ratings (#111): only when the passed reading has any category rating.
     // Opens a separate popup (keeps the main popup clean and, later, handles a book
@@ -842,7 +852,7 @@ function grOpenBookActions(book, opts = {}) {
     // opts.primaryActionHtml = the one state-specific action (Finish / Start / Add
     // to TBR / Add reread); opts.editReadingHtml = the Edit Reading button (pages
     // with a reading modal); opts.actionsHtml = remaining extras (temporary).
-    const secondaryInner = `${hlLink}${opts.primaryActionHtml || ''}${viewRatingsBtn}${opts.actionsHtml || ''}${sessionsBtn}${resetCreditBtn}${opts.editReadingHtml || ''}${editBookLink}`;
+    const secondaryInner = `${hlLink}${opts.primaryActionHtml || ''}${viewRatingsBtn}${opts.actionsHtml || ''}${sessionsBtn}${opts.editReadingHtml || ''}${editBookLink}`;
     const secondary = secondaryInner.trim() ? `
         <div class="col-12">
             <div class="open-secondary">${secondaryInner}</div>
@@ -933,12 +943,88 @@ function grOpenBookActions(book, opts = {}) {
                         <span class="fw-medium text-end" style="color:#dc3545;">${Math.round(hwm * 100)}%</span></div>`;
                     det.insertAdjacentHTML('beforeend', rows);
                 }
-                if (stuck) { const b = document.getElementById('resetCreditBtn'); if (b) b.classList.remove('d-none'); }
             })
             .catch(() => {});
     }
 
     if (typeof opts.onShow === 'function') opts.onShow(book);
+}
+
+// ── Shared Edit Reading modal handlers (#111) ────────────────────────────────
+// The modal markup lives in _edit_reading_modal.html (mounted via base.html) so
+// every page — including Library — can edit a reading. These are the button
+// handlers; reload happens via the page's global refreshReadings() (full reload
+// as a fallback). Moved here from index/tbr so they exist everywhere.
+function _erCloseEditModal() { bootstrap.Modal.getInstance(document.getElementById('editReadingModal'))?.hide(); }
+function _erReload() { if (typeof refreshReadings === 'function') refreshReadings(); else location.reload(); }
+
+async function startReadingFromModal() {
+    const id = document.getElementById('editReadingId').value;
+    if (!confirm("Start this reading with today's date?")) return;
+    try {
+        await apiCall(`/readings/${id}`, { method: 'PUT', data: { date_started: new Date().toISOString().split('T')[0], status: 'In Progress' } });
+        showToast('Reading started!', 'success'); _erCloseEditModal(); _erReload();
+    } catch (e) {}
+}
+async function startReadingManualFromModal() {
+    const id = document.getElementById('editReadingId').value;
+    const d = prompt('Enter start date (YYYY-MM-DD):', new Date().toISOString().split('T')[0]);
+    if (!d) return;
+    try { await startReading(id, d); showToast('Reading started with custom date!', 'success'); _erCloseEditModal(); _erReload(); } catch (e) {}
+}
+async function pauseReadingFromModal() {
+    const id = document.getElementById('editReadingId').value;
+    if (!confirm('Pause this reading? Progress will be frozen at the current point.')) return;
+    try { await pauseReading(id); showToast('Reading paused!', 'success'); _erCloseEditModal(); _erReload(); } catch (e) {}
+}
+async function unpauseReadingFromModal() {
+    const id = document.getElementById('editReadingId').value;
+    if (!confirm('Unpause this reading? Progress will resume from where it was paused.')) return;
+    try { await unpauseReading(id); showToast('Reading unpaused!', 'success'); _erCloseEditModal(); _erReload(); } catch (e) {}
+}
+async function deleteReadingFromModal() {
+    const id = document.getElementById('editReadingId').value;
+    if (!confirm('Delete this reading? This action cannot be undone.')) return;
+    try {
+        await apiCall(`/readings/${id}`, { method: 'DELETE' });
+        showToast('Reading deleted', 'success');
+        _erCloseEditModal();
+        bootstrap.Modal.getInstance(document.getElementById('openBookModal'))?.hide();
+        _erReload();
+    } catch (e) { showToast('Failed to delete reading', 'danger'); }
+}
+async function clearProgressFromModal() {
+    const id = document.getElementById('editReadingId').value;
+    if (!id) return;
+    if (!confirm('Clear reading progress for this reading?')) return;
+    try {
+        await apiCall(`/readings/${id}/progress`, { method: 'PUT', params: { current_percent: 0 } });
+        // also clear any linked ereader progress when we know the book's keys
+        const el = document.getElementById('editReadingModal');
+        const keys = (el && el.dataset.progressKeys) ? el.dataset.progressKeys.split(',').filter(Boolean) : [];
+        for (const k of keys) await fetch(`${GR_EREADER_API}/progress/${encodeURIComponent(k)}`, { method: 'DELETE' }).catch(() => {});
+        showToast('Reading progress cleared', 'success');
+        _erCloseEditModal();
+        bootstrap.Modal.getInstance(document.getElementById('openBookModal'))?.hide();
+        _erReload();
+    } catch (e) { showToast('Failed to clear progress', 'danger'); }
+}
+// Reset the #79 word-credit high-water-mark (#86) from the Edit Reading modal —
+// only revealed by showEditModal when the mark is actually stuck ahead of progress.
+function resetCreditFromModal() {
+    const btn = document.getElementById('editResetCreditBtn');
+    const key = btn && btn.dataset.key;
+    if (!key) return;
+    fetch(`${GR_EREADER_API}/progress/${encodeURIComponent(key)}/reset-credit-mark`, { method: 'POST' })
+        .then(r => r.ok ? r.json() : null)
+        .then(d => {
+            showToast(d ? 'Word-credit mark reset — forward reading will count again'
+                        : 'Could not reset (no saved progress yet)', d ? 'success' : 'warning');
+            _erCloseEditModal();
+            bootstrap.Modal.getInstance(document.getElementById('openBookModal'))?.hide();
+            _erReload();
+        })
+        .catch(() => showToast('Reset failed', 'warning'));
 }
 
 // "View Ratings" (#111): show a reading's category star ratings in a popup that

@@ -315,121 +315,6 @@
 </div>
 
 <!-- Edit Reading Modal -->
-<div class="modal fade" id="editReadingModal" tabindex="-1">
-    <div class="modal-dialog modal-lg">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title">
-                    <i class="fas fa-edit me-2"></i>Edit Reading
-                </h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-            </div>
-            <div class="modal-body">
-                <form id="editReadingForm">
-                    <input type="hidden" id="editReadingId" name="reading_id">
-
-                    <!-- Book Info (Read-only) -->
-                    <div class="row mb-3">
-                        <div class="col-md-8">
-                            <h6 class="text-muted">Book</h6>
-                            <h5 id="editBookTitle" class="mb-1">Book Title</h5>
-                            <p id="editAuthor" class="text-muted mb-0">Author Name</p>
-                        </div>
-                        <div class="col-md-4">
-                            <div class="book-cover mx-auto" id="editBookCover">
-                                <img id="editBookCoverImg" src="" alt="Book cover" class="book-cover-img" style="display: none;">
-                                <i class="fas fa-book fa-2x book-cover-fallback"></i>
-                            </div>
-                        </div>
-                    </div>
-
-                    <hr>
-
-                    <!-- Reading Details -->
-                    <div class="row mb-3">
-                        <div class="col-md-4">
-                            <label for="editMedia" class="form-label">Media Type</label>
-                            <select class="form-select" id="editMedia" name="media">
-                                <option value="">Select media...</option>
-                                <option value="Ebook">Ebook</option>
-                                <option value="Physical">Physical</option>
-                                <option value="Audio">Audio</option>
-                            </select>
-                        </div>
-                        <div class="col-md-4">
-                            <label for="editDateStarted" class="form-label">Date Started</label>
-                            <input type="date" class="form-control" id="editDateStarted" name="date_started">
-                        </div>
-                        <div class="col-md-4">
-                            <label for="editDateFinished" class="form-label">Date Finished</label>
-                            <input type="date" class="form-control" id="editDateFinished" name="date_finished_actual">
-                        </div>
-                    </div>
-
-                    <!-- Ratings -->
-                    <h6 class="text-muted mb-3">Ratings</h6>
-                    <div class="row mb-3">
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label">Enjoyment</label>
-                            <div class="emoji-rating" data-rating-type="enjoyment" data-emoji="star">
-                                <input type="hidden" id="editRatingEnjoyment" name="rating_enjoyment" value="0">
-                                <div class="emoji-rating-display"></div>
-                            </div>
-                        </div>
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label">Writing Quality</label>
-                            <div class="emoji-rating" data-rating-type="writing" data-emoji="star">
-                                <input type="hidden" id="editRatingWriting" name="rating_writing" value="0">
-                                <div class="emoji-rating-display"></div>
-                            </div>
-                        </div>
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label">Characters</label>
-                            <div class="emoji-rating" data-rating-type="characters" data-emoji="star">
-                                <input type="hidden" id="editRatingCharacters" name="rating_characters" value="0">
-                                <div class="emoji-rating-display"></div>
-                            </div>
-                        </div>
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label">World Building</label>
-                            <div class="emoji-rating" data-rating-type="world_building" data-emoji="star">
-                                <input type="hidden" id="editRatingWorldBuilding" name="rating_world_building" value="0">
-                                <div class="emoji-rating-display"></div>
-                            </div>
-                        </div>
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label">Readability</label>
-                            <div class="emoji-rating" data-rating-type="readability" data-emoji="star">
-                                <input type="hidden" id="editRatingReadability" name="rating_readability" value="0">
-                                <div class="emoji-rating-display"></div>
-                            </div>
-                        </div>
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label">Horror Rating</label>
-                            <div class="emoji-rating" data-rating-type="horror" data-emoji="blood">
-                                <input type="hidden" id="editRatingHorror" name="rating_horror" value="0">
-                                <div class="emoji-rating-display"></div>
-                            </div>
-                        </div>
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label">Spice Rating</label>
-                            <div class="emoji-rating" data-rating-type="spice" data-emoji="pepper">
-                                <input type="hidden" id="editRatingSpice" name="rating_spice" value="0">
-                                <div class="emoji-rating-display"></div>
-                            </div>
-                        </div>
-                    </div>
-                </form>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                <button type="button" class="btn btn-primary" onclick="GreatReads.saveReadingChanges()">
-                    <i class="fas fa-save me-1"></i>Save Changes
-                </button>
-            </div>
-        </div>
-    </div>
-</div>
 {% endblock %}
 
 {% block extra_scripts %}
@@ -828,20 +713,17 @@ function openReadingActions(readingId) {
 
     // Unified popup buttons (#111): finished book → "Add reread to TBR" is the
     // variable action; Edit Reading + Edit Book are placed by the shared popup.
-    // Delete Reading is a temporary extra (moving into the Edit Reading modal).
+    // Delete Reading now lives inside the Edit Reading modal (#111).
     const primaryActionHtml = `<button type="button" class="btn btn-sm btn-outline-secondary" onclick="journalAddReread(${reading.book.id})">
         <i class="fas fa-plus me-2 text-success"></i>Add reread to TBR</button>`;
     const editReadingHtml = `<button type="button" class="btn btn-sm btn-outline-secondary" onclick="journalEditFromPopup(${reading.id})">
         <i class="fas fa-edit me-2 text-primary"></i>Edit Reading</button>`;
-    const actionsHtml = `<button type="button" class="btn btn-sm btn-outline-secondary" onclick="journalDeleteFromPopup(${reading.id})">
-        <i class="fas fa-trash me-2 text-danger"></i>Delete Reading</button>`;
 
     GreatReads.openBookActions(reading.book, {
         reading: reading,
         extraInfoHtml: GreatReads.readingExtraInfoHtml(reading),   // ratings → View Ratings popup (#111)
         primaryActionHtml,
         editReadingHtml,
-        actionsHtml,
     });
 }
 

@@ -773,22 +773,36 @@ function openBookActions(bookId) {
         || readings.find(r => !r.date_started && !r.date_finished_actual);
 
     // Unified popup buttons (#111): variable action is Add to TBR, or "Add reread to
-    // TBR" if the book already has a finished reading. Clear Reading Progress is a
-    // temporary extra (moving into the Edit Reading modal). Library has no
-    // edit-reading modal, so it passes no editReadingHtml.
+    // TBR" if the book already has a finished reading. Library now shares the Edit
+    // Reading modal, so Delete + Clear Progress live in there (not on the popup).
     const readBefore = readings.some(r => r.date_finished_actual);
     const primaryActionHtml = `<button type="button" class="btn btn-sm btn-outline-secondary" onclick="libAddToTBR(${book.id})">
                     <i class="fas fa-plus me-2 text-success"></i>${readBefore ? 'Add reread to TBR' : 'Add to TBR'}</button>`;
-    const actionsHtml = `<button type="button" class="btn btn-sm btn-outline-secondary" onclick="libClearProgress(${book.id})">
-                    <i class="fas fa-trash me-2 text-danger"></i>Clear Reading Progress</button>`;
+    // Edit Reading opens the shared modal for the most relevant reading (in-progress,
+    // else not-started, else the most recent finished) — when the book has one.
+    const editable = relevant || readings[readings.length - 1] || null;
+    const editReadingHtml = editable ? `<button type="button" class="btn btn-sm btn-outline-secondary" onclick="libEditReading(${editable.id})">
+                    <i class="fas fa-edit me-2 text-primary"></i>Edit Reading</button>` : '';
 
     GreatReads.openBookActions(book, {
         reading: relevant,
         extraInfoHtml: GreatReads.readingExtraInfoHtml(relevant),
         primaryActionHtml,
-        actionsHtml,
+        editReadingHtml,
     });
 }
+
+// Open the shared Edit Reading modal for a Library reading (#111). Finds the
+// reading in the loaded books, attaches its book, and hands it to showEditModal.
+function libEditReading(readingId) {
+    hideOpenBookModal();
+    for (const b of allBooks) {
+        const rd = (b.readings || []).find(r => r.id === readingId);
+        if (rd) { rd.book = rd.book || b; GreatReads.showEditModal(rd); return; }
+    }
+}
+// The shared edit modal reloads via a global refreshReadings() — point it at Library's.
+window.refreshReadings = () => refreshLibraryData();
 
 function hideOpenBookModal() {
     const m = bootstrap.Modal.getInstance(document.getElementById('openBookModal'));

@@ -70,8 +70,7 @@
 <body>
     <div id="app-loading" class="app-loading">
         <div>
-            <div class="app-loading-brand">GreatReads</div>
-            <div class="app-loading-quote">Loading…</div>
+            <div class="app-loading-quote"></div>
         </div>
     </div>
     <script>
@@ -304,6 +303,8 @@
 
     <!-- Shared Edit Book modal (#110): available on every page via bkeOpen(bookId) -->
     {% include "_book_edit_modal.html" %}
+    <!-- Shared Edit Reading modal (#111): every page (incl. Library) via showEditModal(reading) -->
+    {% include "_edit_reading_modal.html" %}
     {% endif %}
 
 
@@ -385,47 +386,41 @@
     <!-- Shared Edit Book modal behavior (#110); needs GreatReads.* from app.js above -->
     {% if current_user %}<script src="{{ url_for('static', path='/js/book_edit.js') }}?v=1"></script>{% endif %}
 
-    <!-- Loading screen: show a random saved highlight while the page's data
-         loads, instead of a bare spinner / "Loading…" (#55). Renders into the
-         page's #loading-state (tbr/journal/library/books); a no-op elsewhere.
-         Pulls highlights from the absorbed Ereader API (GR_EREADER_API). -->
-    <script src="{{ url_for('static', path='/js/quotes.js') }}?v=1"></script>
+    <!-- Loading screen (#55/#114): the shared quotes.js on ONE host — same as the
+         ereader (web/index.html), which works great. The doubling was base.html
+         starting it on TWO hosts (overlay + #loading-state). Host = the in-page
+         #loading-state where you wait for data (TBR/Journal/Library/Books), else the
+         full-screen overlay (Home/Stats, which hold it via window.__pageReady). -->
+    <script src="{{ url_for('static', path='/js/quotes.js') }}?v=7"></script>
     <script>
         (function () {
-            function go() {
-                var el = document.getElementById('loading-state');
-                if (el && window.GreatReadsQuotes && typeof GR_EREADER_API !== 'undefined') {
-                    GreatReadsQuotes.start(el, GR_EREADER_API);
+            var overlay = document.getElementById('app-loading');
+            var ls = document.getElementById('loading-state');
+            var host = ls || (overlay ? overlay.querySelector('.app-loading-quote') : null);
+            function startQuotes() {
+                if (host && window.GreatReadsQuotes && typeof GR_EREADER_API !== 'undefined') {
+                    try { GreatReadsQuotes.start(host, GR_EREADER_API); } catch (e) {}
                 }
             }
-            if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', go);
-            else go();
-        })();
+            if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', startQuotes);
+            else startQuotes();
 
-        // App loading overlay lift (#28). Quotes show in the full-screen overlay
-        // too; it lifts on DOMContentLoaded — unless the page set window.__pageReady
-        // to a promise (e.g. stats waiting on its numbers), in which case we hold
-        // until that resolves. Capped so it can never trap the user.
-        (function () {
-            var el = document.getElementById('app-loading');
-            if (!el) return;
-            var q = el.querySelector('.app-loading-quote');
-            if (q && window.GreatReadsQuotes && typeof GR_EREADER_API !== 'undefined') {
-                try { GreatReadsQuotes.start(q, GR_EREADER_API); } catch (e) {}
-            }
+            // Overlay lift: reveal the page when its data is ready (window.__pageReady)
+            // or after a hard cap so it can never trap the user.
+            if (!overlay) return;
+            var overlayIsHost = !ls;   // the overlay carries the quote only when there's no #loading-state
             var done = false;
             function hide() {
                 if (done) return; done = true;
-                if (window.GreatReadsQuotes) { try { GreatReadsQuotes.stop(); } catch (e) {} }
-                el.style.opacity = '0';
-                setTimeout(function () { el.style.display = 'none'; }, 250);
+                if (overlayIsHost && window.GreatReadsQuotes) { try { GreatReadsQuotes.stop(); } catch (e) {} }
+                overlay.style.opacity = '0';
+                setTimeout(function () { overlay.style.display = 'none'; }, 250);
             }
             window.hideAppLoading = hide;
             function lift() {
                 var ready = (window.__pageReady && typeof window.__pageReady.then === 'function')
                     ? window.__pageReady : Promise.resolve();
-                var cap = new Promise(function (r) { setTimeout(r, 4500); });
-                Promise.race([ready, cap]).then(hide);
+                Promise.race([ready, new Promise(function (r) { setTimeout(r, 4500); })]).then(hide);
             }
             if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', lift);
             else lift();
