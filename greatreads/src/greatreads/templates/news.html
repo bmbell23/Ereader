@@ -668,7 +668,21 @@ function fmtDate(iso, precision) {
 }
 
 let bdCurrent = null, bdNav = [], bdIndex = -1, bdSeriesKey = null, bdAuthorKey = null;
+// #120: the Books-page detail modal now routes to the shared popup (GreatReads popup),
+// which has the bigger layout, series/author sections, click-to-navigate, and swipe.
+// Local cards open by book id (rich); remote/news cards open with Preview/Save-locally/
+// Ignore. The list becomes the popup's prev/next nav. The legacy modal body below is
+// unreachable now — retire in #122.
+function grBooksOpenDetails(key, navList) {
+    const list = navList || visibleCards();
+    const toItem = x => (x.kind === 'local' && x.book_id != null) ? x.book_id : x;
+    const idx = list.findIndex(x => cardKey(x) === key);
+    if (idx >= 0) { GreatReads.openBookNav(list.map(toItem), idx); return; }
+    const only = cardReg[key] || cards.find(x => cardKey(x) === key);
+    if (only) GreatReads.openBookNav([toItem(only)], 0);
+}
 function openBookDetails(key, navList) {
+    return grBooksOpenDetails(key, navList);
     const c = cardReg[key] || cards.find(x => cardKey(x) === key);
     if (!c) return;
     bdCurrent = c;
@@ -839,7 +853,7 @@ function saveLocally(newsId) {
 async function ignoreRelease(newsId) {
     try { await GreatReads.apiCall(`/news/${newsId}/dismiss`, { method: 'POST' }); } catch (e) {}
     cards = cards.filter(c => c.news_id !== newsId);
-    bootstrap.Modal.getInstance(document.getElementById('bookDetailsModal'))?.hide();
+    bootstrap.Modal.getInstance(document.getElementById('openBookModal'))?.hide();
     renderAll();
     if (typeof loadNewsBadge === 'function') loadNewsBadge();
 }

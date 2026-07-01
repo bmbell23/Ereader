@@ -769,14 +769,12 @@ async function grInjectAuthorReads(author) {
 // Open the shared popup for ANY book by id (#120 Phase 2). Fetches full details so a
 // series sibling / author's other book can be opened even if this page never loaded it.
 // Re-renders the already-open popup in place → smooth, no close/reopen flash.
-async function grOpenBookById(id) {
-    if (id == null) return;
+// Fetch full details for a local book id and open the popup. keepNav preserves the
+// prev/next list (used when stepping through a nav list); direct opens clear it.
+async function grFetchAndOpen(id, extraOpts, keepNav) {
     let book;
     try { book = await GreatReads.apiCall('/books/' + id + '/details'); }
     catch (e) { return; }
-    // Close the stacked "View series" grid if the click came from it.
-    bootstrap.Modal.getInstance(document.getElementById('grSeriesModal'))?.hide();
-    // Pick the reading that drives actions/progress: in-progress → not-started → last.
     const rs = book.readings || [];
     const relevant = rs.find(r => r.date_started && !r.date_finished_actual && r.status !== 'paused')
         || rs.find(r => !r.date_started)
@@ -784,21 +782,101 @@ async function grOpenBookById(id) {
     const editReadingHtml = relevant
         ? `<button type="button" class="btn btn-sm btn-outline-secondary" onclick="GreatReads.editReadingById(${relevant.id})"><i class="fas fa-edit me-2 text-primary"></i>Edit Reading</button>`
         : '';
-    GreatReads.openBookActions(book, {
+    grOpenBookActions(book, Object.assign({
         reading: relevant,
         extraInfoHtml: (typeof GreatReads.readingExtraInfoHtml === 'function')
             ? GreatReads.readingExtraInfoHtml(relevant) : '',
         editReadingHtml,
+    }, extraOpts || {}), keepNav);
+}
+async function grOpenBookById(id) {
+    if (id == null) return;
+    bootstrap.Modal.getInstance(document.getElementById('grSeriesModal'))?.hide();  // came from grid
+    grNav = { items: [], index: -1 };   // sibling/author click → single, no prev/next arrows
+    grFetchAndOpen(id, {});
+}
+
+// ── Prev/next nav through a list of books (#100 / #120): items are book ids (local)
+// or remote news cards. Used by the Books-page grid; swipe + arrow keys step it. ──
+let grNav = { items: [], index: -1 };
+function grOpenBookNav(items, index) {
+    grNav = { items: items || [], index: index || 0 };
+    grOpenNavCurrent();
+}
+function grOpenNavCurrent() {
+    const it = grNav.items[grNav.index];
+    if (it == null) return;
+    if (typeof it === 'object') grOpenBookActions(grCardToBook(it), grNewsOpts(it), true);  // remote
+    else grFetchAndOpen(it, {}, true);                                                      // local id
+}
+function grNavStep(delta) {
+    if (!grNav.items.length) return;
+    const i = grNav.index + delta;
+    if (i < 0 || i >= grNav.items.length) return;   // clamp at the ends (no wrap)
+    grNav.index = i;
+    grOpenNavCurrent();
+}
+function grUpdateNavButtons() {
+    const prev = document.getElementById('gbaPrev'), next = document.getElementById('gbaNext');
+    const hasNav = grNav.items.length > 1;
+    if (prev) { prev.style.display = hasNav ? '' : 'none'; prev.disabled = grNav.index <= 0; }
+    if (next) { next.style.display = hasNav ? '' : 'none'; next.disabled = grNav.index < 0 || grNav.index >= grNav.items.length - 1; }
+}
+// Swipe (touch) + arrow keys step the popup's prev/next nav when a list is active.
+function grBindPopupNav() {
+    const modal = document.getElementById('openBookModal');
+    if (!modal || modal.dataset.navBound) return;
+    modal.dataset.navBound = '1';
+    let sx = 0, sy = 0;
+    modal.addEventListener('touchstart', e => { const t = e.changedTouches[0]; sx = t.clientX; sy = t.clientY; }, { passive: true });
+    modal.addEventListener('touchend', e => {
+        const t = e.changedTouches[0], dx = t.clientX - sx, dy = t.clientY - sy;
+        if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) grNavStep(dx < 0 ? 1 : -1);
+    }, { passive: true });
+    document.addEventListener('keydown', e => {
+        if (!modal.classList.contains('show')) return;
+        if (e.key === 'ArrowRight') grNavStep(1);
+        else if (e.key === 'ArrowLeft') grNavStep(-1);
     });
+}
+// A remote (news) card → the book-like shape the popup renders (no DB id/inventory).
+function grCardToBook(c) {
+    return {
+        id: (c.book_id != null ? c.book_id : null),
+        title: c.title, author: c.author, series: c.series, universe: c.universe,
+        series_number: c.series_number, word_count: c.word_count, page_count: c.page_count,
+        date_published: c.date, genre: c.genre, cover_url: c.cover_url || null,
+        cover: false, inventory: [], readings: [],
+    };
+}
+// News-item actions (Books page only — saveLocally/ignoreRelease live there).
+function grNewsOpts(c) {
+    const b = [];
+    if (c.preview_link) b.push(`<a class="btn btn-sm btn-outline-secondary" href="${c.preview_link}" target="_blank" rel="noopener"><i class="fas fa-eye me-2"></i>Preview</a>`);
+    if (c.news_id != null) {
+        b.push(`<button class="btn btn-sm btn-outline-success" onclick="saveLocally(${c.news_id})"><i class="fas fa-download me-2"></i>Save locally</button>`);
+        b.push(`<button class="btn btn-sm btn-outline-secondary" onclick="ignoreRelease(${c.news_id})"><i class="fas fa-ban me-2"></i>Ignore</button>`);
+    }
+    return { actionsHtml: b.join(''), editBook: false, sessions: false, highlights: false };
 }
 
 // Edit Reading for a nav-opened book — reads the reading off grActiveBook (no page
 // context needed) and opens the shared Edit Reading modal (#120 Phase 2).
-function grEditReadingById(rid) {
-    const b = grActiveBook;
-    const rd = ((b && b.readings) || []).find(r => r.id === rid);
-    if (rd) { rd.book = b; GreatReads.showEditModal(rd); }
+// Open the shared Edit Reading modal for a reading id. Fetch the reading fresh (page
+// data doesn't always carry a full readings[] array — the old grActiveBook.readings
+// lookup silently no-op'd on TBR/Home), attach the current book for title/author/progress
+// context, then open the modal.
+async function grOpenEditReading(rid) {
+    if (rid == null) return;
+    let rd;
+    try { rd = await apiCall('/readings/' + rid); } catch (e) { return; }
+    rd.book = grActiveBook || rd.book || {};
+    GreatReads.showEditModal(rd);
 }
+function grEditReadingById(rid) { grOpenEditReading(rid); }
+// "Not Yet Rated" → same Edit Reading modal (which holds the emoji-rating inputs) so the
+// user can enter ratings.
+function grEditRatings(rid) { grOpenEditReading(rid); }
 
 // Build & show the unified cover-tap popup. Used by Library, TBR, and Journal.
 //   book : enriched book dict (calibre_id, abs_id, inventory, series, counts…)
@@ -811,9 +889,10 @@ function grEditReadingById(rid) {
 //     actionsHtml  : HTML for the stacked secondary action buttons at the bottom,
 //     onShow       : callback(book) run after the modal is shown (async fills).
 //   }
-function grOpenBookActions(book, opts = {}) {
+function grOpenBookActions(book, opts = {}, keepNav = false) {
     if (!book) return;
     grActiveBook = book;   // for GreatReads.openSeries() + the injected sections (#120)
+    if (!keepNav) grNav = { items: [], index: -1 };   // direct open → no prev/next arrows
     const canRead = !!book.calibre_id;
     const canListen = !!book.abs_id;
     // encodeURIComponent leaves ' unescaped, which would break the inline onclick
@@ -853,8 +932,10 @@ function grOpenBookActions(book, opts = {}) {
 
     // ── Cover (top-left) + compact format tiles (#120) ───────────────────────────────
     const base = window.APP_BASE_PATH || '';
-    const coverUrl = (book.cover && book.id != null)
-        ? `${base}/static/covers/${book.id}.jpg?v=${Date.now()}` : '';
+    const coverUrl = book.cover_url                                   // remote (news) cover
+        ? book.cover_url
+        : ((book.cover && book.id != null)                            // local cover file
+            ? `${base}/static/covers/${book.id}.jpg?v=${Date.now()}` : '');
     const coverInner = coverUrl
         ? `<img src="${coverUrl}" alt="" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';"><div class="gba-ph" style="display:none;">${grEsc(book.title || '')}</div>`
         : `<div class="gba-ph">${grEsc(book.title || '')}</div>`;
@@ -871,60 +952,52 @@ function grOpenBookActions(book, opts = {}) {
                 (phys.shelf_position != null ? `, pos ${phys.shelf_position}` : '');
         }
     }
-    let physProg = '';
-    if (phys && ipReading) {
-        const pct = ipReading.current_progress_percent || 0;
-        const pg = ipReading.current_progress_page || 0;
-        physProg = pct > 0 ? `${pct.toFixed(1)}%${pg ? ' · p. ' + pg : ''}` : 'Tap to log progress';
+    // Shelf location + Planned dates are normal detail rows now (not separate blocks).
+    if (phys && shelfLoc) rows.push(['Shelf', shelfLoc]);
+    const planned = !!(r && !r.date_started && !r.date_finished_actual);
+    if (planned) {
+        const es = r.date_est_start, ee = r.date_est_end || r.date_finished_estimate;
+        if (es || ee) rows.push(['Planned', `${es ? formatDateSmart(es) : 'TBD'} – ${ee ? formatDateSmart(ee) : 'TBD'}`]);
     }
 
-    // Compact format tiles, stacked VERTICALLY beside the cover (icon + label per row).
-    // Physical is a peer tile ("Read", purple, book icon); tap-to-log only when a
-    // physical read is in progress.
+    // Compact format tiles, laid out in a ROW beneath the cover + details. Physical is
+    // a peer tile ("Read", purple, book icon); tap-to-log only when in progress.
     const tiles = [];
-    if (canRead) tiles.push(`<button type="button" class="open-type-btn open-type-sm open-type-ebook"
+    if (canRead) tiles.push(`<div class="col"><button type="button" class="open-type-btn open-type-sm open-type-ebook"
         onclick="grOpenEbook('${book.calibre_id}', '${titleEnc}')">
-        <i class="fas fa-book-open"></i><span class="fw-bold">Read</span></button>`);
-    if (canListen) tiles.push(`<button type="button" class="open-type-btn open-type-sm open-type-audio"
+        <i class="fas fa-book-open"></i><span class="fw-bold">Read</span></button></div>`);
+    if (canListen) tiles.push(`<div class="col"><button type="button" class="open-type-btn open-type-sm open-type-audio"
         onclick="grOpenAudio('${book.abs_id}', '${titleEnc}', '${authorEnc}', '${book.calibre_id || ''}')">
-        <i class="fas fa-headphones"></i><span class="fw-bold">Listen</span></button>`);
+        <i class="fas fa-headphones"></i><span class="fw-bold">Listen</span></button></div>`);
     if (phys) {
         const physClickable = !!ipReading;
         const cls = 'open-type-btn open-type-sm open-type-physical' + (physClickable ? '' : ' open-type-plain');
         const click = physClickable ? ' onclick="GreatReads.updatePhysicalProgress()"' : '';
-        tiles.push(`<button type="button" class="${cls}"${click}>
-            <i class="fas fa-book"></i><span class="fw-bold">Read</span></button>`);
+        tiles.push(`<div class="col"><button type="button" class="${cls}"${click}>
+            <i class="fas fa-book"></i><span class="fw-bold">Read</span></button></div>`);
     }
-    const shelfCaption = phys ? `<div class="small text-muted mt-2">
-        <i class="fas fa-map-marker-alt me-1" style="color:#6B4BA3;"></i>${shelfLoc || 'Physical copy'}${physProg ? ' · ' + physProg : ''}</div>` : '';
-
     const noFormats = !canRead && !canListen && !phys;
-    const topSection = `
+    // Row 1: cover top-left, text fields top-right.
+    const detailsInner = rows.length ? `<div class="open-details">
+        ${rows.map(([k, v]) => `<div class="d-flex justify-content-between gap-3">
+            <span class="text-muted">${k}</span><span class="fw-medium text-end">${v}</span>
+        </div>`).join('')}</div>` : '';
+    const row1 = `
         <div class="col-12"><div class="d-flex gap-3">
             <div class="gba-detail-cover flex-shrink-0">${coverInner}</div>
-            <div class="flex-grow-1 d-flex flex-column justify-content-center">
-                ${noFormats
-                    ? '<div class="text-muted small"><i class="fas fa-book me-1"></i>Not in your library.</div>'
-                    : `<div class="d-flex flex-column gap-2">${tiles.join('')}</div>${shelfCaption}`}
-            </div>
+            <div class="flex-grow-1">${detailsInner}</div>
         </div></div>`;
-
-    const details = rows.length ? `
-        <div class="col-12">
-            <div class="open-details">
-                ${rows.map(([k, v]) => `<div class="d-flex justify-content-between gap-3">
-                    <span class="text-muted">${k}</span><span class="fw-medium text-end">${v}</span>
-                </div>`).join('')}
-            </div>
-        </div>` : '';
-
-    // (Cover + compact format tiles are assembled into `topSection` above.)
+    // Row 2: format reading buttons in a row, under the cover + fields.
+    const formatRow = noFormats
+        ? '<div class="col-12 text-muted small"><i class="fas fa-book me-1"></i>Not in your library.</div>'
+        : `<div class="col-12"><div class="row g-2">${tiles.join('')}</div></div>`;
 
     // The progress display is the tap-to-log entry for any in-progress reading
     // (update %/page, start a physical session) — independent of inventory. (#41)
-    const extraInfo = opts.extraInfoHtml
-        ? `<div class="col-12"${ipReading ? ' onclick="GreatReads.updatePhysicalProgress()" style="cursor:pointer"' : ''}>${opts.extraInfoHtml}</div>`
-        : '';
+    // The "Currently reading · tap to log progress" block is gone from the popup:
+    // Planned is a field, physical progress logs via the Physical tile, and ebook/audio
+    // track automatically. (#120)
+    const extraInfo = '';
 
     // Highlights link — shown on any page when the book is a linked ebook. Hidden
     // until the async count below confirms there are some. (Library/TBR/Journal all
@@ -959,11 +1032,12 @@ function grOpenBookActions(book, opts = {}) {
     const hasFinishedRead = !!(r && r.is_finished) ||
         (Array.isArray(book.readings) && book.readings.some(x => x.date_finished_actual));
     const showSessionsStats = opts.sessions !== false && book.id != null && (startedNotFinished || hasFinishedRead);
-    const showSessionsBtn = opts.sessions !== false && book.id != null && hasFinishedRead;
+    // Show for any started reading — in-progress OR finished (paired with View Ratings).
+    const showSessionsBtn = opts.sessions !== false && book.id != null && (startedNotFinished || hasFinishedRead);
     const sessionsBtn = showSessionsBtn ? `
                 <button type="button" id="seeSessionsBtn" class="btn btn-sm btn-outline-secondary"
                         onclick="GreatReads.showReadingSessions(${book.id}, '${titleEnc}')">
-                    <i class="fas fa-clock-rotate-left me-2 text-info"></i>See Reading Sessions
+                    <i class="fas fa-clock-rotate-left me-2 text-info"></i>View Reading Sessions
                 </button>` : '';
 
     // Word-credit mark (#86): the popup still surfaces the "Word credit resumes past
@@ -982,25 +1056,45 @@ function grOpenBookActions(book, opts = {}) {
     // reading may be the rated one (#111). (Multi-rated → picker in a later phase.)
     const ratedReadings = (Array.isArray(book.readings) ? book.readings : []).filter(hasRatingsIn);
     const ratingReadingId = hasRatingsIn(r) ? r.id : (ratedReadings[0] ? ratedReadings[0].id : null);
-    const viewRatingsBtn = ratingReadingId != null ? `
-                <button type="button" class="btn btn-sm btn-outline-secondary"
-                        onclick="GreatReads.showRatings(${ratingReadingId})">
-                    <i class="fas fa-star me-2" style="color:#e0a800;"></i>View Ratings
-                </button>` : '';
+    // Rating target: a rated reading, else a finished one, else the in-progress one — so
+    // both finished AND in-progress books get a ratings button ("Not Yet Rated" if none).
+    const finishedReading = (r && r.is_finished) ? r
+        : (Array.isArray(book.readings) ? book.readings.find(x => x.date_finished_actual) : null);
+    const rateTargetId = ratingReadingId != null ? ratingReadingId
+        : (finishedReading ? finishedReading.id
+        : (ipReading ? ipReading.id : null));
+    let viewRatingsBtn = '';
+    if (rateTargetId != null) {
+        const rated = ratingReadingId != null;
+        // Rated → View Ratings (read-only). Unrated → "Not Yet Rated" opens the rating editor.
+        const icon = rated ? '<i class="fas fa-star me-2" style="color:#e0a800;"></i>'
+                           : '<i class="far fa-star me-2 text-muted"></i>';
+        const onclick = rated ? `GreatReads.showRatings(${rateTargetId})` : `GreatReads.editRatings(${rateTargetId})`;
+        viewRatingsBtn = `
+                <button type="button" class="btn btn-sm btn-outline-secondary" onclick="${onclick}">
+                    ${icon}${rated ? 'View Ratings' : 'Not Yet Rated'}
+                </button>`;
+    }
 
     // Unified button order (#111): Highlights → variable primary action → View
     // Ratings → [extras] → See Reading Sessions → Edit Reading → Edit Book.
     // opts.primaryActionHtml = the one state-specific action (Finish / Start / Add
     // to TBR / Add reread); opts.editReadingHtml = the Edit Reading button (pages
     // with a reading modal); opts.actionsHtml = remaining extras (temporary).
-    const secondaryInner = `${hlLink}${opts.primaryActionHtml || ''}${viewRatingsBtn}${opts.actionsHtml || ''}${sessionsBtn}${opts.editReadingHtml || ''}${editBookLink}`;
+    // View Ratings + See Reading Sessions share a row (both finished-only, so they go
+    // together); Edit Reading + Edit Book share the row below.
+    const statsPair = `${viewRatingsBtn}${sessionsBtn}`;
+    const statsRow = statsPair.trim() ? `<div class="gba-edit-row">${statsPair}</div>` : '';
+    const editPair = `${opts.editReadingHtml || ''}${editBookLink}`;
+    const editRow = editPair.trim() ? `<div class="gba-edit-row">${editPair}</div>` : '';
+    const secondaryInner = `${hlLink}${opts.primaryActionHtml || ''}${statsRow}${opts.actionsHtml || ''}${editRow}`;
     const secondary = secondaryInner.trim() ? `
         <div class="col-12">
             <div class="open-secondary">${secondaryInner}</div>
         </div>` : '';
 
     document.getElementById('openBookOptions').innerHTML =
-        topSection + extraInfo + details + secondary;
+        row1 + formatRow + extraInfo + secondary;
     bootstrap.Modal.getOrCreateInstance(document.getElementById('openBookModal')).show();
 
     // #120: enrich with the "In this series" strip + "You've read # by <author>" section
@@ -1008,6 +1102,7 @@ function grOpenBookActions(book, opts = {}) {
     // shows in the Series detail row above.
     grInjectSeriesStrip(book);
     grInjectAuthorReads(book.author);
+    grUpdateNavButtons();
 
     // Fill the highlights count (reveal the link only if there are any).
     if (showHl) {
@@ -1405,6 +1500,7 @@ async function grApplyGlobalWakeLock() {
     }
 }
 document.addEventListener('DOMContentLoaded', grApplyGlobalWakeLock);
+document.addEventListener('DOMContentLoaded', grBindPopupNav);
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') grApplyGlobalWakeLock(); });
 document.addEventListener('touchstart', grApplyGlobalWakeLock, { passive: true });
 
@@ -1652,7 +1748,10 @@ window.GreatReads = {
     openBookActions: grOpenBookActions,
     openSeries: grOpenSeries,
     openBookById: grOpenBookById,
+    openBookNav: grOpenBookNav,
+    navStep: grNavStep,
     editReadingById: grEditReadingById,
+    editRatings: grEditRatings,
     showReadingSessions: grShowReadingSessions,
     showRatings: grShowRatings,
     resetCreditMark: grResetCreditMark,
