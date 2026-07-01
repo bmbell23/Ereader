@@ -175,7 +175,7 @@
     <!-- Shared cover-tap popup (Library / TBR / Journal all use GreatReads.openBookActions) -->
     {% if current_user %}
     <div class="modal fade" id="openBookModal" tabindex="-1">
-        <div class="modal-dialog modal-dialog-centered modal-sm">
+        <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable modal-lg">
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title text-truncate" id="openBookTitle"></h5>
@@ -183,7 +183,25 @@
                 </div>
                 <div class="modal-body">
                     <div class="row g-2" id="openBookOptions"></div>
+                    <!-- #120 Phase 1: series strip + author-reads sections (filled by
+                         grOpenBookActions when the book has a series / author). -->
+                    <div id="gbaSeries" class="mt-3"></div>
+                    <div id="gbaAuthorReads" class="mt-3"></div>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Shared "View series" grid (#120), moved out of news.html so every page's
+         book popup can open it. Opened by GreatReads.openSeries(). -->
+    <div class="modal fade" id="grSeriesModal" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title text-truncate" id="grSeriesTitle"></h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body"><div class="row g-2" id="grSeriesGrid"></div></div>
             </div>
         </div>
     </div>

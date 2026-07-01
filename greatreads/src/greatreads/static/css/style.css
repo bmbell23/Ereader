@@ -844,6 +844,32 @@ html, body {
     border-radius: 6px;
 }
 
+/* Shared book-popup series/author mini-cards (#120). Self-contained so every page's
+   popup can render them without the Books-page card model. */
+.gba-mini-cover {
+    position: relative;
+    aspect-ratio: 2/3;
+    background: #e9ecef;
+    border-radius: 5px;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.gba-mini-cover img { width: 100%; height: 100%; object-fit: cover; }
+.gba-clickable { cursor: pointer; }
+.gba-mini.gba-clickable { transition: transform .15s ease; }
+.gba-mini.gba-clickable:hover { transform: translateY(-2px); }
+/* Mini parchment placeholder for a no-cover sibling (title/# in a bookish serif). */
+.gba-ph {
+    width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;
+    padding: 6px 4px; text-align: center; color: #463a28; font-size: .6rem; font-weight: 700;
+    line-height: 1.05; overflow: hidden;
+    background: #e4d9c2 url("../img/placeholder-cover.webp") center/cover no-repeat;
+    font-family: 'Iowan Old Style', 'Palatino Linotype', Palatino, 'Book Antiqua', Georgia, serif;
+    text-shadow: 0 1px 1px rgba(255, 250, 240, .6);
+}
+
 /* No-cover placeholder on TBR cards — parchment art matching the Books page (#125),
    instead of a blank grey box + generic icon. Relative image URL so it resolves under
    any APP_BASE_PATH. */
@@ -989,6 +1015,25 @@ html, body {
     align-items: center; padding: 10px 14px; cursor: default;
 }
 .open-type-static:hover { transform: none; box-shadow: none; }
+/* Compact format tile (#120): short, ROW-layout (icon + label) buttons stacked
+   vertically beside the cover — icon left, label after — so the cover gets the width. */
+.open-type-sm {
+    min-height: 44px; border-radius: 10px; padding: 8px 14px;
+    flex-direction: row; gap: 10px; font-size: .95rem;
+}
+.open-type-sm i { font-size: 1.15rem; }
+/* Non-interactive tile (owned physical, not in progress): keep the tile look, drop the
+   click affordance. */
+.open-type-plain { cursor: default; }
+.open-type-plain:hover { transform: none; box-shadow: none; background: #fff; }
+/* Book cover shown top-left in the details popup (#120) — large so it reads as the
+   focus, with the format tiles stacked to its right. */
+.gba-detail-cover {
+    width: 150px; aspect-ratio: 2/3; border-radius: 6px; overflow: hidden;
+    background: #e9ecef; display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, .15);
+}
+.gba-detail-cover img { width: 100%; height: 100%; object-fit: cover; }
 .open-secondary { display: flex; flex-direction: column; gap: 5px; }
 .open-secondary .btn { text-align: left; }
 

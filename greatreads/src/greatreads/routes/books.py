@@ -16,6 +16,7 @@ from ..models.tag import Tag
 from ..models.user import User
 from ..config import settings
 from ..auth import get_current_user
+from ._book_enrich import enrich_book_dict
 
 router = APIRouter()
 
@@ -125,6 +126,27 @@ async def get_book(
         book_dict["inventory"] = []
 
     return book_dict
+
+
+@router.get("/{book_id}/details")
+async def get_book_details(
+    request: Request,
+    book_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Fully-enriched book for the shared book popup (#120 Phase 2): the same shape the
+    Library/TBR feeds pass to GreatReads.openBookActions — book fields + author + readings
+    + inventory + calibre_id/abs_id — so the popup can open ANY book by id (series siblings,
+    author's other books) without the page having loaded it."""
+    book = db.query(Book).filter(Book.id == book_id).first()
+    if not book:
+        raise HTTPException(status_code=404, detail="Book not found")
+    d = book.to_dict()   # includes id/title/author/series/universe/series_number/counts
+    readings = db.query(Reading).filter(Reading.book_id == book_id).all()
+    d["readings"] = [r.to_dict() for r in readings]
+    enrich_book_dict(d, book.id, db)   # inventory, media_owned, calibre_id, abs_id, read_count
+    return d
 @router.post("/", response_model=BookResponse)
 async def create_book(
     request: Request,
