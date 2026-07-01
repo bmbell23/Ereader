@@ -251,7 +251,12 @@
     // Create a new book (#117): POST the fields, then — because cover endpoints
     // need the id — upload the buffered cover pick against the returned id.
     async function _bkeCreate(data) {
-        if (!data.title) { toast('Title is required', 'warning'); return null; }
+        // Title is optional (title-less placeholders for unreleased series entries are a
+        // supported state — a book can also have its title cleared on edit). Just guard
+        // against a completely empty record.
+        if (!data.title && !data.series && !data.author_name_first && !data.author_name_second) {
+            toast('Add at least a title, series, or author', 'warning'); return null;
+        }
         let book;
         try { book = await api('/books/', { method: 'POST', data }); }
         catch (e) { toast('Could not add book', 'danger'); return null; }

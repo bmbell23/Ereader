@@ -30,6 +30,7 @@ dependencies = [
     "python-jose[cryptography]>=3.3.0",
     "apscheduler>=3.10.0",
     "requests>=2.31.0",  # Ereader catalog/cover/HLS calls absorbed from :8091 (#22)
+    "watchdog>=3.0.0",  # instant Calibre/ABS DB change watcher for auto-sync (#16)
 ]
 
 [project.optional-dependencies]

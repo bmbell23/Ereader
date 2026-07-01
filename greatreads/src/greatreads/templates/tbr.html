@@ -910,8 +910,8 @@ function applyFilters() {
 
         // Search filter
         if (search) {
-            const matchesTitle = fuzzyMatch(book.title, search);
-            const matchesAuthor = fuzzyMatch(book.author, search);
+            const matchesTitle = fuzzyMatch(book.title || '', search);
+            const matchesAuthor = fuzzyMatch(book.author || '', search);
             const matchesUniverse = book.universe ? fuzzyMatch(book.universe, search) : false;
             const matchesSeries = book.series ? fuzzyMatch(book.series, search) : false;
 
@@ -944,10 +944,10 @@ function applyFilters() {
                 result = a.reading_order - b.reading_order;
                 break;
             case 'title':
-                result = a.book.title.localeCompare(b.book.title);
+                result = (a.book.title || '').localeCompare(b.book.title || '');
                 break;
             case 'author':
-                result = a.book.author_sorted.localeCompare(b.book.author_sorted);
+                result = (a.book.author_sorted || '').localeCompare(b.book.author_sorted || '');
                 break;
             case 'series': {
                 // Sort by universe, then series, then series_number
@@ -1284,6 +1284,12 @@ function createReadingCard(reading, index) {
     const book = reading.book;
     const statusClass = GreatReads.getStatusClass(reading);
 
+    // Degrade gracefully for title-less books (e.g. placeholder series slots) instead
+    // of rendering a blank card: fall back to "Series #N", then "Untitled".
+    const dispTitle = (book.title && book.title.trim())
+        ? book.title
+        : (book.series ? `${book.series}${book.series_number ? ' #' + book.series_number : ''}` : 'Untitled');
+
     // Get format info and colors
     const formatClass = getFormatClass(reading.media);
 
@@ -1306,6 +1312,15 @@ function createReadingCard(reading, index) {
     const isPaused = reading.status === 'paused';
     const borderClass = isPaused ? '' : (formatClass ? (isInProgress ? `border-${formatClass}-full` : `border-${formatClass}`) : '');
 
+    // No-cover placeholder: parchment art with title/series/author (matches the Books
+    // page), instead of a blank grey box + generic icon. Also shown if a cover 404s.
+    const phSeries = book.series
+        ? `<div class="tbr-book-ph-series">${book.series}${book.series_number ? ' #' + book.series_number : ''}</div>`
+        : '';
+    const phMarkup = (disp) => `<div class="tbr-book-ph" style="display:${disp};">
+        <div><div class="tbr-book-ph-title">${dispTitle}</div>${phSeries}</div>
+        <div class="tbr-book-ph-author">${book.author || ''}</div></div>`;
+
     return `
         <div class="card reading-card ${statusClass} ${borderClass} mb-2 fade-in tbr-draggable-card" data-reading-id="${reading.id}" onclick="openReadingActions(${reading.id})">
             <div class="card-body tbr-card-body">
@@ -1313,18 +1328,18 @@ function createReadingCard(reading, index) {
                     <div class="tbr-book-cover tbr-book-cover-large flex-shrink-0">
                         ${book.cover ?
                             `<img src="${window.APP_BASE_PATH}/static/covers/${book.id}.jpg"
-                                 alt="${book.title} cover"
+                                 alt="${dispTitle} cover"
                                  class="tbr-book-cover-img"
-                                 onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
-                             <i class="fas fa-book book-cover-fallback" style="display: none;"></i>` :
-                            `<i class="fas fa-book book-cover-fallback"></i>`
+                                 onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                             ${phMarkup('none')}` :
+                            phMarkup('flex')
                         }
                         ${readBadge}
                     </div>
                     <div class="tbr-info flex-grow-1">
                         <div class="d-flex justify-content-between align-items-start gap-2">
                             <div class="tbr-info-text">
-                                <h5 class="card-title mb-1 text-truncate">${book.title}</h5>
+                                <h5 class="card-title mb-1 text-truncate">${dispTitle}</h5>
                                 <p class="text-muted mb-1 text-truncate">${book.author}</p>
                                 ${book.series ? `<div class="tbr-series text-muted mb-1">${book.universe ? book.universe + ': ' : ''}${book.series}${book.series_number ? ' #' + book.series_number : ''}</div>` : ''}
                                 <div class="tbr-meta text-muted mb-0">
@@ -1943,19 +1958,19 @@ function filterReorderLists(searchTerm) {
 
     // Filter each media type
     const filteredEbook = term ? reorderReadingsByMedia['ebook'].filter(r =>
-        r.book.title.toLowerCase().includes(term) ||
+        (r.book.title || '').toLowerCase().includes(term) ||
         (r.book.author && r.book.author.toLowerCase().includes(term)) ||
         (r.book.series && r.book.series.toLowerCase().includes(term))
     ) : reorderReadingsByMedia['ebook'];
 
     const filteredAudio = term ? reorderReadingsByMedia['audio'].filter(r =>
-        r.book.title.toLowerCase().includes(term) ||
+        (r.book.title || '').toLowerCase().includes(term) ||
         (r.book.author && r.book.author.toLowerCase().includes(term)) ||
         (r.book.series && r.book.series.toLowerCase().includes(term))
     ) : reorderReadingsByMedia['audio'];
 
     const filteredPhysical = term ? reorderReadingsByMedia['physical'].filter(r =>
-        r.book.title.toLowerCase().includes(term) ||
+        (r.book.title || '').toLowerCase().includes(term) ||
         (r.book.author && r.book.author.toLowerCase().includes(term)) ||
         (r.book.series && r.book.series.toLowerCase().includes(term))
     ) : reorderReadingsByMedia['physical'];
@@ -2371,10 +2386,12 @@ function setupAutocomplete() {
             return;
         }
 
-        // Filter books
+        // Filter books — match title, author, OR series (null-safe), so title-less
+        // placeholder books (identified by series/#) are findable and can't crash the search.
         const matches = allBooks.filter(book =>
-            book.title.toLowerCase().includes(searchTerm) ||
-            book.author.toLowerCase().includes(searchTerm)
+            (book.title || '').toLowerCase().includes(searchTerm) ||
+            (book.author || '').toLowerCase().includes(searchTerm) ||
+            (book.series || '').toLowerCase().includes(searchTerm)
         ).slice(0, 50); // Limit to 50 results
 
         if (matches.length === 0) {
@@ -2383,13 +2400,18 @@ function setupAutocomplete() {
             return;
         }
 
-        // Display results
-        resultsDiv.innerHTML = matches.map(book => `
-            <a href="#" class="list-group-item list-group-item-action" data-book-id="${book.id}" data-book-title="${book.title}" data-book-author="${book.author}">
-                <div class="fw-bold">${book.title}</div>
-                <small class="text-muted">${book.author}</small>
-            </a>
-        `).join('');
+        // Display results — fall back to "Series #N" / "Untitled" for title-less books.
+        resultsDiv.innerHTML = matches.map(book => {
+            const disp = (book.title && book.title.trim())
+                ? book.title
+                : (book.series ? `${book.series}${book.series_number != null ? ' #' + book.series_number : ''}` : 'Untitled');
+            const sub = (book.author || '') + (book.series ? `${book.author ? ' · ' : ''}${book.series}${book.series_number != null ? ' #' + book.series_number : ''}` : '');
+            return `
+            <a href="#" class="list-group-item list-group-item-action" data-book-id="${book.id}" data-book-title="${disp}" data-book-author="${book.author || ''}">
+                <div class="fw-bold">${disp}</div>
+                <small class="text-muted">${sub}</small>
+            </a>`;
+        }).join('');
 
         resultsDiv.style.display = 'block';
     });

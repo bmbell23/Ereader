@@ -1,6 +1,8 @@
 """Main FastAPI application."""
 
 import logging
+import os
+import threading
 from fastapi import FastAPI, Request, Depends
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -71,20 +73,79 @@ def _midnight_recalculate():
         db.close()
 
 
-# How often to poll Calibre/ABS for new items (minutes).
-AUTO_SYNC_INTERVAL_MINUTES = 15
+# Safety-net full sync cadence (minutes). The watcher below handles the fast path;
+# this only backstops a missed filesystem event. Env-tunable.
+AUTO_SYNC_INTERVAL_MINUTES = int(os.environ.get("AUTO_SYNC_INTERVAL_MINUTES", "15"))
+# Coalesce a burst of Calibre writes (metadata.db + WAL + checkpoint) into one sync.
+SYNC_DEBOUNCE_SECONDS = float(os.environ.get("SYNC_DEBOUNCE_SECONDS", "3"))
+
+_watch_timer_lock = threading.Lock()
+_watch_timer: "threading.Timer | None" = None
 
 
-def _auto_sync():
-    """Scheduled job: import new Calibre/ABS items into GreatReads."""
+def _run_sync(reason: str):
+    """Import new Calibre/ABS items into GreatReads (own session per run)."""
     db = SessionLocal()
     try:
         from .services.sync_service import sync_all
-        sync_all(db)
+        summary = sync_all(db)
+        logger.info("Auto-sync (%s): %s", reason, summary)
     except Exception as exc:
-        logger.error("Auto-sync failed: %s", exc)
+        logger.error("Auto-sync failed (%s): %s", reason, exc)
     finally:
         db.close()
+
+
+def _auto_sync():
+    """Scheduled safety-net full sync (the watcher covers the instant path)."""
+    _run_sync("scheduled")
+
+
+def _schedule_watch_sync():
+    """Debounce filesystem events into a single sync a few seconds after writes settle."""
+    global _watch_timer
+    with _watch_timer_lock:
+        if _watch_timer is not None:
+            _watch_timer.cancel()
+        _watch_timer = threading.Timer(SYNC_DEBOUNCE_SECONDS, _run_sync, args=("file change",))
+        _watch_timer.daemon = True
+        _watch_timer.start()
+
+
+def _start_library_watcher():
+    """Watch the Calibre (and ABS) DB directories and sync shortly after any change (#16).
+    Returns the running Observer, or None if watchdog/the dirs are unavailable — the
+    scheduled safety-net sync still covers that case. /calibre is a local bind mount,
+    so inotify fires on host-side Calibre writes."""
+    try:
+        from watchdog.observers import Observer
+        from watchdog.events import FileSystemEventHandler
+    except Exception as exc:
+        logger.warning("watchdog unavailable (%s); relying on scheduled sync only.", exc)
+        return None
+
+    class _DBChangeHandler(FileSystemEventHandler):
+        def on_any_event(self, event):
+            if getattr(event, "is_directory", False):
+                return
+            name = os.path.basename(getattr(event, "src_path", "") or "")
+            # SQLite DB + its WAL/journal sidecars (metadata.db, metadata.db-wal, …).
+            if ".db" in name:
+                _schedule_watch_sync()
+
+    observer = Observer()
+    watched = []
+    for path in {settings.calibre_library_path, os.path.dirname(settings.abs_db_path)}:
+        if path and os.path.isdir(path):
+            observer.schedule(_DBChangeHandler(), path, recursive=False)
+            watched.append(path)
+    if not watched:
+        logger.warning("No watchable library dirs; relying on scheduled sync only.")
+        return None
+    observer.daemon = True
+    observer.start()
+    logger.info("Library watcher started on %s (debounce %.1fs).", ", ".join(watched), SYNC_DEBOUNCE_SECONDS)
+    return observer
 
 
 def _poll_news():
@@ -152,18 +213,23 @@ async def lifespan(app: FastAPI):
         )
         scheduler.start()
         logger.info(
-            "Schedulers started: midnight chain-recalc + auto-sync every %d min + daily news poll.",
+            "Schedulers started: midnight chain-recalc + auto-sync safety net every %d min + daily news poll.",
             AUTO_SYNC_INTERVAL_MINUTES,
         )
     except Exception as exc:
         logger.error("Failed to start scheduler: %s", exc)
         scheduler = None
 
+    # Instant Calibre/ABS change watcher (#16) — near-real-time imports.
+    library_watcher = _start_library_watcher()
+
     yield
 
     # Shutdown
     if scheduler and scheduler.running:
         scheduler.shutdown(wait=False)
+    if library_watcher is not None:
+        library_watcher.stop()
 
 
 # Create FastAPI app
