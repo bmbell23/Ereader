@@ -110,6 +110,12 @@
         if (del) del.style.display = isNew ? 'none' : '';
         const nb = document.getElementById('bkeSaveNextBtn');
         if (nb && isNew) nb.style.display = 'none';
+        // Primary button reads "Create" when adding, "Save changes" when editing;
+        // "Create & Another" (repeat-entry, Calibre-style) shows only in create mode.
+        const save = document.getElementById('bkeSaveBtn');
+        if (save) save.textContent = isNew ? 'Create' : 'Save changes';
+        const another = document.getElementById('bkeCreateAnotherBtn');
+        if (another) another.style.display = isNew ? '' : 'none';
         // Formats-owned picker: shown in BOTH add (#117) and edit — editing which
         // formats you own is really an inventory edit. Reset here; edit mode loads the
         // book's current ownership in bkeOpen, create mode leaves them unchecked.
@@ -304,6 +310,33 @@
         }
     }
 
+    // Create this book, then keep the modal open for the next one — carrying over
+    // author/series/universe/genre and bumping the series number (Calibre-style repeat add).
+    async function bkeCreateAnother() {
+        const g = id => document.getElementById(id);
+        // Snapshot carry-over fields before the create (create doesn't mutate inputs).
+        const carry = {
+            first: g('bkeAuthorFirst').value, last: g('bkeAuthorLast').value,
+            series: g('bkeSeries').value, universe: g('bkeUniverse').value,
+            genre: g('bkeGenre').value, snum: g('bkeSeriesNum').value,
+        };
+        if (await _bkeSaveCore() == null) return;   // validation/error → stay put
+        // Reset to a fresh create, then repopulate the carry-overs + incremented series #.
+        bkeBook = null;
+        bkeSetMode(true);   // resets chrome, formats, cover buffers; keeps text inputs
+        ['bkeId', 'bkeTitle', 'bkeDate', 'bkePages', 'bkeWords', 'bkeIsbn', 'bkeCoverUrl']
+            .forEach(id => { const el = g(id); if (el) el.value = ''; });
+        g('bkeAuthorFirst').value = carry.first;
+        g('bkeAuthorLast').value = carry.last;
+        g('bkeSeries').value = carry.series;
+        g('bkeUniverse').value = carry.universe;
+        g('bkeGenre').value = carry.genre;
+        const n = parseFloat(carry.snum);
+        g('bkeSeriesNum').value = Number.isFinite(n) ? n + 1 : '';
+        bkeRenderCover();
+        setTimeout(() => g('bkeTitle')?.focus(), 100);
+    }
+
     async function bkeDelete() {
         const id = document.getElementById('bkeId').value;
         const title = document.getElementById('bkeTitle').value || 'this book';
@@ -359,7 +392,7 @@
 
     // Expose the handlers referenced by inline onclick= in the modal markup.
     Object.assign(window, {
-        bkeOpen, bkeOpenNew, bkeSave, bkeSaveAndNext, bkeDelete,
+        bkeOpen, bkeOpenNew, bkeSave, bkeSaveAndNext, bkeCreateAnother, bkeDelete,
         bkeUploadFile, bkeCoverFromUrl, bkeRemoveCover, bkeLoadLists, wireBookEdit: wireAutocomplete,
     });
 

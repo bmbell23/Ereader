@@ -129,8 +129,9 @@ def _start_library_watcher():
             if getattr(event, "is_directory", False):
                 return
             name = os.path.basename(getattr(event, "src_path", "") or "")
-            # SQLite DB + its WAL/journal sidecars (metadata.db, metadata.db-wal, …).
-            if ".db" in name:
+            # Calibre (metadata.db*) AND Audiobookshelf (absdatabase.sqlite*) SQLite DBs,
+            # including their WAL/journal/shm sidecars.
+            if ".db" in name or ".sqlite" in name:
                 _schedule_watch_sync()
 
     observer = Observer()
