@@ -64,7 +64,10 @@ _JUNK_RE = re.compile(
     r"|\b\d+\s+(?:e-?)?books?\b|\bcollection\s+set\b|\b(?:e-?)?book\s+collection\b"
     # marketing-spam titles on repackaged/reissue listings (real titles don't shout):
     r"|\bpre-?order\b|\bmust-?read\b|\bbooktok\b|\bbestsell|\btaking\b.*\bby\s+storm\b"
-    r"|\bnow\s+a\s+(?:major\s+)?(?:netflix|hbo|tv|movie|major\s+motion)\b",
+    r"|\bnow\s+a\s+(?:major\s+)?(?:netflix|hbo|tv|movie|major\s+motion)\b"
+    # teaser/preview editions Google surfaces next to the real release (#68):
+    r"|\bsneak\s+peek\b|\bsneak\s+preview\b|\bexcerpt\b|\bsampler\b|\bteaser\b"
+    r"|\b(?:free|extended|exclusive|special|bonus)\s+preview\b|\bpreview\s+edition\b",
     re.IGNORECASE,
 )
 
@@ -219,6 +222,26 @@ def _match_series(title: str, series_names: list[str]) -> Optional[str]:
         if st and st <= tt and (best is None or len(st) > len(_word_tokens(best))):
             best = s
     return best
+
+
+def _build_series_index(existing: list[tuple]) -> dict:
+    """(normalized series, series_number) → book_id, for matching placeholder releases
+    (e.g. 'Untitled X Book 2') that carry no matchable title but a known series slot (#68).
+    Tuple layout from `_build_existing`: (id, title, author, ttok, series, series_number, …)."""
+    idx: dict = {}
+    for row in existing:
+        book_id, series, snum = row[0], row[4], row[5]
+        if series and snum is not None:
+            idx.setdefault((series.strip().lower(), float(snum)), book_id)
+    return idx
+
+
+def _match_by_series(series_tag: Optional[str], series_number, series_index: dict) -> Optional[int]:
+    """Fall back to a series+number hit when the title is too thin for `_best_match`
+    (its title-similarity gate can never fire on an 'Untitled …' placeholder)."""
+    if series_tag and series_number is not None:
+        return series_index.get((series_tag.strip().lower(), float(series_number)))
+    return None
 
 
 def _detect_category(title: str, subtitle: Optional[str], categories, author: str) -> str:
@@ -390,6 +413,7 @@ def poll_releases(db: Session) -> dict:
 
     watch = get_watch(db)["effective"]
     existing_books = _build_existing(db)
+    series_index = _build_series_index(existing_books)
     series_names = [r[0] for r in db.query(Book.series).filter(Book.series.isnot(None)).distinct().all()]
     # "Owned" = you have a copy (inventory row) or finished reading it. Books in the DB
     # that are neither are "tracked" (pre-added/on your radar) — surfaced, not dropped.
@@ -451,15 +475,27 @@ def poll_releases(db: Session) -> dict:
             if not clean_title:
                 _drop("1b_foreign"); continue
 
-            # Match the cleaned title against the DB. Owned (copy or finished) → drop;
-            # in-DB but unowned → tracked; not in DB → a fresh discovery.
+            # Match against the DB. Owned (copy or finished) → drop; in-DB but unowned
+            # → tracked; not in DB → a fresh discovery. Try title, then fall back to
+            # series+number so titleless placeholders ("Untitled X Book 2") still match
+            # the real library book (e.g. "The Tapestry of Fate", Amina al-Sirafi #2) (#68).
             owned = _best_match(clean_title, author, None, None,
                                 str(rep["_date"].year), existing_books)
             tracked, matched_id = False, None
             if owned:
                 matched_id = owned["id"]
+            else:
+                early_series = _match_series(clean_title, series_names)
+                early_snum = (rep.get("series_number") or _parse_series_number(clean_title)
+                              or _parse_series_number(rep.get("subtitle")))
+                matched_id = _match_by_series(early_series, early_snum, series_index)
+            if matched_id is not None:
                 if matched_id in owned_ids:
                     _drop("8_owned"); continue
+                # A titleless placeholder for a book already in the library is noise —
+                # drop it rather than surface an "Untitled …" tracked card (#68).
+                if clean_title.lower().startswith("untitled"):
+                    _drop("8_untitled_tracked"); continue
                 tracked = True
 
             gid = rep.get("google_books_id")
@@ -573,6 +609,7 @@ def reprocess(db: Session) -> dict:
     """Re-run title cleanup + language/junk filters + dedup over EXISTING rows using
     stored raw_json — NO API calls. Lets us iterate filtering without spending quota."""
     existing_books = _build_existing(db)
+    series_index = _build_series_index(existing_books)
     owned_ids = {bid for (bid,) in db.query(Inventory.book_id).distinct() if bid}
     owned_ids |= {bid for (bid,) in db.query(Reading.book_id)
                   .filter(Reading.date_finished_actual.isnot(None)).distinct() if bid}
@@ -593,13 +630,22 @@ def reprocess(db: Session) -> dict:
         # whose raw title was too messy to match at poll time, e.g. Tapestry of Fate).
         yr = str(item.published_date.year) if item.published_date else None
         owned = _best_match(eng, item.author_name, None, None, yr, existing_books)
-        if owned:
-            if owned["id"] in owned_ids:
+        # Fall back to the item's already-stored series tag + number when the title
+        # can't match (titleless "Untitled … Book N" placeholders) (#68).
+        matched_id = owned["id"] if owned else _match_by_series(
+            item.matched_series, item.series_number, series_index)
+        if matched_id is not None:
+            if matched_id in owned_ids:
+                db.delete(item)
+                removed += 1
+                continue
+            # Titleless placeholder for a book already in the library → drop, don't track.
+            if (eng or "").lower().startswith("untitled"):
                 db.delete(item)
                 removed += 1
                 continue
             item.tracked = True
-            item.matched_book_id = owned["id"]
+            item.matched_book_id = matched_id
         item.title = eng
         item.genre = _primary_genre(raw.get("categories"))
         if item.series_number is None:

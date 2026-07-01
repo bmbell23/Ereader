@@ -102,6 +102,16 @@ async def post_poll(background_tasks: BackgroundTasks):
     return {"started": True}
 
 
+@router.post("/reprocess")
+async def post_reprocess(db: Session = Depends(get_db)):
+    """Re-clean existing items with the current filters — NO Google quota (#68). Applies
+    tuned junk/ownership rules to already-cached rows (e.g. drop stale 'Sneak Peek'/'Untitled'
+    placeholders), then re-runs the OpenLibrary cross-ref."""
+    result = news_service.reprocess(db)
+    news_service.enrich_with_openlibrary(db)
+    return {"ok": True, **result, "unread": news_service.unread_count(db)}
+
+
 # ── watch-set management ─────────────────────────────────────────────────────
 @router.get("/watch")
 async def get_watch(db: Session = Depends(get_db)):

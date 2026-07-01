@@ -77,6 +77,10 @@
         <button class="btn btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#settingsPanel">
             <i class="fas fa-gear me-1"></i>Settings
         </button>
+        <button class="btn btn-outline-primary" id="recleanBtn" onclick="reclean()"
+                title="Re-run filters on cached releases (no Google quota)">
+            <i class="fas fa-broom me-1"></i>Re-clean
+        </button>
         <button class="btn btn-primary" id="checkNowBtn" onclick="checkNow()">
             <i class="fas fa-rotate me-1"></i>Check now
         </button>
@@ -112,7 +116,7 @@
     </div>
 </div>
 
-<!-- Status (exclusive) + Comics/Reprints (AND toggles, releases only) -->
+<!-- Status (exclusive) + Comics/Reprints (additive show-toggles, hidden by default, releases only) -->
 <div class="d-flex justify-content-center align-items-center flex-wrap gap-4 mb-3">
     <div class="stat-chips d-flex">
         <div class="stat-chip active" id="stOwned"    style="color:#198754;" onclick="setStatus('owned')"><i class="fas fa-circle-check"></i><span>Owned</span></div>
@@ -121,8 +125,8 @@
         <div class="stat-chip"        id="stNew"      style="color:#6f42c1;" onclick="setStatus('new')"><i class="fas fa-star"></i><span>New</span></div>
     </div>
     <div class="stat-chips d-flex" id="subToggles" style="display:none !important;">
-        <div class="stat-chip" id="chipComics"   style="color:#fd7e14;" onclick="toggleCat('comics')"><i class="fas fa-book-open"></i><span>Comics</span></div>
-        <div class="stat-chip" id="chipReprints" style="color:#6c757d;" onclick="toggleCat('reprints')"><i class="fas fa-clock-rotate-left"></i><span>Reprints</span></div>
+        <div class="stat-chip" id="chipComics"   style="color:#fd7e14;" title="Hidden by default — click to show comics" onclick="toggleCat('comics')"><i class="fas fa-book-open"></i><span>Comics</span></div>
+        <div class="stat-chip" id="chipReprints" style="color:#6c757d;" title="Hidden by default — click to show reprints" onclick="toggleCat('reprints')"><i class="fas fa-clock-rotate-left"></i><span>Reprints</span></div>
     </div>
 </div>
 
@@ -309,6 +313,19 @@ document.addEventListener('DOMContentLoaded', async () => {
 // (keep scroll #99) after save/delete, and supply the Save & Next order from the grid.
 window.bkeHooks = {
     afterSave(id, data, book) {
+        // Ownership edits can move a book between the Owned/Unowned shelves. If it no
+        // longer belongs on the shelf we're viewing, drop it from the grid; else patch.
+        if (book && typeof book.is_owned === 'boolean'
+            && (shelfStatus === 'owned' || shelfStatus === 'unowned')) {
+            const belongs = shelfStatus === 'owned' ? book.is_owned : !book.is_owned;
+            if (!belongs) {
+                cards = cards.filter(c => !(c.kind === 'local' && c.book_id === id));
+                delete cardReg['L' + id];
+                shelfTotal = Math.max(0, shelfTotal - 1);
+                renderKeepScroll();
+                return;
+            }
+        }
         patchLocalCard(id, {
             title: data.title,
             author: [data.author_name_first, data.author_name_second].filter(Boolean).join(' '),
@@ -322,6 +339,14 @@ window.bkeHooks = {
         renderKeepScroll();
     },
     afterCreate(id, data, book) {
+        // Came from "Save locally" on a detected release (#68): drop that release from
+        // the feed now it's in the library, and clear the unread badge for it.
+        if (_saveLocallyNewsId != null) {
+            const nid = _saveLocallyNewsId; _saveLocallyNewsId = null;
+            GreatReads.apiCall(`/news/${nid}/dismiss`, { method: 'POST' }).catch(() => {});
+            cards = cards.filter(c => c.news_id !== nid);
+            if (typeof loadNewsBadge === 'function') loadNewsBadge();
+        }
         // A new book lands on Owned or Unowned depending on whether the user
         // ticked any Formats-owned box (#117). Switch to that tab so they see it.
         const tab = (book && book.is_owned) ? 'owned' : 'unowned';
@@ -478,8 +503,13 @@ function highlightBdSeries(bookId) {
 function visibleCards() {
     let list = cards;
     if (isRemote()) {
-        if (showComics) list = list.filter(c => c.is_comic);
-        if (showReprints) list = list.filter(c => c.is_reprint);
+        // Comics & reprints are HIDDEN by default; the chips are additive opt-ins —
+        // turning one "on" folds that category back into the feed. Regular releases
+        // (neither comic nor reprint) always show.
+        list = list.filter(c =>
+            (!c.is_comic && !c.is_reprint)
+            || (c.is_comic && showComics)
+            || (c.is_reprint && showReprints));
     }
     return list;
 }
@@ -679,7 +709,7 @@ function openBookDetails(key, navList) {
             <i class="fas fa-pen-to-square me-1"></i>Edit book</button>`;
     } else {
         actions = `${c.preview_link ? `<a class="btn btn-sm btn-outline-secondary" href="${c.preview_link}" target="_blank" rel="noopener"><i class="fas fa-eye me-1"></i>Preview</a>` : ''}
-            <button class="btn btn-sm btn-outline-success" onclick="saveLocallyStub()"><i class="fas fa-download me-1"></i>Save locally</button>
+            <button class="btn btn-sm btn-outline-success" onclick="saveLocally(${c.news_id})"><i class="fas fa-download me-1"></i>Save locally</button>
             <button class="btn btn-sm btn-outline-secondary" onclick="ignoreRelease(${c.news_id})"><i class="fas fa-ban me-1"></i>Ignore</button>`;
     }
     document.getElementById('bdActions').innerHTML = actions;
@@ -780,8 +810,30 @@ async function injectAuthorReads(author) {
     } catch (e) { el.innerHTML = ''; }
 }
 
-function saveLocallyStub() {
-    showToast('“Save locally” (accept into your DB) is coming in the next phase.', 'info');
+// "Save locally" (#68 Phase B): open the shared Add-book modal (#117) prefilled from the
+// detected release so the user reviews/edits before it's written to the DB. On successful
+// create, afterCreate() dismisses the release from the feed.
+let _saveLocallyNewsId = null;
+function saveLocally(newsId) {
+    const c = (bdCurrent && bdCurrent.news_id === newsId) ? bdCurrent
+        : cards.find(x => x.news_id === newsId);
+    if (!c) return;
+    _saveLocallyNewsId = newsId;
+    // Split "First M. Last" on the final space (house first/second style; user can fix it).
+    const name = (c.author || '').trim();
+    const sp = name.lastIndexOf(' ');
+    bkeOpenNew({
+        title: c.title,
+        author_first: sp > 0 ? name.slice(0, sp) : name,
+        author_last: sp > 0 ? name.slice(sp + 1) : '',
+        series: c.series,
+        series_number: c.series_number,
+        genre: c.genre,
+        date_published: c.date,
+        page_count: c.page_count,
+        word_count: c.word_count,
+        cover_url: c.cover_url,
+    });
 }
 
 async function ignoreRelease(newsId) {
@@ -809,6 +861,22 @@ async function checkNow() {
         btn.innerHTML = '<i class="fas fa-rotate me-1"></i>Check now';
         _polling = false;
     }, 8000);
+}
+
+// Re-run the filter/ownership pipeline over already-cached releases — no Google quota (#68).
+// Immediate: drops stale junk (Sneak Peek) and placeholders now matched to a library book.
+async function reclean() {
+    const btn = document.getElementById('recleanBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Cleaning…';
+    try {
+        const r = await GreatReads.apiCall('/news/reprocess', { method: 'POST' });
+        showToast(`Re-cleaned: ${r.removed} removed, ${r.updated} updated.`, 'success');
+        if (isRemote()) loadShelf(true);
+        if (typeof loadNewsBadge === 'function') loadNewsBadge();
+    } catch (e) { showToast('Re-clean failed.', 'danger'); }
+    btn.disabled = false;
+    btn.innerHTML = '<i class="fas fa-broom me-1"></i>Re-clean';
 }
 
 

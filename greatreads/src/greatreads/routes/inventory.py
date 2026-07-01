@@ -94,7 +94,7 @@ async def update_inventory_by_book(
     
     db.commit()
     db.refresh(db_inventory)
-    return InventoryResponse.from_orm(db_inventory)
+    return db_inventory
 
 
 @router.delete("/{inventory_id}")

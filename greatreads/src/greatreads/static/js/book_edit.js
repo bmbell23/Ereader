@@ -110,15 +110,27 @@
         if (del) del.style.display = isNew ? 'none' : '';
         const nb = document.getElementById('bkeSaveNextBtn');
         if (nb && isNew) nb.style.display = 'none';
-        // Formats-owned picker is add-only (#117); reset it each time we open new.
+        // Formats-owned picker: shown in BOTH add (#117) and edit — editing which
+        // formats you own is really an inventory edit. Reset here; edit mode loads the
+        // book's current ownership in bkeOpen, create mode leaves them unchecked.
         const fmt = document.getElementById('bkeFormatsRow');
-        if (fmt) fmt.style.display = isNew ? '' : 'none';
-        if (isNew) ['bkeOwnedEbook', 'bkeOwnedAudio', 'bkeOwnedPhysical']
+        if (fmt) fmt.style.display = '';
+        ['bkeOwnedEbook', 'bkeOwnedAudio', 'bkeOwnedPhysical']
             .forEach(id => { const el = document.getElementById(id); if (el) el.checked = false; });
     }
 
-    // Open the shared modal blank to create a brand-new book (#117).
-    async function bkeOpenNew() {
+    // Current state of the Formats-owned toggles → inventory payload.
+    const _bkeOwned = () => {
+        const chk = id => !!document.getElementById(id)?.checked;
+        return { owned_ebook: chk('bkeOwnedEbook'), owned_audio: chk('bkeOwnedAudio'),
+                 owned_physical: chk('bkeOwnedPhysical') };
+    };
+
+    // Open the shared modal blank to create a brand-new book (#117), optionally
+    // prefilled from a detected release ("Save locally" on the Books page, #68).
+    // prefill keys map to field ids: title, author_first, author_last, series,
+    // series_number, genre, date_published, page_count, word_count, cover_url.
+    async function bkeOpenNew(prefill) {
         bkeLoadLists();
         bootstrap.Modal.getInstance(document.getElementById('bookDetailsModal'))?.hide();
         bootstrap.Modal.getInstance(document.getElementById('openBookModal'))?.hide();
@@ -127,6 +139,20 @@
         ['bkeId', 'bkeTitle', 'bkeAuthorFirst', 'bkeAuthorLast', 'bkeSeries', 'bkeSeriesNum',
          'bkeUniverse', 'bkeGenre', 'bkeDate', 'bkePages', 'bkeWords', 'bkeIsbn', 'bkeCoverUrl']
             .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+        if (prefill) {
+            const set = (id, v) => { const el = document.getElementById(id); if (el && v != null && v !== '') el.value = v; };
+            set('bkeTitle', prefill.title);
+            set('bkeAuthorFirst', prefill.author_first);
+            set('bkeAuthorLast', prefill.author_last);
+            set('bkeSeries', prefill.series);
+            set('bkeSeriesNum', prefill.series_number);
+            set('bkeGenre', prefill.genre);
+            set('bkeDate', prefill.date_published);
+            set('bkePages', prefill.page_count);
+            set('bkeWords', prefill.word_count);
+            // No id yet — buffer the cover URL so it downloads right after the create POST.
+            if (prefill.cover_url) { bkePendingCoverUrl = prefill.cover_url; bkePendingCoverFile = null; }
+        }
         bkeRenderCover();
         bootstrap.Modal.getOrCreateInstance(document.getElementById('bkEditModal')).show();
         setTimeout(() => document.getElementById('bkeTitle')?.focus(), 300);
@@ -151,6 +177,15 @@
         set('bkePages', b.page_count); set('bkeWords', b.word_count); set('bkeIsbn', b.isbn_id);
         set('bkeCoverUrl', '');
         bkeRenderCover();
+        // Load the book's current format ownership into the picker (edit mode).
+        try {
+            const inv = await api('/inventory/?book_id=' + b.id);
+            const row = Array.isArray(inv) ? inv[0] : null;
+            const setChk = (cid, val) => { const el = document.getElementById(cid); if (el) el.checked = !!val; };
+            setChk('bkeOwnedEbook', row && row.owned_ebook);
+            setChk('bkeOwnedAudio', row && row.owned_audio);
+            setChk('bkeOwnedPhysical', row && row.owned_physical);
+        } catch (e) { /* leave unchecked if inventory can't be read */ }
         // "Save & Next" only where the page provides a nav order (Books grid, #104)
         const nb = document.getElementById('bkeSaveNextBtn');
         if (nb) {
@@ -163,8 +198,12 @@
 
     function bkeRenderCover() {
         const base = window.APP_BASE_PATH || '', b = bkeBook;
+        // Standalone "No cover" (visible). When it trails an <img> it must start hidden —
+        // the flex container would otherwise render it beside the cover (half-cover bug) —
+        // and the img's onerror re-shows it only if the image fails to load.
         const fallback = `<div class="bke-cover-empty">No cover</div>`;
-        const img = src => `<img src="${src}" alt="" style="width:100%;height:100%;object-fit:cover;" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">${fallback}`;
+        const hiddenFallback = `<div class="bke-cover-empty" style="display:none;">No cover</div>`;
+        const img = src => `<img src="${src}" alt="" style="width:100%;height:100%;object-fit:cover;" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">${hiddenFallback}`;
         let html = fallback;
         if (bkeIsNew) {
             // Preview the buffered pick before it's uploaded (no id yet, #117).
@@ -194,9 +233,17 @@
         if (bkeIsNew) return _bkeCreate(data);
         try {
             await api('/books/' + id, { method: 'PUT', data });
+            // Persist the format-ownership toggles (upsert; all-false → book becomes unowned).
+            const owned = _bkeOwned();
+            let book = bkeBook;
+            try {
+                await api('/inventory/book/' + id, { method: 'PUT', data: owned });
+                book = { ...(bkeBook || {}), ...owned,
+                         is_owned: owned.owned_ebook || owned.owned_audio || owned.owned_physical };
+            } catch (e) { toast('Saved, but ownership didn’t update', 'warning'); }
             toast('Book updated', 'success');
             const after = hooks().afterSave;
-            if (after) after(parseInt(id, 10), data, bkeBook);
+            if (after) after(parseInt(id, 10), data, book);
             return parseInt(id, 10);
         } catch (e) { toast('Save failed', 'danger'); return null; }
     }

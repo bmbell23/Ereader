@@ -940,38 +940,36 @@ function applyFilters() {
         return true;
     });
 
+    // Within a series: no-series last, then universe → series → series_number → title.
+    // Shared by the 'series' sort and as the tiebreaker for equal authors (#91) so a
+    // series under one author reads in book order — matching the Books page.
+    const seriesCompare = (a, b) => {
+        if (!a.series && !b.series) return a.title.localeCompare(b.title);
+        if (!a.series) return 1;
+        if (!b.series) return -1;
+        const au = a.universe || '', bu = b.universe || '';
+        if (au !== bu) return au.localeCompare(bu);
+        if (a.series !== b.series) return a.series.localeCompare(b.series);
+        return (a.series_number || 0) - (b.series_number || 0);
+    };
+
     // Apply sorting
     filteredBooks.sort((a, b) => {
         let result = 0;
 
         switch (sort) {
-            case 'author':
-                result = a.author_sorted.localeCompare(b.author_sorted);
-                break;
+            case 'author': {
+                const byAuthor = a.author_sorted.localeCompare(b.author_sorted);
+                // Author direction flips with the toggle; the series tiebreaker stays
+                // ascending (book order), so return directly and skip the outer flip.
+                if (byAuthor !== 0) return sortAscending ? byAuthor : -byAuthor;
+                return seriesCompare(a, b);
+            }
             case 'date_published':
                 result = new Date(a.date_published || 0) - new Date(b.date_published || 0);
                 break;
             case 'series':
-                // Sort by universe, then series, then series_number
-                // Put books with no series at the end
-                if (!a.series && !b.series) {
-                    result = a.title.localeCompare(b.title);
-                } else if (!a.series) {
-                    result = 1; // a goes after b
-                } else if (!b.series) {
-                    result = -1; // a goes before b
-                } else {
-                    // Compare universe first
-                    const aUniverse = a.universe || '';
-                    const bUniverse = b.universe || '';
-                    if (aUniverse !== bUniverse) {
-                        result = aUniverse.localeCompare(bUniverse);
-                    } else if (a.series !== b.series) {
-                        result = a.series.localeCompare(b.series);
-                    } else {
-                        result = (a.series_number || 0) - (b.series_number || 0);
-                    }
-                }
+                result = seriesCompare(a, b);
                 break;
             case 'word_count':
                 result = (a.word_count || 0) - (b.word_count || 0);

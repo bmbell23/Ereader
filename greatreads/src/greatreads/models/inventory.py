@@ -4,7 +4,7 @@ from typing import Optional, List
 from datetime import date
 from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, Date
 from sqlalchemy.orm import relationship
-from pydantic import BaseModel
+from pydantic import BaseModel, computed_field
 
 from ..database import Base
 
@@ -121,7 +121,6 @@ class InventoryResponse(BaseModel):
     owned_audio: bool = False
     owned_ebook: bool = False
     owned_physical: bool = False
-    owned_media: List[str]
     date_purchased: Optional[date] = None
     location: Optional[str] = None
     shelf_bookshelf: Optional[str] = None
@@ -138,31 +137,17 @@ class InventoryResponse(BaseModel):
             date: lambda v: v.isoformat() if v else None
         }
 
-    @classmethod
-    def from_orm(cls, obj):
-        """Custom from_orm to handle owned_media computation."""
-        owned_media = []
-        if obj.owned_audio:
-            owned_media.append("Audio")
-        if obj.owned_ebook:
-            owned_media.append("Ebook")
-        if obj.owned_physical:
-            owned_media.append("Physical")
-
-        return cls(
-            id=obj.id,
-            book_id=obj.book_id,
-            owned_audio=obj.owned_audio,
-            owned_ebook=obj.owned_ebook,
-            owned_physical=obj.owned_physical,
-            owned_media=owned_media,
-            date_purchased=obj.date_purchased,
-            location=obj.location,
-            shelf_bookshelf=obj.shelf_bookshelf,
-            shelf_shelf=obj.shelf_shelf,
-            shelf_position=obj.shelf_position,
-            read_status=obj.read_status,
-            read_count=obj.read_count,
-            isbn_10=obj.isbn_10,
-            isbn_13=obj.isbn_13
-        )
+    # Derived from the boolean flags. A computed_field (not a plain required field)
+    # so FastAPI's model_validate serialization of ORM objects works for GET/POST/PUT
+    # alike — the old required field + custom from_orm 500'd on direct ORM returns.
+    @computed_field
+    @property
+    def owned_media(self) -> List[str]:
+        media: List[str] = []
+        if self.owned_audio:
+            media.append("Audio")
+        if self.owned_ebook:
+            media.append("Ebook")
+        if self.owned_physical:
+            media.append("Physical")
+        return media
