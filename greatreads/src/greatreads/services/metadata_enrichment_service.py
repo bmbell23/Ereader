@@ -221,9 +221,10 @@ def suggest_metadata(db: Session, book_id: int) -> Optional[dict]:
         ),
         _build_field(
             "cover", "Cover", bool(book.cover),
+            # Google Books covers are dropped — they're frequently the 575×750 "image
+            # not available" placeholder. Apple Books first, OpenLibrary fallback.
             [cand(None, _AP, "Apple Books cover", url=apple_cover),
-             cand(None, _OL, "OpenLibrary cover", url=o.get("cover_url")),
-             cand(None, _GB, "Google cover", url=g.get("cover_url"))],
+             cand(None, _OL, "OpenLibrary cover", url=o.get("cover_url"))],
             is_cover=True,
         ),
     ]
