@@ -58,6 +58,11 @@ services:
       - GREATREADS_DB=/app/data/greatreads.db  # the DB the absorbed routes read/write
       - EREADER_SUMMARIES_DIR=/app/ereader/summaries
       - EREADER_VERSION_FILE=/app/ereader/version.txt
+      # --- Libby/OverDrive engine sidecar (#142) ---
+      # The headless libby-web Flask app on the host (:5007). The /api/libby/*
+      # proxy (routes/libby.py) reaches it via the host gateway, same as
+      # Calibre/ABS. All Libby secrets stay server-side behind this proxy.
+      - LIBBY_ENGINE_URL=http://host.docker.internal:5007
     env_file:
       - ./.ereader.env                         # ABS_TOKEN (secret) — gitignored
     extra_hosts:

@@ -81,6 +81,10 @@
             <i class="fas fa-inbox me-1"></i>Newly Imported
             <span id="newImportBadge" class="badge rounded-pill bg-danger position-absolute top-0 start-100 translate-middle" style="display:none;font-size:.6rem;">0</span>
         </button>
+        <button class="btn btn-outline-secondary position-relative" type="button" id="libbyBtn" onclick="openLibby()" title="Libby / OverDrive — token health & re-link">
+            <i class="fas fa-building-columns me-1"></i>Libby
+            <span id="libbyBadge" class="badge rounded-pill bg-warning position-absolute top-0 start-100 translate-middle" style="display:none;font-size:.6rem;" title="Libby token needs attention"><i class="fas fa-exclamation"></i></span>
+        </button>
         <button class="btn btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#settingsPanel">
             <i class="fas fa-gear me-1"></i>Settings
         </button>
@@ -315,6 +319,36 @@
   </div>
 </div>
 
+<!-- Libby / OverDrive — token health & one-click re-link (#142 MVP-1) -->
+<div class="modal fade" id="libbyModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered modal-fullscreen-sm-down">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="fas fa-building-columns me-2"></i>Libby</h5>
+        <button type="button" class="btn btn-sm btn-outline-secondary ms-auto me-2" onclick="loadLibbyStatus()" title="Refresh"><i class="fas fa-rotate"></i></button>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted small mb-2">Borrow &amp; download library ebooks straight into GreatReads. The Libby connection (“chip”) uses a short-lived token (~7&nbsp;days) — when it goes stale, re-link it in one step below.</p>
+
+        <!-- Token health widget -->
+        <div id="libbyHealth" class="border rounded p-3 mb-3">
+          <div class="text-muted small">Checking Libby status…</div>
+        </div>
+
+        <!-- Re-link -->
+        <h6 class="mb-1"><i class="fas fa-link me-1 text-primary"></i>Re-link the chip</h6>
+        <p class="text-muted small mb-2">On your phone: open <strong>Libby → Settings</strong> (the person icon) → <strong>Copy to Another Device</strong> → it shows an 8-character code (valid only a few minutes). Paste it here:</p>
+        <div class="input-group input-group-sm mb-2" style="max-width:360px;">
+          <input type="text" class="form-control text-uppercase" id="libbyCode" placeholder="e.g. ABCD1234" maxlength="16" autocomplete="off" autocapitalize="characters" spellcheck="false" onkeydown="if(event.key==='Enter')libbyRelink()">
+          <button class="btn btn-primary" id="libbyRelinkBtn" onclick="libbyRelink()"><i class="fas fa-link me-1"></i>Re-link</button>
+        </div>
+        <div id="libbyRelinkMsg" class="small"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
 let shelfStatus = 'owned';
 let showComics = false, showReprints = false;
@@ -373,6 +407,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     setupInfiniteScroll();
     setupDetailSwipe();
     refreshImportBadge();          // #137 Newly-Imported badge
+    loadLibbyBadge();              // #142 Libby token-health warning badge
     _maybeOpenMergeFromUrl();      // #131 deep-link: /books?merge=a,b
     // the shared Edit Book module (book_edit.js) wires autocomplete + preloads lists
 });
@@ -959,6 +994,111 @@ async function reclean() {
     } catch (e) { showToast('Re-clean failed.', 'danger'); }
     btn.disabled = false;
     btn.innerHTML = '<i class="fas fa-broom me-1"></i>Re-clean';
+}
+
+
+// ── Libby / OverDrive — token health & one-click re-link (#142 MVP-1) ─────────
+const LIBBY_STATE_META = {
+    ok:          { cls: 'success',   icon: 'fa-circle-check',        label: 'Linked' },
+    warn:        { cls: 'warning',   icon: 'fa-triangle-exclamation', label: 'Expiring soon' },
+    critical:    { cls: 'danger',    icon: 'fa-triangle-exclamation', label: 'Expiring today' },
+    dead:        { cls: 'danger',    icon: 'fa-circle-xmark',        label: 'Token expired' },
+    unreachable: { cls: 'secondary', icon: 'fa-plug-circle-xmark',   label: 'Engine unreachable' },
+    unknown:     { cls: 'secondary', icon: 'fa-circle-question',     label: 'Unknown' },
+};
+
+function libbyFmtDuration(sec) {
+    if (sec == null) return '—';
+    if (sec <= 0) return 'expired';
+    const d = Math.floor(sec / 86400), h = Math.floor((sec % 86400) / 3600), m = Math.floor((sec % 3600) / 60);
+    if (d > 0) return `${d}d ${h}h`;
+    if (h > 0) return `${h}h ${m}m`;
+    return `${m}m`;
+}
+
+function libbyRenderHealth(s) {
+    const meta = LIBBY_STATE_META[s.state] || LIBBY_STATE_META.unknown;
+    const box = document.getElementById('libbyHealth');
+    let detail;
+    if (!s.engine_reachable) {
+        detail = '<div class="small text-muted mt-1">The Libby engine (libby-web) isn’t responding. Re-link and borrow are unavailable until it’s back.</div>';
+    } else {
+        const cards = (s.cards != null) ? `${s.cards} card${s.cards === 1 ? '' : 's'}` : 'card count unknown';
+        const expiry = (s.state === 'dead') ? 'token expired — re-link required'
+                     : (s.seconds_left != null) ? `token expires in ${libbyFmtDuration(s.seconds_left)}`
+                     : 'expiry unknown';
+        const fulfill = s.can_fulfill
+            ? '<span class="badge bg-success-subtle text-success-emphasis border border-success-subtle">direct fulfill</span>'
+            : '<span class="badge bg-secondary-subtle text-secondary-emphasis border border-secondary-subtle" title="Direct API fulfill is blocked by design (prbn:i); downloads use the OverDrive-website path.">website download</span>';
+        detail = `<div class="small mt-1">${s.linked ? '' : '<span class="text-warning">Not synced. </span>'}${cards} · ${expiry} ${fulfill}</div>`;
+    }
+    box.className = `border rounded p-3 mb-3 border-${meta.cls}`;
+    box.innerHTML = `<div class="d-flex align-items-center gap-2">
+        <span class="fs-4 text-${meta.cls}"><i class="fas ${meta.icon}"></i></span>
+        <span class="fw-semibold text-${meta.cls}">${meta.label}</span>
+      </div>${detail}`;
+}
+
+function libbyUpdateBadge(s) {
+    const badge = document.getElementById('libbyBadge');
+    if (!badge) return;
+    badge.style.display = s && s.stale ? '' : 'none';
+    // Red for dead/critical/unreachable, amber for a soft expiry warning.
+    const hard = s && ['dead', 'critical', 'unreachable'].includes(s.state);
+    badge.classList.toggle('bg-danger', !!hard);
+    badge.classList.toggle('bg-warning', !hard);
+}
+
+async function loadLibbyStatus() {
+    const box = document.getElementById('libbyHealth');
+    box.className = 'border rounded p-3 mb-3';
+    box.innerHTML = '<div class="text-muted small"><span class="spinner-border spinner-border-sm me-1"></span>Checking Libby status…</div>';
+    try {
+        const s = await GreatReads.apiCall('/libby/status');
+        libbyRenderHealth(s);
+        libbyUpdateBadge(s);
+    } catch (e) {
+        box.className = 'border rounded p-3 mb-3 border-secondary';
+        box.innerHTML = '<div class="small text-muted">Could not reach GreatReads to check Libby status.</div>';
+    }
+}
+
+// Lightweight status poll for the toolbar warning badge (no modal).
+async function loadLibbyBadge() {
+    try { libbyUpdateBadge(await GreatReads.apiCall('/libby/status')); } catch (e) { /* silent */ }
+}
+
+function openLibby() {
+    new bootstrap.Modal(document.getElementById('libbyModal')).show();
+    document.getElementById('libbyRelinkMsg').innerHTML = '';
+    loadLibbyStatus();
+}
+
+async function libbyRelink() {
+    const input = document.getElementById('libbyCode');
+    const btn = document.getElementById('libbyRelinkBtn');
+    const msg = document.getElementById('libbyRelinkMsg');
+    const code = (input.value || '').trim();
+    if (!code) { msg.className = 'small text-warning'; msg.textContent = 'Paste the 8-character code from your phone first.'; return; }
+    btn.disabled = true; input.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Linking…';
+    msg.className = 'small text-muted';
+    msg.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Re-linking — this can take a few seconds…';
+    try {
+        const r = await GreatReads.apiCall('/libby/relink', { method: 'POST', data: { code } });
+        input.value = '';
+        msg.className = 'small text-success';
+        msg.innerHTML = `<i class="fas fa-circle-check me-1"></i>Re-linked — ${r.cards} card${r.cards === 1 ? '' : 's'}, token good for ${libbyFmtDuration(r.seconds_left)}.`;
+        showToast(`Libby re-linked · ${r.cards} cards`, 'success');
+        loadLibbyStatus();
+    } catch (e) {
+        // apiCall already toasts the server detail; echo it inline too.
+        const detail = e?.response?.data?.detail || 'Re-link failed. Double-check the code (it expires within a few minutes) and try again.';
+        msg.className = 'small text-danger';
+        msg.innerHTML = `<i class="fas fa-circle-xmark me-1"></i>${detail}`;
+    }
+    btn.disabled = false; input.disabled = false;
+    btn.innerHTML = '<i class="fas fa-link me-1"></i>Re-link';
 }
 
 
