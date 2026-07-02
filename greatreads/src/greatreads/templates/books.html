@@ -84,10 +84,6 @@
         <button class="btn btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#settingsPanel">
             <i class="fas fa-gear me-1"></i>Settings
         </button>
-        <button class="btn btn-outline-primary" id="recleanBtn" onclick="reclean()"
-                title="Re-run filters on cached releases (no Google quota)">
-            <i class="fas fa-broom me-1"></i>Re-clean
-        </button>
         <button class="btn btn-primary" id="checkNowBtn" onclick="checkNow()">
             <i class="fas fa-rotate me-1"></i>Check now
         </button>
@@ -148,6 +144,15 @@
             releases from authors you follow (Google Books + OpenLibrary). Word counts are estimates —
             Calibre provides real counts once a book is owned.
         </p>
+        <h6 class="mb-1"><i class="fas fa-broom me-1 text-primary"></i>Maintenance</h6>
+        <p class="text-muted small mb-2">
+            Re-run the title cleanup / junk filters / dedup + OpenLibrary cross-reference over the
+            already-cached releases — drops stale placeholders and re-matches ownership. No Google
+            quota (unlike <em>Check now</em>, which fetches fresh releases). Rarely needed day to day.
+        </p>
+        <button class="btn btn-outline-primary btn-sm mb-3" id="recleanBtn" onclick="reclean()">
+            <i class="fas fa-broom me-1"></i>Re-clean cached releases
+        </button>
         <h6 class="mb-1"><i class="fas fa-user-pen me-1 text-primary"></i>Followed authors
             <span id="watchCount" class="text-muted small fw-normal"></span></h6>
         <div class="mb-2">
