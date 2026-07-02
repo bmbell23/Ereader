@@ -287,6 +287,34 @@ async def libby_downloads(current_user: User = Depends(get_current_user)):
     return await _engine_get("/api/downloads")
 
 
+# ── Item 8 — rich metadata + full (foreign) series ───────────────────────────
+
+@router.post("/book-details")
+async def libby_book_details(
+    payload: dict = Body(...),
+    current_user: User = Depends(get_current_user),
+):
+    """Full metadata for a title: synopsis, subjects/genres, community rating,
+    publisher, language, page count, series (name+id+index), per-library
+    availability. Forwards {title_id, book} to the engine's /api/book-details."""
+    if not str(payload.get("title_id", "")):
+        raise HTTPException(status_code=400, detail="title_id is required.")
+    return await _engine_post("/api/book-details", payload, timeout=_SEARCH_TIMEOUT)
+
+
+@router.get("/series-books")
+async def libby_series_books(request: Request, current_user: User = Depends(get_current_user)):
+    """All titles in a series — including ones NOT in the GreatReads library — each
+    with cover + per-library availability. Forwards series_id / series_name."""
+    return await _engine_get("/api/series-books", params=dict(request.query_params), timeout=_SEARCH_TIMEOUT)
+
+
+@router.get("/author-books")
+async def libby_author_books(request: Request, current_user: User = Depends(get_current_user)):
+    """All books by a creator (creator_id) or author-name query (q)."""
+    return await _engine_get("/api/author-books", params=dict(request.query_params), timeout=_SEARCH_TIMEOUT)
+
+
 # ── Milestone 4 — loans, holds, cards ────────────────────────────────────────
 
 @router.get("/loans")
