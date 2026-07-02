@@ -108,6 +108,9 @@
         if (title) title.textContent = isNew ? 'Add book' : 'Edit book';
         const del = document.getElementById('bkeDeleteBtn');
         if (del) del.style.display = isNew ? 'none' : '';
+        // "Request metadata" (#119) needs a saved id to apply against — edit mode only.
+        const enrich = document.getElementById('bkeEnrichBtn');
+        if (enrich) enrich.style.display = isNew ? 'none' : '';
         const nb = document.getElementById('bkeSaveNextBtn');
         if (nb && isNew) nb.style.display = 'none';
         // Primary button reads "Create" when adding, "Save changes" when editing;
@@ -390,10 +393,143 @@
         catch (e) { toast('Remove failed', 'danger'); }
     }
 
+    // ---- Request metadata (#119): look up one book online, accept per field ----
+    // Every row defaults to "Keep current" (reject). Applying writes only the
+    // accepted fields via the existing PUT /books + cover-from-url endpoints, and
+    // syncs the Edit Book inputs so a later "Save changes" stays consistent.
+    const bkeMetaFieldToInput = {
+        date_published: 'bkeDate', page_count: 'bkePages',
+        series_number: 'bkeSeriesNum', genre: 'bkeGenre',
+    };
+
+    async function bkeRequestMetadata() {
+        const id = document.getElementById('bkeId').value;
+        if (!id) return;
+        const body = document.getElementById('bkeMetaBody');
+        const sub = document.getElementById('bkeMetaSub');
+        body.innerHTML = '<div class="text-center text-muted py-4">'
+            + '<i class="fas fa-spinner fa-spin me-2"></i>Searching OpenLibrary + Google Books…</div>';
+        sub.textContent = '';
+        bootstrap.Modal.getOrCreateInstance(document.getElementById('bkeMetaModal')).show();
+        let res;
+        try { res = await api('/enrichment/' + id + '/suggest', { method: 'POST' }); }
+        catch (e) { body.innerHTML = '<div class="text-danger py-3">Lookup failed.</div>'; return; }
+        bkeRenderMeta(res);
+    }
+
+    function bkeRenderMeta(res) {
+        const body = document.getElementById('bkeMetaBody');
+        const sub = document.getElementById('bkeMetaSub');
+        const q = res.query || {};
+        sub.textContent = 'Looked up by ' + (q.mode === 'isbn' ? 'ISBN ' + q.isbn : 'title + author')
+            + '. Nothing is accepted unless you choose it.';
+        const fields = res.fields || [];
+        if (!fields.length) {
+            body.innerHTML = '<div class="text-muted py-3">No suggestions found for this book.</div>';
+            return;
+        }
+        const base = window.APP_BASE_PATH || '';
+        const curCoverImg = id => `${base}/static/covers/${id}.jpg?v=${Date.now()}`;
+        body.innerHTML = fields.map(f => {
+            const name = 'bkemeta-' + f.field;
+            const srcBadge = c => {
+                const cls = c.agree ? 'bke-meta-src bke-meta-agree' : 'bke-meta-src';
+                return `<span class="${cls}">${c.agree ? 'confirmed · ' : ''}${esc(c.source)}</span>`;
+            };
+            // Cover field (#130): render Current + each candidate as big side-by-side
+            // cards so the covers are actually comparable. Radio semantics are unchanged
+            // (`-keep` = reject; `data-cover-url` on candidates) so bkeApplyMetadata works.
+            if (f.is_cover) {
+                const card = (rid, checked, imgSrc, caption, dataAttr) => `
+                    <label class="bke-cover-opt${checked ? ' bke-cover-opt-sel' : ''}" for="${rid}">
+                        <input class="form-check-input" type="radio" name="${name}" id="${rid}"${checked ? ' checked' : ''}${dataAttr}>
+                        <div class="bke-cover-opt-img">${imgSrc
+                            ? `<img src="${imgSrc}" alt="" onerror="this.parentNode.innerHTML='<span class=\\'bke-meta-cur\\'>no image</span>'">`
+                            : `<span class="bke-meta-cur">none</span>`}</div>
+                        <div class="bke-cover-opt-cap">${caption}</div>
+                    </label>`;
+                const cards = [card(`${name}-keep`, true,
+                    f.current ? curCoverImg(res.book_id) : '', 'Keep current', '')];
+                f.candidates.forEach((c, i) => {
+                    cards.push(card(`${name}-${i}`, false, esc(c.url),
+                        `Use this ${srcBadge(c)}`, ` data-cover-url="${esc(c.url)}"`));
+                });
+                return `<div class="bke-meta-field mb-3" data-field="${f.field}" data-cover="1">
+                    <div class="fw-bold small mb-1">${esc(f.label)}</div>
+                    <div class="bke-meta-covers">${cards.join('')}</div></div>`;
+            }
+            // Default (checked) "keep current" row = reject.
+            const cur = (f.current === null || f.current === undefined || f.current === '') ? '—' : esc(String(f.current));
+            const curLabel = `Keep current <span class="bke-meta-cur">(${cur})</span>`;
+            const rows = [`<div class="form-check">
+                <input class="form-check-input" type="radio" name="${name}" id="${name}-keep" checked>
+                <label class="form-check-label" for="${name}-keep">${curLabel}</label></div>`];
+            f.candidates.forEach((c, i) => {
+                const rid = `${name}-${i}`;
+                const label = `${esc(String(c.display))}${srcBadge(c)}`;
+                rows.push(`<div class="form-check">
+                    <input class="form-check-input" type="radio" name="${name}" id="${rid}" data-value="${esc(String(c.value))}">
+                    <label class="form-check-label" for="${rid}">${label}</label></div>`);
+            });
+            return `<div class="bke-meta-field mb-3" data-field="${f.field}" data-cover="0">
+                <div class="fw-bold small mb-1">${esc(f.label)}</div>${rows.join('')}</div>`;
+        }).join('');
+        // Move the selected-card highlight as the user picks a cover (no :has() reliance,
+        // for older Android WebView). #130
+        body.querySelectorAll('.bke-meta-covers').forEach(group => {
+            group.addEventListener('change', () => {
+                group.querySelectorAll('.bke-cover-opt').forEach(opt =>
+                    opt.classList.toggle('bke-cover-opt-sel', opt.querySelector('input').checked));
+            });
+        });
+    }
+
+    async function bkeApplyMetadata() {
+        const id = document.getElementById('bkeId').value;
+        if (!id) return;
+        const data = {};          // book fields to PUT
+        let coverUrl = null;
+        document.querySelectorAll('#bkeMetaBody .bke-meta-field').forEach(group => {
+            const sel = group.querySelector('input[type=radio]:checked');
+            if (!sel || sel.id.endsWith('-keep')) return;   // "keep current" → reject
+            if (group.dataset.cover === '1') coverUrl = sel.dataset.coverUrl || null;
+            else {
+                const field = group.dataset.field, raw = sel.dataset.value;
+                if (field === 'page_count') data[field] = parseInt(raw, 10);
+                else if (field === 'series_number') data[field] = parseFloat(raw);
+                else data[field] = raw;   // date_published (ISO) / genre
+            }
+        });
+        if (!Object.keys(data).length && !coverUrl) {
+            toast('Nothing selected to accept', 'info'); return;
+        }
+        try {
+            if (Object.keys(data).length) await api('/books/' + id, { method: 'PUT', data });
+            if (coverUrl) {
+                await api(`/books/${id}/cover/from-url`, { method: 'POST', data: { url: coverUrl } });
+                if (bkeBook) bkeBook.cover = true;
+            }
+        } catch (e) { toast('Apply failed', 'danger'); return; }
+        // Sync the Edit Book inputs (+ bkeBook) so the visible form matches what we
+        // just wrote — otherwise a later "Save changes" would revert these fields.
+        Object.entries(data).forEach(([field, val]) => {
+            const inputId = bkeMetaFieldToInput[field];
+            const el = inputId && document.getElementById(inputId);
+            if (el) el.value = (val == null ? '' : val);
+            if (bkeBook) bkeBook[field] = val;
+        });
+        bkeRenderCover();
+        toast('Metadata applied', 'success');
+        const after = hooks().afterSave;
+        if (after) after(parseInt(id, 10), data, bkeBook);
+        bootstrap.Modal.getInstance(document.getElementById('bkeMetaModal'))?.hide();
+    }
+
     // Expose the handlers referenced by inline onclick= in the modal markup.
     Object.assign(window, {
         bkeOpen, bkeOpenNew, bkeSave, bkeSaveAndNext, bkeCreateAnother, bkeDelete,
         bkeUploadFile, bkeCoverFromUrl, bkeRemoveCover, bkeLoadLists, wireBookEdit: wireAutocomplete,
+        bkeRequestMetadata, bkeApplyMetadata,
     });
 
     document.addEventListener('DOMContentLoaded', () => { wireAutocomplete(); bkeLoadLists(); });

@@ -170,15 +170,39 @@ class GoogleBooksClient:
                 'isbn_10': isbn_10,
                 'isbn_13': isbn_13,
                 'google_books_id': item.get('id'),
-                'thumbnail': volume_info.get('imageLinks', {}).get('thumbnail'),
+                'thumbnail': self._best_image_url(volume_info.get('imageLinks', {})),
                 'preview_link': volume_info.get('previewLink'),
             }
             
             return book
-            
+
         except Exception as e:
             print(f"Error normalizing book data: {e}")
             return None
+
+    @staticmethod
+    def _best_image_url(image_links: dict) -> Optional[str]:
+        """Best available cover URL from a volume's ``imageLinks``, upgraded for quality.
+
+        Google's list response usually only carries ``smallThumbnail``/``thumbnail``
+        (~128px, on the content endpoint with a ``zoom=1&edge=curl`` page-curl graphic).
+        Prefer any larger key it happens to return, then upgrade the URL: force https,
+        drop the curl overlay, and swap ``zoom=1``→``zoom=0`` (the content endpoint
+        returns a much larger image at zoom 0). #130
+        """
+        if not image_links:
+            return None
+        url = None
+        for key in ("extraLarge", "large", "medium", "small", "thumbnail", "smallThumbnail"):
+            if image_links.get(key):
+                url = image_links[key]
+                break
+        if not url:
+            return None
+        url = url.replace("http://", "https://")
+        url = url.replace("&edge=curl", "").replace("edge=curl&", "").replace("edge=curl", "")
+        url = url.replace("zoom=1", "zoom=0")
+        return url
     
     def get_editions(self, title: str, author: str, max_results: int = 20) -> List[Dict]:
         """All editions of one specific work (intitle+inauthor), for reprint detection.

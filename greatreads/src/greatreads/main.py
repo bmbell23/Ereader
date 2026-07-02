@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from .config import settings
 from .database import create_tables, get_db, SessionLocal
-from .routes import books, readings, chains, library, settings as settings_routes, stats, auth, inventory, reports, import_routes, bookshelves, news
+from .routes import books, readings, chains, library, settings as settings_routes, stats, auth, inventory, reports, import_routes, bookshelves, news, enrichment
 from . import ereader_api  # absorbed Ereader backend (:8091), routes carry /api/... (#22)
 from .auth import get_current_user_from_cookie
 
@@ -284,6 +284,7 @@ app.include_router(reports.router, prefix="/api/reports", tags=["reports"])
 app.include_router(import_routes.router, prefix="/api/import", tags=["import"])
 app.include_router(bookshelves.router, prefix="/api/bookshelves", tags=["bookshelves"])
 app.include_router(news.router, prefix="/api/news", tags=["news"])
+app.include_router(enrichment.router, prefix="/api/enrichment", tags=["enrichment"])
 app.include_router(ereader_api.router, tags=["ereader"])  # no prefix — routes already carry /api/... (#22)
 
 
