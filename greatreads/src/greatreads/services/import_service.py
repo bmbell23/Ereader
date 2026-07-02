@@ -236,6 +236,16 @@ def _best_match(
                 snum_sim   * 0.05 +
                 year_sim   * 0.10
             )
+            # Strong identity (#135): a (near-)exact title AND author is the same
+            # work even when the incoming source (e.g. a Calibre ebook) carries no
+            # series/number/year to corroborate — absent fields shouldn't sink an
+            # otherwise-exact match under the auto-link bar (title+author alone = 0.75,
+            # and "one side missing" series/snum/year drag it to ~0.895 < 0.90, so an
+            # obvious duplicate spawns a new book instead of linking). Floor the score
+            # so it auto-links. Distinct titles (series siblings) score far below 0.92,
+            # so this can't mis-link different works.
+            if title_sim >= 0.92 and author_sim >= 0.9:
+                composite = max(composite, 0.95)
 
         if composite > best_score:
             best_score = composite
