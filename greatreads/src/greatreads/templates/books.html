@@ -402,6 +402,8 @@ function coverSrc(c) {
     if (c.kind === 'local') return c.has_cover ? `${base}/static/covers/${c.book_id}.jpg?v=${c.cover_version || 0}` : '';
     return c.cover_url || '';
 }
+// Cover fallback helpers (grCoverOnload / grCoverError / #143) are defined globally
+// in app.js so the shared cover-tap popup uses the same Apple Books fallback.
 function phCover(c, disp) {
     const num = c.series_number != null ? ` #${c.series_number}` : '';
     const seriesHtml = c.series
@@ -654,9 +656,19 @@ function renderAll() {
 function cardHtml(c) {
     const base = window.APP_BASE_PATH || '';
     const src = coverSrc(c);
-    const cover = src
-        ? `<img src="${src}" alt="" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">${phCover(c, 'none')}`
-        : phCover(c, 'flex');
+    // Remote (news/libby) cards carry title/author so a placeholder/error can try the
+    // Apple Books cover fallback (#143) before showing parchment. Local covers don't.
+    const dta = (c.kind !== 'local')
+        ? ` data-title="${esc(dispTitle(c.title))}" data-author="${esc(c.author || '')}"` : '';
+    let cover;
+    if (src) {
+        cover = `<img src="${src}"${dta} alt="" loading="lazy" onload="grCoverOnload(this)" onerror="grCoverError(this)">${phCover(c, 'none')}`;
+    } else if (c.kind !== 'local' && c.title) {
+        // No Google cover at all → go straight to the Apple Books fallback endpoint.
+        cover = `<img src="${base}/api/news/cover?title=${encodeURIComponent(c.title)}&author=${encodeURIComponent(c.author || '')}"${dta} data-fb="1" alt="" loading="lazy" onerror="grCoverError(this)">${phCover(c, 'none')}`;
+    } else {
+        cover = phCover(c, 'flex');
+    }
     const key = cardKey(c);
     const selectable = selectMode && c.kind === 'local';   // bulk edit is DB-books only
     const isSel = selectable && selected.has(key);
@@ -689,7 +701,8 @@ let libbyPage = 1;
 // A small availability ribbon across the bottom of a Libby result cover.
 function libbyAvailRibbon(c) {
     let cls, txt;
-    if (c.onHold) { cls = 'bg-info text-dark'; txt = 'On hold'; }
+    if (libbyIsOwned(c)) { cls = 'bg-primary'; txt = 'In library'; }
+    else if (c.onHold) { cls = 'bg-info text-dark'; txt = 'On hold'; }
     else if (c.isAvailable) { cls = 'bg-success'; txt = 'Available'; }
     else {
         const w = c.estimatedWaitDays;
@@ -698,6 +711,22 @@ function libbyAvailRibbon(c) {
     }
     return `<div class="position-absolute bottom-0 start-0 end-0 text-center small fw-semibold ${cls}"
         style="font-size:.6rem;padding:1px 2px;opacity:.92;">${txt}</div>`;
+}
+
+// The engine appends a `libraries` entry per matching seed query, so the same
+// library repeats. Collapse to one row per library, keeping the best availability
+// (available first, then shortest wait).
+function libbyDedupeLibraries(libs) {
+    const byKey = new Map();
+    for (const l of (libs || [])) {
+        const k = l.key || l.cardId;
+        const cur = byKey.get(k);
+        const better = !cur
+            || (l.isAvailable && !cur.isAvailable)
+            || (!cur.isAvailable && !l.isAvailable && (l.estimatedWaitDays || 9999) < (cur.estimatedWaitDays || 9999));
+        if (better) byKey.set(k, l);
+    }
+    return [...byKey.values()];
 }
 
 // Map an engine search row → a Books card shape (kind:'libby').
@@ -716,7 +745,7 @@ function libbyRowToCard(row) {
         inLibrary: !!row.inLibrary,
         holdsCount: row.holdsCount,
         estimatedWaitDays: row.estimatedWaitDays,
-        libraries: row.libraries || [],
+        libraries: libbyDedupeLibraries(row.libraries),
         _row: row,
     };
 }
@@ -854,12 +883,14 @@ function openLibbyDetails(c) {
         date_published: (c._row && c._row.publishDate) || '', genre: '',
         cover: false, inventory: [], readings: [],
     };
+    // NOTE: the shared popup ignores opts.extraInfoHtml (retired in #120) — only
+    // opts.actionsHtml renders. So the whole Libby panel goes through actionsHtml.
     const owned = libbyIsOwned(c)
-        ? '<div class="alert alert-success py-1 px-2 small mb-2"><i class="fas fa-check-circle me-1"></i>Already in your GreatReads library.</div>' : '';
-    const extraInfoHtml = `${owned}<div id="libbyRich" class="mb-2"></div>${libbyLibraryChooser(c)}<div id="libbyAction" class="mt-1 mb-2"></div><div id="libbySeries"></div>`;
+        ? '<div class="alert alert-success py-1 px-2 small mb-2 w-100"><i class="fas fa-check-circle me-1"></i>Already in your GreatReads library.</div>' : '';
+    const actionsHtml = `${owned}<div id="libbyRich" class="mb-2 w-100"></div>${libbyLibraryChooser(c)}<div id="libbyAction" class="mt-1 mb-2 w-100"></div><div id="libbySeries" class="w-100"></div>`;
 
     GreatReads.openBookActions(book, {
-        title: c.title, extraInfoHtml,
+        title: c.title, actionsHtml,
         editBook: false, sessions: false, highlights: false,
         onShow: () => { libbyRenderAction(); libbyLoadRich(c); libbyLoadSeries(c); },
     });
@@ -1114,7 +1145,12 @@ function grBooksOpenDetails(key, navList) {
 }
 function openBookDetails(key, navList) {
     const lc = cardReg[key] || cards.find(x => cardKey(x) === key);
-    if (lc && lc.kind === 'libby') return openLibbyDetails(lc);   // #142
+    if (lc && lc.kind === 'libby') {
+        // Owned → open the real GreatReads book (full formats + read status), the same
+        // details card we show everywhere else (#142 item 4); else the Libby panel.
+        if (lc.grBookId) return GreatReads.openBookById(lc.grBookId);
+        return openLibbyDetails(lc);
+    }
     return grBooksOpenDetails(key, navList);
     const c = cardReg[key] || cards.find(x => cardKey(x) === key);
     if (!c) return;
@@ -1197,7 +1233,7 @@ async function fetchSeries(series, universe) {
 function seriesMiniHtml(c, currentId, withCaption) {
     const src = coverSrc(c);
     const cover = src
-        ? `<img src="${src}" alt="" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">${phCover(c, 'none')}`
+        ? `<img src="${src}" alt="" loading="lazy" onload="grCoverOnload(this)" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">${phCover(c, 'none')}`
         : phCover(c, 'flex');
     const cur = c.book_id === currentId ? ' style="outline:2px solid var(--bs-primary);outline-offset:1px;border-radius:4px;"' : '';
     const num = c.series_number != null ? `#${c.series_number}` : '';
@@ -1657,19 +1693,30 @@ function renderImportList(items) {
         const dupWarn = i.possible_duplicate
             ? `<div class="mt-1"><span class="badge bg-warning text-dark">possible duplicate</span>
                  <span class="small text-muted">of “${_niEsc(i.possible_duplicate.title || ('#' + i.possible_duplicate.id))}”</span>
-                 <button class="btn btn-sm btn-outline-danger py-0 ms-1" onclick="mergeFromImport(${i.book_id},${i.possible_duplicate.id})"><i class="fas fa-code-branch me-1"></i>Merge</button></div>`
+                 <button class="btn btn-sm btn-outline-danger py-0 ms-1" onclick="event.stopPropagation();mergeFromImport(${i.book_id},${i.possible_duplicate.id})"><i class="fas fa-code-branch me-1"></i>Merge</button></div>`
             : '';
+        // Cover + info open the shared book-details popup (Read/Listen, series, etc.);
+        // the Merge + dismiss buttons stop propagation so they don't also open it.
         return `<div class="d-flex gap-2 align-items-start border-bottom py-2">
-            ${cover}
-            <div class="flex-grow-1">
-                <div><span class="fw-semibold">${_niEsc(i.title || 'Untitled')}</span> <span class="badge bg-light text-dark">#${i.book_id}</span></div>
-                <div class="small text-muted">${_niEsc(i.author || '')}${sc}</div>
-                <div class="small mt-1">${actBadge} <span class="text-muted">${src} · ${_niEsc((i.media_owned || []).join(', '))} · ${_niAgo(i.imported_at)}</span></div>
-                ${dupWarn}
+            <div style="display:flex;gap:.5rem;cursor:pointer;" class="flex-grow-1" onclick="niOpen(${i.book_id})" title="Open book details">
+                ${cover}
+                <div class="flex-grow-1">
+                    <div><span class="fw-semibold">${_niEsc(i.title || 'Untitled')}</span> <span class="badge bg-light text-dark">#${i.book_id}</span></div>
+                    <div class="small text-muted">${_niEsc(i.author || '')}${sc}</div>
+                    <div class="small mt-1">${actBadge} <span class="text-muted">${src} · ${_niEsc((i.media_owned || []).join(', '))} · ${_niAgo(i.imported_at)}</span></div>
+                    ${dupWarn}
+                </div>
             </div>
             <button class="btn btn-sm btn-link text-muted" title="Mark reviewed" onclick="dismissImport(${i.import_id}, this)"><i class="fas fa-check"></i></button>
         </div>`;
     }).join('');
+}
+// Open a Newly-Imported row in the shared book-details popup. Hide the tray first so
+// there's a single modal (reopen the tray from the toolbar afterwards).
+function niOpen(bookId) {
+    if (bookId == null) return;
+    bootstrap.Modal.getInstance(document.getElementById('newImportModal'))?.hide();
+    GreatReads.openBookById(bookId);
 }
 function dismissImport(importId, btn) {
     const seen = _niSeen(); seen.add(importId); _niSaveSeen(seen);

@@ -400,16 +400,16 @@
     <script src="{{ url_for('static', path='/vendor/sortablejs/Sortable.min.js') }}"></script>
 
     <!-- Custom JS -->
-    <script src="{{ url_for('static', path='/js/app.js') }}?v=2.0.10"></script>
+    <script src="{{ url_for('static', path='/js/app.js') }}?v={{ asset_ver }}"></script>
     <!-- Shared Edit Book modal behavior (#110); needs GreatReads.* from app.js above -->
-    {% if current_user %}<script src="{{ url_for('static', path='/js/book_edit.js') }}?v=3"></script>{% endif %}
+    {% if current_user %}<script src="{{ url_for('static', path='/js/book_edit.js') }}?v={{ asset_ver }}"></script>{% endif %}
 
     <!-- Loading screen (#55/#114): the shared quotes.js on ONE host — same as the
          ereader (web/index.html), which works great. The doubling was base.html
          starting it on TWO hosts (overlay + #loading-state). Host = the in-page
          #loading-state where you wait for data (TBR/Journal/Library/Books), else the
          full-screen overlay (Home/Stats, which hold it via window.__pageReady). -->
-    <script src="{{ url_for('static', path='/js/quotes.js') }}?v=7"></script>
+    <script src="{{ url_for('static', path='/js/quotes.js') }}?v={{ asset_ver }}"></script>
     <script>
         (function () {
             var overlay = document.getElementById('app-loading');

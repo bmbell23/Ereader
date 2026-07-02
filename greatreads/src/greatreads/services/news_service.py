@@ -23,6 +23,8 @@ import json
 import logging
 import os
 import re
+import urllib.parse
+import urllib.request
 from datetime import date, datetime, timedelta
 from typing import Optional
 
@@ -577,7 +579,7 @@ def _dedup_crossentry(db: Session) -> int:
     by_author: dict = {}
     for it in db.query(NewsItem).all():
         sig = tuple(_sig_tokens(it.title))
-        if len(sig) >= 2:
+        if len(sig) >= 1:
             by_author.setdefault((it.author_name or "").lower(), []).append((it, sig))
     removed = 0
     for items in by_author.values():
@@ -586,10 +588,17 @@ def _dedup_crossentry(db: Session) -> int:
         for it, sig in items:
             dup_idx = None
             for idx, (_, ksig) in enumerate(kept):
-                short, lng = (ksig, sig) if len(ksig) <= len(sig) else (sig, ksig)
-                if lng[:len(short)] == short:            # one is a prefix of the other
+                # Exact same significant title → duplicate editions of one work (e.g. two
+                # 'Scion' rows). Single-word titles ONLY merge here, never by prefix (so
+                # 'Scion' can't swallow 'Scion's Revenge').
+                if ksig == sig:
                     dup_idx = idx
                     break
+                if len(ksig) >= 2 and len(sig) >= 2:
+                    short, lng = (ksig, sig) if len(ksig) <= len(sig) else (sig, ksig)
+                    if lng[:len(short)] == short:        # one is a prefix of the other
+                        dup_idx = idx
+                        break
             if dup_idx is None:
                 kept.append((it, sig))
             else:
@@ -605,9 +614,79 @@ def _dedup_crossentry(db: Session) -> int:
     return removed
 
 
+# ── Cover backfill (#143) ────────────────────────────────────────────────────
+# Google Books serves an "image not available" placeholder (a fixed 575×750 PNG,
+# HTTP 200) for coverless volumes. We NEVER want that reaching the UI, so during
+# re-clean we detect it and replace it with a validated Apple Books cover, or drop
+# it so the client shows our parchment template.
+
+def is_google_placeholder(url: Optional[str]) -> bool:
+    """True if a Google Books cover URL resolves to the 575×750 placeholder PNG.
+    Parses the PNG IHDR directly (no Pillow) — real covers are JPEG, so a PNG with
+    those exact dims is the placeholder."""
+    if not url or "books.google" not in url:
+        return False
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=8) as r:
+            head = r.read(24)
+        if head[:8] != b"\x89PNG\r\n\x1a\n":
+            return False
+        return (int.from_bytes(head[16:20], "big"), int.from_bytes(head[20:24], "big")) == (575, 750)
+    except Exception:
+        return False
+
+
+def resolve_apple_cover(title: str, author: str = "") -> Optional[str]:
+    """Find a cover on Apple Books (iTunes Search — free/keyless) by title+author,
+    validating the match so an unrelated hit ('Girl Who Looked Up' → 'Writers of the
+    Future') is rejected. Returns a hi-res artwork URL or None."""
+    tnorm = " ".join(re.sub(r"[^\w\s]", " ", (title or "").lower()).split())
+    if not tnorm:
+        return None
+    try:
+        qs = urllib.parse.urlencode({"term": f"{title} {author}".strip(), "entity": "ebook", "limit": 5})
+        req = urllib.request.Request(f"https://itunes.apple.com/search?{qs}", headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=8) as r:
+            data = json.loads(r.read())
+        tset = set(tnorm.split())
+        for res in data.get("results", []):
+            cand = " ".join(re.sub(r"[^\w\s]", " ", (res.get("trackName") or "").lower()).split())
+            if cand and (cand == tnorm or cand.startswith(tnorm) or (tset and tset <= set(cand.split()))):
+                art = res.get("artworkUrl100") or res.get("artworkUrl60") or ""
+                if art:
+                    return re.sub(r"/\d+x\d+bb\.(jpg|png|jpeg)", r"/600x600bb.\1", art)
+    except Exception as exc:
+        logger.debug("resolve_apple_cover(%r) failed: %s", title, exc)
+    return None
+
+
+def backfill_covers(db: Session) -> int:
+    """Replace missing / Google-placeholder news covers with validated Apple Books
+    covers; if none is found, null the placeholder so the UI shows parchment (never
+    the 'image not available' image). Returns the number of rows changed."""
+    changed = 0
+    for it in db.query(NewsItem).all():
+        placeholder = is_google_placeholder(it.thumbnail_url)
+        if it.thumbnail_url and not placeholder:
+            continue                                   # already a real cover
+        art = resolve_apple_cover(it.title, it.author_name)
+        if art:
+            it.thumbnail_url = art
+            it.low_confidence = bool(it.low_confidence and not it.isbn_13)
+            changed += 1
+        elif placeholder:
+            it.thumbnail_url = None                    # drop the junk → parchment
+            changed += 1
+    if changed:
+        db.commit()
+    return changed
+
+
 def reprocess(db: Session) -> dict:
     """Re-run title cleanup + language/junk filters + dedup over EXISTING rows using
-    stored raw_json — NO API calls. Lets us iterate filtering without spending quota."""
+    stored raw_json. No Google Books *quota* is spent; a cover backfill does light
+    iTunes/image lookups to purge 'image not available' placeholders (#143)."""
     existing_books = _build_existing(db)
     series_index = _build_series_index(existing_books)
     owned_ids = {bid for (bid,) in db.query(Inventory.book_id).distinct() if bid}
@@ -657,7 +736,9 @@ def reprocess(db: Session) -> dict:
     db.commit()
     removed += _dedup_untitled(db)
     removed += _dedup_crossentry(db)
-    return {"removed": removed, "updated": updated, "remaining": db.query(NewsItem).count()}
+    covers = backfill_covers(db)
+    return {"removed": removed, "updated": updated, "covers": covers,
+            "remaining": db.query(NewsItem).count()}
 
 
 def enrich_with_openlibrary(db: Session, only_missing: bool = True) -> dict:

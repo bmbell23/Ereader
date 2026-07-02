@@ -6,9 +6,12 @@ background (it can take minutes for a large author set, so we don't block the re
 """
 
 import logging
+import re
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends
+import httpx
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -17,6 +20,57 @@ from ..services import news_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# Resolved fallback covers (#143). Keyed by normalized title|author; value is the
+# artwork URL or None (negative cache) so we don't re-hit iTunes on every render.
+_cover_cache: dict[str, Optional[str]] = {}
+
+
+def _norm_cover(s: str) -> str:
+    return " ".join(re.sub(r"[^\w\s]", " ", (s or "").lower()).split())
+
+
+@router.get("/cover")
+async def news_cover(title: str, author: str = ""):
+    """Fallback cover resolver (#143). When Google Books has no cover for an
+    Upcoming/New title, find one on Apple Books (iTunes Search — free/keyless) by
+    title+author, VALIDATING that the match is really the same title (a naive query
+    matched 'The Girl Who Looked Up' → 'Writers of the Future'). 302 → hi-res
+    artwork on a confident match, else 404 so the client shows the parchment."""
+    tnorm = _norm_cover(title)
+    if not tnorm:
+        raise HTTPException(status_code=404, detail="no title")
+    key = f"{tnorm}|{_norm_cover(author)}"
+    if key in _cover_cache:
+        url = _cover_cache[key]
+        if url:
+            return RedirectResponse(url)
+        raise HTTPException(status_code=404, detail="no cover")
+
+    url: Optional[str] = None
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            resp = await client.get("https://itunes.apple.com/search", params={
+                "term": f"{title} {author}".strip(), "entity": "ebook", "limit": 5,
+            })
+        results = resp.json().get("results", []) if resp.status_code == 200 else []
+        tset = set(tnorm.split())
+        for r in results:
+            cand = _norm_cover(r.get("trackName", ""))
+            cset = set(cand.split())
+            # Accept exact, prefix, or full-title-token-subset — reject unrelated hits.
+            if cand and (cand == tnorm or cand.startswith(tnorm) or (tset and tset <= cset)):
+                art = r.get("artworkUrl100") or r.get("artworkUrl60") or ""
+                if art:
+                    url = re.sub(r"/\d+x\d+bb\.(jpg|png|jpeg)", r"/600x600bb.\1", art)
+                    break
+    except Exception as exc:
+        logger.warning("news_cover(%r) fallback failed: %s", title, exc)
+
+    _cover_cache[key] = url
+    if url:
+        return RedirectResponse(url)
+    raise HTTPException(status_code=404, detail="no cover")
 
 
 class AuthorBody(BaseModel):

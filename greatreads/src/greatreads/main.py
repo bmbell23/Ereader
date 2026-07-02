@@ -270,6 +270,20 @@ app.mount("/static", StaticFiles(directory=str(settings.static_dir)), name="stat
 # Setup templates
 templates = Jinja2Templates(directory=str(settings.templates_dir))
 
+
+def _asset_ver() -> str:
+    """Cache-buster for JS/CSS assets — the newest mtime among the bundled JS files,
+    so a code change (baked into a fresh image) invalidates the browser cache without
+    a manual version bump. Falls back to the app version."""
+    try:
+        js_dir = settings.static_dir / "js"
+        return str(int(max(p.stat().st_mtime for p in js_dir.glob("*.js"))))
+    except Exception:
+        return settings.app_version
+
+
+templates.env.globals["asset_ver"] = _asset_ver()
+
 # Include routers
 # Auth router includes both API routes and page routes, so include it without prefix
 app.include_router(auth.router, tags=["auth"])

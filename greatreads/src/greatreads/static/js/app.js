@@ -220,6 +220,26 @@ async function apiCall(endpoint, options = {}) {
     }
 }
 
+// ── Cover fallback (#143) — shared by the Books grid and the cover-tap popup ──
+// Google Books serves an "image not available" placeholder (a fixed 575×750 PNG,
+// HTTP 200) for coverless volumes, so onerror never fires. On that placeholder (or
+// a real load error) try the Apple Books fallback (/api/news/cover) once, then the
+// parchment/placeholder. Only meaningful for remote (news/Libby) covers, which
+// carry data-title/data-author.
+function grShowParchment(img) {
+    img.style.display = 'none';
+    if (img.nextElementSibling) img.nextElementSibling.style.display = 'flex';
+}
+function grCoverFallback(img) {
+    if (img.dataset.fb || !img.dataset.title) { grShowParchment(img); return; }
+    img.dataset.fb = '1';
+    img.src = `${API_BASE}/news/cover?title=${encodeURIComponent(img.dataset.title)}&author=${encodeURIComponent(img.dataset.author || '')}`;
+}
+function grCoverOnload(img) {
+    if (img.naturalWidth === 575 && img.naturalHeight === 750) grCoverFallback(img);
+}
+function grCoverError(img) { grCoverFallback(img); }
+
 // Reading management functions
 async function updateReading(readingId, data) {
     return await apiCall(`/readings/${readingId}`, {
@@ -966,9 +986,23 @@ function grOpenBookActions(book, opts = {}, keepNav = false) {
         ? book.cover_url
         : ((book.cover && book.id != null)                            // local cover file
             ? `${base}/static/covers/${book.id}.jpg?v=${Date.now()}` : '');
-    const coverInner = coverUrl
-        ? `<img src="${coverUrl}" alt="" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';"><div class="gba-ph" style="display:none;">${grEsc(book.title || '')}</div>`
-        : `<div class="gba-ph">${grEsc(book.title || '')}</div>`;
+    // Remote (news/Libby) books have no DB id → give the popup cover the same Apple
+    // Books fallback + 575×750-placeholder detection the grid cards get (#143), so a
+    // book that shows a cover in the grid doesn't render "image not available" here.
+    const grRemote = book.id == null && !!book.title;
+    const grDta = grRemote ? ` data-title="${grEsc(book.title || '')}" data-author="${grEsc(book.author || '')}"` : '';
+    const grOnload = grRemote ? ' onload="grCoverOnload(this)"' : '';
+    const grOnerr = grRemote ? 'grCoverError(this)' : "this.style.display='none';this.nextElementSibling.style.display='flex';";
+    const grPh = `<div class="gba-ph" style="display:none;">${grEsc(book.title || '')}</div>`;
+    let coverInner;
+    if (coverUrl) {
+        coverInner = `<img src="${coverUrl}"${grDta}${grOnload} alt="" onerror="${grOnerr}">${grPh}`;
+    } else if (grRemote) {
+        // No cover URL at all → go straight to the Apple Books fallback endpoint.
+        coverInner = `<img src="${API_BASE}/news/cover?title=${encodeURIComponent(book.title)}&author=${encodeURIComponent(book.author || '')}"${grDta} data-fb="1" alt="" onerror="grCoverError(this)">${grPh}`;
+    } else {
+        coverInner = `<div class="gba-ph">${grEsc(book.title || '')}</div>`;
+    }
 
     // Owned physical copy → shelf location string, shown as a caption below the tiles
     // (keeps all format tiles the same size).
