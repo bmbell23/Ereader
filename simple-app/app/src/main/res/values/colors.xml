@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- White backdrop behind the adaptive foreground; visible in the bleed area on
-         round / squircle launcher masks. The icon itself has a transparent background
-         so this shows through in the outer 18 dp margin. -->
-    <color name="ic_launcher_background">#FFFFFF</color>
+    <!-- Backdrop behind the adaptive foreground, visible in the bleed area on round /
+         squircle masks. The new foreground is a full-bleed gradient (opaque to the
+         corners), so this rarely shows — set to an on-brand mid-purple (not white) so
+         any sliver at the mask edge blends with the icon instead of flashing white. #133 -->
+    <color name="ic_launcher_background">#7F30AF</color>
 </resources>
