@@ -74,19 +74,13 @@
         <button class="btn btn-outline-secondary" id="selectBtn" type="button" onclick="toggleSelectMode()">
             <i class="fas fa-check-double me-1"></i>Select
         </button>
-        <button class="btn btn-outline-secondary" type="button" onclick="openMergeDuplicates()">
-            <i class="fas fa-code-branch me-1"></i>Merge Duplicates
-        </button>
         <button class="btn btn-outline-secondary position-relative" type="button" onclick="openNewlyImported()" title="Recently auto-imported ebooks & audiobooks">
             <i class="fas fa-inbox me-1"></i>Newly Imported
             <span id="newImportBadge" class="badge rounded-pill bg-danger position-absolute top-0 start-100 translate-middle" style="display:none;font-size:.6rem;">0</span>
         </button>
-        <button class="btn btn-outline-secondary position-relative" type="button" id="libbyBtn" onclick="openLibby()" title="Libby / OverDrive — token health & re-link">
-            <i class="fas fa-building-columns me-1"></i>Libby
-            <span id="libbyBadge" class="badge rounded-pill bg-warning position-absolute top-0 start-100 translate-middle" style="display:none;font-size:.6rem;" title="Libby token needs attention"><i class="fas fa-exclamation"></i></span>
-        </button>
-        <button class="btn btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#settingsPanel">
+        <button class="btn btn-outline-secondary position-relative" type="button" data-bs-toggle="collapse" data-bs-target="#settingsPanel">
             <i class="fas fa-gear me-1"></i>Settings
+            <span id="libbyBadge" class="badge rounded-pill bg-warning position-absolute top-0 start-100 translate-middle" style="display:none;font-size:.6rem;" title="Libby token needs attention"><i class="fas fa-exclamation"></i></span>
         </button>
         <button class="btn btn-primary" id="checkNowBtn" onclick="checkNow()">
             <i class="fas fa-rotate me-1"></i>Check now
@@ -130,6 +124,7 @@
         <div class="stat-chip"        id="stUnowned"  style="color:#0d6efd;" onclick="setStatus('unowned')"><i class="fas fa-bookmark"></i><span>Unowned</span></div>
         <div class="stat-chip"        id="stUpcoming" style="color:#e0a800;" onclick="setStatus('upcoming')"><i class="fas fa-calendar-day"></i><span>Upcoming</span></div>
         <div class="stat-chip"        id="stNew"      style="color:#6f42c1;" onclick="setStatus('new')"><i class="fas fa-star"></i><span>New</span></div>
+        <div class="stat-chip"        id="stLibby"    style="color:#d63384;" title="Search library ebooks on Libby/OverDrive and borrow into GreatReads" onclick="setStatus('libby')"><i class="fas fa-building-columns"></i><span>Libby</span></div>
     </div>
     <div class="stat-chips d-flex" id="subToggles" style="display:none !important;">
         <div class="stat-chip" id="chipComics"   style="color:#fd7e14;" title="Hidden by default — click to show comics" onclick="toggleCat('comics')"><i class="fas fa-book-open"></i><span>Comics</span></div>
@@ -140,6 +135,17 @@
 <!-- Settings (followed authors + about) -->
 <div class="collapse mb-3" id="settingsPanel">
     <div class="card"><div class="card-body">
+        <h6 class="mb-1"><i class="fas fa-toolbox me-1 text-primary"></i>Tools</h6>
+        <p class="text-muted small mb-2">Borrow library ebooks via Libby/OverDrive, and merge duplicate book records.</p>
+        <div class="d-flex flex-wrap gap-2 mb-3">
+            <button class="btn btn-outline-primary btn-sm position-relative" type="button" onclick="openLibby()">
+                <i class="fas fa-building-columns me-1"></i>Libby — cards &amp; token
+                <span id="libbyBadge2" class="badge rounded-pill bg-warning position-absolute top-0 start-100 translate-middle" style="display:none;font-size:.6rem;" title="Libby token needs attention"><i class="fas fa-exclamation"></i></span>
+            </button>
+            <button class="btn btn-outline-secondary btn-sm" type="button" onclick="openMergeDuplicates()">
+                <i class="fas fa-code-branch me-1"></i>Merge Duplicates
+            </button>
+        </div>
         <h6 class="mb-1"><i class="fas fa-circle-info me-1 text-primary"></i>About</h6>
         <p class="text-muted small mb-3">
             Your whole book lifecycle on one page: <span style="color:#198754;">Owned</span> /
@@ -344,6 +350,12 @@
           <button class="btn btn-primary" id="libbyRelinkBtn" onclick="libbyRelink()"><i class="fas fa-link me-1"></i>Re-link</button>
         </div>
         <div id="libbyRelinkMsg" class="small"></div>
+
+        <!-- Linked libraries & cards -->
+        <hr class="my-3">
+        <h6 class="mb-1"><i class="fas fa-id-card me-1 text-primary"></i>Your libraries &amp; cards</h6>
+        <p class="text-muted small mb-2">Libraries linked to your Libby account. A card needs saved website credentials before it can download.</p>
+        <div id="libbyCards"><div class="text-muted small">Loading…</div></div>
       </div>
     </div>
   </div>
@@ -378,7 +390,7 @@ function updateSortUI() {
 }
 
 const isRemote = () => shelfStatus === 'upcoming' || shelfStatus === 'new';
-const cardKey = c => (c.kind === 'local' ? 'L' + c.book_id : 'R' + c.news_id);
+const cardKey = c => (c.kind === 'local' ? 'L' + c.book_id : c.kind === 'libby' ? 'B' + c.title_id : 'R' + c.news_id);
 
 function esc(s) { return (s || '').replace(/[&<>"]/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[m])); }
 // Display-only title fallback for books with a blank title — shown in the UI but
@@ -476,9 +488,14 @@ function setStatus(s) {
     if (s === shelfStatus) return;
     shelfStatus = s;
     selected.clear();   // selection is per-shelf; don't carry across statuses
-    ['Owned', 'Unowned', 'Upcoming', 'New'].forEach(x =>
+    ['Owned', 'Unowned', 'Upcoming', 'New', 'Libby'].forEach(x =>
         document.getElementById('st' + x).classList.toggle('active', x.toLowerCase() === s));
     document.getElementById('subToggles').style.display = isRemote() ? 'flex' : 'none';
+    // Libby search mode: repurpose the search box as the query; hint when empty.
+    const si = document.getElementById('searchInput');
+    si.placeholder = (s === 'libby')
+        ? 'Search Libby for a title or author to borrow…'
+        : 'Search by title, author, or series…';
     // Mark seen + refresh nav badge when viewing releases.
     if (isRemote()) { GreatReads.apiCall('/news/seen', { method: 'POST', data: {} }).then(() => {
         if (typeof loadNewsBadge === 'function') loadNewsBadge(); }).catch(() => {}); }
@@ -500,6 +517,7 @@ function onSearch() {
 function clearSearch() { document.getElementById('searchInput').value = ''; onSearch(); }
 
 async function loadShelf(reset) {
+    if (shelfStatus === 'libby') return loadLibbyShelf(reset);   // #142 Libby search category
     // Appends wait for an in-flight load; resets always supersede (bump generation).
     if (!reset && shelfLoading) return;
     if (reset) {
@@ -618,6 +636,7 @@ function visibleCards() {
 }
 
 function renderAll() {
+    if (shelfStatus === 'libby') return renderLibby(document.getElementById('searchInput').value.trim());
     updateBulkBar();
     const list = visibleCards();
     const grid = document.getElementById('booksGrid');
@@ -649,14 +668,251 @@ function cardHtml(c) {
         ? `<div class="books-badge-tl"><span class="sel-check${isSel ? ' on' : ''}"><i class="fas fa-check"></i></span></div>`
         : (rc ? `<div class="books-badge-tl">${rc}</div>` : '');
     const click = selectable ? `toggleSelect('${key}')` : `openBookDetails('${key}')`;
+    // Libby cards: availability ribbon (bottom) + an "owned/in library" corner check.
+    const libbyRibbon = (c.kind === 'libby') ? libbyAvailRibbon(c) : '';
+    const libbyOwned = (c.kind === 'libby' && libbyIsOwned(c))
+        ? '<div class="books-badge-tl"><span class="books-readcount" title="Already in your library"><i class="fas fa-check"></i></span></div>' : '';
     return `<div class="col-4 col-sm-3 col-lg-2 mb-3">
         <div class="card books-card status-${c.status}${isSel ? ' sel-on' : ''}" style="cursor:pointer;" onclick="${click}" title="${esc(dispTitle(c.title))}">
             <div class="books-cover">${cover}
-                ${tl}
+                ${tl || libbyOwned}
                 ${badges ? `<div class="books-badge-tr">${badges}</div>` : ''}
+                ${libbyRibbon}
             </div>
         </div>
     </div>`;
+}
+
+// ── Libby (OverDrive) search category (#142 milestone 3) ─────────────────────
+let libbyPage = 1;
+
+// A small availability ribbon across the bottom of a Libby result cover.
+function libbyAvailRibbon(c) {
+    let cls, txt;
+    if (c.onHold) { cls = 'bg-info text-dark'; txt = 'On hold'; }
+    else if (c.isAvailable) { cls = 'bg-success'; txt = 'Available'; }
+    else {
+        const w = c.estimatedWaitDays;
+        cls = 'bg-warning text-dark';
+        txt = (w != null && w > 0) ? `~${w >= 14 ? Math.round(w / 7) + 'w' : w + 'd'} wait` : 'Wait';
+    }
+    return `<div class="position-absolute bottom-0 start-0 end-0 text-center small fw-semibold ${cls}"
+        style="font-size:.6rem;padding:1px 2px;opacity:.92;">${txt}</div>`;
+}
+
+// Map an engine search row → a Books card shape (kind:'libby').
+function libbyRowToCard(row) {
+    return {
+        kind: 'libby',
+        title_id: String(row.id),
+        title: row.title,
+        author: row.author,
+        series: row.series || '',
+        series_number: (row.seriesIndex !== '' && row.seriesIndex != null) ? row.seriesIndex : null,
+        cover_url: row.cover || '',
+        status: 'unowned',
+        isAvailable: !!row.isAvailable,
+        onHold: !!row.onHold,
+        inLibrary: !!row.inLibrary,
+        holdsCount: row.holdsCount,
+        estimatedWaitDays: row.estimatedWaitDays,
+        libraries: row.libraries || [],
+        _row: row,
+    };
+}
+
+async function loadLibbyShelf(reset) {
+    if (!reset && shelfLoading) return;
+    if (reset) { shelfGen++; cards = []; libbyPage = 1; }
+    const myGen = shelfGen;
+    const q = document.getElementById('searchInput').value.trim();
+    const grid = document.getElementById('booksGrid');
+    if (!q) {
+        cards = []; shelfTotal = 0; shelfLoading = false;
+        document.getElementById('shelfCount').textContent = '';
+        grid.innerHTML = `<div class="col-12 text-muted text-center py-5">
+            <i class="fas fa-building-columns fa-2x mb-2 d-block" style="color:#d63384;"></i>
+            Search Libby for a library ebook to borrow &amp; download into GreatReads.
+            <div class="small mt-1">Type a title or author above. Availability is checked across your linked cards.</div></div>`;
+        return;
+    }
+    if (reset) grid.innerHTML = '<div class="col-12 text-muted text-center py-5"><span class="spinner-border spinner-border-sm me-2"></span>Searching Libby…</div>';
+    shelfLoading = true;
+    let r = null;
+    try { r = await GreatReads.apiCall(`/libby/search?q=${encodeURIComponent(q)}&library=all&page=${libbyPage}&per_page=${PAGE}`); }
+    catch (e) {}
+    if (myGen !== shelfGen) return;   // superseded by a newer query
+    shelfLoading = false;
+    if (r && Array.isArray(r.results)) {
+        const newCards = r.results.map(libbyRowToCard);
+        cards = reset ? newCards : cards.concat(newCards);
+        registerCards(newCards);
+        shelfTotal = (r.meta && r.meta.total != null) ? r.meta.total : cards.length;
+        if (r.meta && r.meta.hasNext) libbyPage += 1;
+        else shelfTotal = cards.length;   // no more pages — stop infinite scroll
+        annotateLibbyOwnership(newCards);   // #142 item 6 — real GreatReads ownership
+    } else if (reset) {
+        cards = []; shelfTotal = 0;
+    }
+    renderLibby(q);
+}
+
+// Annotate rendered Libby cards with real GreatReads ownership (title+author match
+// against our library), then re-render so owned titles show the check + steer the
+// popup away from a redundant borrow.
+async function annotateLibbyOwnership(list) {
+    const libs = (list || []).filter(c => c.kind === 'libby');
+    if (!libs.length) return;
+    let r;
+    try { r = await GreatReads.apiCall('/libby/ownership', { method: 'POST', data: { items: libs.map(c => ({ title: c.title, author: c.author })) } }); }
+    catch (e) { return; }
+    const res = (r && r.results) || [];
+    libs.forEach((c, i) => { const o = res[i]; if (o) { c.grOwned = o.owned; c.grBookId = o.book_id; c.calibreId = o.calibre_id; } });
+    if (shelfStatus === 'libby') renderLibby(document.getElementById('searchInput').value.trim());
+}
+
+function renderLibby(q) {
+    updateBulkBar();
+    const grid = document.getElementById('booksGrid');
+    document.getElementById('shelfCount').textContent =
+        cards.length ? `${cards.length}${cards.length < shelfTotal ? ' of ' + shelfTotal : ''} on Libby` : '';
+    if (!cards.length) {
+        grid.innerHTML = `<div class="col-12 text-muted text-center py-5">
+            No Libby matches for “${esc(q)}”.
+            <div class="small mt-1">If this seems wrong, the Libby token may need a re-link — open the
+            <a href="#" onclick="openLibby();return false;">Libby panel</a> to check.</div></div>`;
+        return;
+    }
+    grid.innerHTML = cards.map(cardHtml).join('');
+}
+
+// The Libby result currently open in the shared popup (borrow/hold handlers read it).
+let libbyActive = null;
+
+// True when GreatReads already owns this title (server-annotated grOwned wins;
+// falls back to the engine's Calibre fuzzy match).
+const libbyIsOwned = c => (c.grOwned != null ? !!c.grOwned : !!c.inLibrary);
+
+function libbyWaitText(days) {
+    if (days == null || days <= 0) return 'wait';
+    return `~${days >= 14 ? Math.round(days / 7) + 'w' : days + 'd'} wait`;
+}
+
+// Library chooser — one row per credentialed library, available first, each showing
+// availability so you can SEE (and pick) where you're borrowing from (item #7).
+function libbyLibraryChooser(c) {
+    const libs = (c.libraries || []).slice().sort((a, b) => (b.isAvailable ? 1 : 0) - (a.isAvailable ? 1 : 0));
+    if (!libs.length) {
+        return `<div class="small text-muted">No credentialed library offers this title yet. Add a card's website credentials in the <a href="#" onclick="openLibby();return false;">Libby panel</a>.</div>`;
+    }
+    const opts = libs.map(l => {
+        const hint = l.isAvailable ? 'available now' : libbyWaitText(l.estimatedWaitDays);
+        return `<option value="${esc(String(l.cardId))}" data-avail="${l.isAvailable ? 1 : 0}">${esc((l.key || '').toUpperCase())} — ${hint}</option>`;
+    }).join('');
+    const availCount = libs.filter(l => l.isAvailable).length;
+    const summary = availCount
+        ? `<span class="text-success">Available now at ${availCount} of ${libs.length} ${libs.length === 1 ? 'library' : 'libraries'}.</span>`
+        : `<span class="text-warning">Not available now — you can place a hold.</span>`;
+    return `<div class="small mb-1">${summary}</div>
+        <label class="form-label small mb-1">Borrow from</label>
+        <select id="libbyCardSel" class="form-select form-select-sm mb-2" onchange="libbyRenderAction()">${opts}</select>`;
+}
+
+// Render the Borrow/Hold action based on the SELECTED library's availability (item #2)
+// and GreatReads ownership (item #6). Called on open + whenever the library changes.
+function libbyRenderAction() {
+    const c = libbyActive; if (!c) return;
+    const box = document.getElementById('libbyAction'); if (!box) return;
+    const libs = c.libraries || [];
+    if (!libs.length) { box.innerHTML = ''; return; }
+    if (c.onHold) { box.innerHTML = '<span class="badge bg-info text-dark"><i class="fas fa-clock me-1"></i>Already on hold</span>'; return; }
+    const sel = document.getElementById('libbyCardSel');
+    const opt = sel && sel.selectedOptions[0];
+    const available = opt ? opt.dataset.avail === '1' : libs.some(l => l.isAvailable);
+    const borrowBtn = '<button id="libbyBorrowBtn" class="btn btn-sm btn-primary" onclick="libbyBorrow()"><i class="fas fa-cloud-arrow-down me-2"></i>Borrow &amp; Download</button>';
+    if (libbyIsOwned(c)) {
+        // Owned → don't push a borrow; offer it only as a de-emphasized secondary.
+        box.innerHTML = available
+            ? `<button class="btn btn-sm btn-outline-secondary" onclick="libbyBorrow()"><i class="fas fa-cloud-arrow-down me-2"></i>Borrow another copy</button>`
+            : `<button id="libbyHoldBtn" class="btn btn-sm btn-outline-secondary" onclick="libbyPlaceHold()"><i class="fas fa-clock me-2"></i>Place hold</button>`;
+        return;
+    }
+    box.innerHTML = available
+        ? borrowBtn
+        : `<button id="libbyHoldBtn" class="btn btn-sm btn-warning" onclick="libbyPlaceHold()"><i class="fas fa-clock me-2"></i>Place hold</button>
+           <span class="small text-muted ms-2">Not available now at the selected library.</span>`;
+}
+
+// Open a Libby search result in the shared cover-tap popup with Borrow/Hold actions.
+// Series + "by this author" strips inject automatically from book.series / book.author.
+function openLibbyDetails(c) {
+    libbyActive = c;
+    const book = {
+        id: null, title: c.title, author: c.author, series: c.series || '', universe: '',
+        series_number: c.series_number, cover_url: c.cover_url || null,
+        date_published: (c._row && c._row.publishDate) || '', genre: '',
+        cover: false, inventory: [], readings: [],
+    };
+    const owned = libbyIsOwned(c)
+        ? '<div class="alert alert-success py-1 px-2 small mb-2"><i class="fas fa-check-circle me-1"></i>Already in your GreatReads library.</div>' : '';
+    const extraInfoHtml = `${owned}${libbyLibraryChooser(c)}<div id="libbyAction" class="mt-1"></div>`;
+
+    GreatReads.openBookActions(book, {
+        title: c.title, extraInfoHtml,
+        editBook: false, sessions: false, highlights: false,
+        onShow: () => libbyRenderAction(),
+    });
+}
+
+function _libbySelectedCard() {
+    const sel = document.getElementById('libbyCardSel');
+    if (sel && sel.value) return sel.value;
+    const first = (libbyActive && libbyActive.libraries || [])[0];
+    return first ? String(first.cardId) : '';
+}
+
+// Borrow → fulfill → .acsm → watcher → Calibre → GreatReads. Synchronous (can take
+// ~a minute via the OverDrive-website path); on success we nudge the #137 tray.
+async function libbyBorrow() {
+    const c = libbyActive; if (!c) return;
+    const cardId = _libbySelectedCard();
+    if (!cardId) { showToast('No library card available to borrow on.', 'warning'); return; }
+    const btn = document.getElementById('libbyBorrowBtn');
+    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Borrowing & downloading…'; }
+    const hold = document.getElementById('libbyHoldBtn'); if (hold) hold.disabled = true;
+    showToast('Borrowing & downloading from Libby — this can take up to a minute…', 'info');
+    try {
+        const r = await GreatReads.apiCall('/libby/download', { method: 'POST', data: { title_id: c.title_id, card_id: cardId, title: c.title } });
+        if (r && (r.success || r.downloaded)) {
+            showToast(`“${c.title}” downloaded — importing into GreatReads shortly.`, 'success');
+            if (btn) btn.innerHTML = '<i class="fas fa-check me-2"></i>Downloaded — importing…';
+            c.inLibrary = true;
+            refreshImportBadge();   // #137 — surfaces the import as it lands
+        } else {
+            showToast((r && r.error) || 'Download did not complete.', 'danger');
+            if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-cloud-arrow-down me-2"></i>Borrow & Download'; }
+            if (hold) hold.disabled = false;
+        }
+    } catch (e) {
+        // apiCall already toasted the server detail (dead token / bad creds / Kindle-only).
+        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-cloud-arrow-down me-2"></i>Borrow & Download'; }
+        if (hold) hold.disabled = false;
+    }
+}
+
+async function libbyPlaceHold() {
+    const c = libbyActive; if (!c) return;
+    const cardId = _libbySelectedCard();
+    if (!cardId) { showToast('No library card available.', 'warning'); return; }
+    const btn = document.getElementById('libbyHoldBtn');
+    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Placing hold…'; }
+    try {
+        await GreatReads.apiCall('/libby/holds/place', { method: 'POST', data: { title_id: c.title_id, card_id: cardId } });
+        showToast('Hold placed.', 'success');
+        if (btn) btn.innerHTML = '<i class="fas fa-check me-2"></i>On hold';
+    } catch (e) {
+        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-clock me-2"></i>Place hold'; }
+    }
 }
 
 // ── Bulk select / edit (#93) ─────────────────────────────────────────────
@@ -785,6 +1041,8 @@ function grBooksOpenDetails(key, navList) {
     if (only) GreatReads.openBookNav([toItem(only)], 0);
 }
 function openBookDetails(key, navList) {
+    const lc = cardReg[key] || cards.find(x => cardKey(x) === key);
+    if (lc && lc.kind === 'libby') return openLibbyDetails(lc);   // #142
     return grBooksOpenDetails(key, navList);
     const c = cardReg[key] || cards.find(x => cardKey(x) === key);
     if (!c) return;
@@ -1040,13 +1298,15 @@ function libbyRenderHealth(s) {
 }
 
 function libbyUpdateBadge(s) {
-    const badge = document.getElementById('libbyBadge');
-    if (!badge) return;
-    badge.style.display = s && s.stale ? '' : 'none';
     // Red for dead/critical/unreachable, amber for a soft expiry warning.
     const hard = s && ['dead', 'critical', 'unreachable'].includes(s.state);
-    badge.classList.toggle('bg-danger', !!hard);
-    badge.classList.toggle('bg-warning', !hard);
+    ['libbyBadge', 'libbyBadge2'].forEach(id => {
+        const badge = document.getElementById(id);
+        if (!badge) return;
+        badge.style.display = s && s.stale ? '' : 'none';
+        badge.classList.toggle('bg-danger', !!hard);
+        badge.classList.toggle('bg-warning', !hard);
+    });
 }
 
 async function loadLibbyStatus() {
@@ -1072,6 +1332,29 @@ function openLibby() {
     new bootstrap.Modal(document.getElementById('libbyModal')).show();
     document.getElementById('libbyRelinkMsg').innerHTML = '';
     loadLibbyStatus();
+    loadLibbyCards();
+}
+
+// Linked libraries & cards (#142 item 3) — from the sanitized /libby/cards/status.
+async function loadLibbyCards() {
+    const box = document.getElementById('libbyCards');
+    box.innerHTML = '<div class="text-muted small"><span class="spinner-border spinner-border-sm me-1"></span>Loading libraries…</div>';
+    let d;
+    try { d = await GreatReads.apiCall('/libby/cards/status'); }
+    catch (e) { box.innerHTML = '<div class="small text-muted">Could not load libraries (engine may be offline).</div>'; return; }
+    const cards = (d && d.cards) || [];
+    if (!cards.length) { box.innerHTML = '<div class="small text-muted">No linked libraries yet — re-link above to sync your cards.</div>'; return; }
+    // Credentialed first, then by name.
+    cards.sort((a, b) => (b.hasCredentials ? 1 : 0) - (a.hasCredentials ? 1 : 0) || String(a.name || '').localeCompare(String(b.name || '')));
+    box.innerHTML = '<div class="list-group">' + cards.map(c => {
+        const counts = `<span class="small text-muted">${c.loans || 0} loan${c.loans === 1 ? '' : 's'} · ${c.holds || 0} hold${c.holds === 1 ? '' : 's'}</span>`;
+        const cred = c.hasCredentials
+            ? `<span class="badge bg-success-subtle text-success-emphasis border border-success-subtle" title="Website credentials saved${c.credUsernameMasked ? ' (' + esc(c.credUsernameMasked) + ')' : ''}"><i class="fas fa-check me-1"></i>Ready</span>`
+            : '<span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle" title="Add website credentials to enable downloads"><i class="fas fa-triangle-exclamation me-1"></i>Needs sign-in</span>';
+        return `<div class="list-group-item d-flex justify-content-between align-items-center py-2">
+            <div><div class="fw-medium small">${esc(c.name || c.advantageKey || '?')}</div>${counts}</div>
+            <div>${cred}</div></div>`;
+    }).join('') + '</div>';
 }
 
 async function libbyRelink() {
